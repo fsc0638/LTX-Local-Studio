@@ -1,0 +1,66 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: 0;
+  --radius-md: 0.15rem;
+  --radius-lg: 0.25rem;
+  --radius-xl: 0.35rem;
+}
+
+:root {
+  --background: #ffffff;
+  --foreground: #1a1a1a;
+  --card: #ffffff;
+  --card-foreground: #1a1a1a;
+  --popover: #ffffff;
+  --popover-foreground: #1a1a1a;
+  --primary: #1a1a1a;
+  --primary-foreground: #ffffff;
+  --secondary: #f6f6f3;
+  --secondary-foreground: #1a1a1a;
+  --muted: #f6f6f3;
+  --muted-foreground: #70706c;
+  --accent: #fff0f3;
+  --accent-foreground: #c53d60;
+  --destructive: #dc2626;
+  --border: #e6e6e3;
+  --input: #deded9;
+  --ring: #ff6f91;
+}
+
+@layer base {
+  * { @apply border-border outline-ring/50; }
+  html { @apply font-sans; }
+  body { @apply bg-background text-foreground; }
+  ::selection { background: #ffbfd0; color: #1a1a1a; }
+}
+
+body {
+  font-family: var(--font-geist-sans), "Noto Sans TC", "Noto Sans JP", "Hiragino Kaku Gothic ProN", "Microsoft JhengHei", "PingFang TC", sans-serif;
+  background-image: linear-gradient(to right, rgba(26,26,26,.025) 1px, transparent 1px);
+  background-size: 96px 100%;
+}
