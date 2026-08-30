@@ -46,9 +46,12 @@ export default defineConfig(async () => {
 
   return {
     css: { postcss: { plugins: [tailwindcss()] } },
-    server: isCodexSeatbeltSandbox
-      ? { watch: { useFsEvents: false, usePolling: true } }
-      : undefined,
+    server: {
+      ...(isCodexSeatbeltSandbox ? {watch: {useFsEvents: false, usePolling: true}} : {}),
+      proxy: Object.fromEntries(['/api', '/generated', '/media'].map(prefix => [prefix, {
+        target: process.env.LTX_INTERNAL_API_ORIGIN || 'http://127.0.0.1:8787', changeOrigin: false,
+      }])),
+    },
     plugins: [
       vinext(),
       sites(),

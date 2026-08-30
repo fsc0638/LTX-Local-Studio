@@ -37,7 +37,13 @@ yarn-error.log*
 next-env.d.ts
 /dist/
 /.wrangler/
+/infra/cloudflare/config.yml
+/.cloudflared/
+/.tools/
 /outputs/
+/uploads/
+/data/worker/
+/data/backups/
 /work/
 /public/generated/*
 !/public/generated/.gitkeep
@@ -47,3 +53,4 @@ next-env.d.ts
 *.pt
 *.pth
 *.log
+*.tsbuildinfo

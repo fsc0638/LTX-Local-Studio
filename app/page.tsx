@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable next/no-img-element, jsx-a11y/media-has-caption -- Authenticated local media uses direct URLs; generated/source videos do not yet have caption files. */
 
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -39,6 +40,10 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { MediaLibrary, fileCopy, type Asset } from "@/components/media-library";
+import { AccountGate, AccountMenu } from "@/components/account-gate";
+import { serviceFetch } from "@/lib/service-session";
+import { ModelComposer, type InstalledModel } from "@/components/model-composer";
 
 const initialPrompt =
   "電影感近景，一位穿著深色外套的女性站在潮濕的台北街口。鏡頭緩慢向前推進，霓虹燈在積水中形成珊瑚紅與青綠色倒影，微風帶動髮絲，自然環境音，細緻膠片顆粒。";
@@ -57,37 +62,30 @@ type OutputItem = {
   meta: string;
   runtime: string;
   size: string;
+  download?: string;
 };
 
-const outputItems: OutputItem[] = [
-  {
-    id: "city",
-    name: "ltx-2.3-512x768.mp4",
-    src: "/media/ltx-2.3-512x768.mp4",
-    poster: "/media/ltx-2.3-512x768-first-frame.png",
-    meta: "768 × 512 · 49 frames · 24 FPS",
-    runtime: "46.18 sec",
-    size: "1.9 MB",
-  },
-  {
-    id: "smoke",
-    name: "ltx-2.3-smoke.mp4",
-    src: "/media/ltx-2.3-smoke.mp4",
-    poster: "/media/ltx-2.3-smoke-first-frame.png",
-    meta: "384 × 256 · 17 frames · 24 FPS",
-    runtime: "33.69 sec",
-    size: "586 KB",
-  },
-];
+const outputItems: OutputItem[] = [];
+const emptyOutput: OutputItem = {id: "empty", name: "—", src: "", meta: "—", runtime: "—", size: "—"};
 
-function outputFromJob(job: Record<string, number | string>): OutputItem {
+type ApiJob = {
+  model?: string; media_type?: string;
+  id: string; filename: string; output_url: string; poster_url?: string;
+  width: number; height: number; frames: number; fps: number;
+  runtime_seconds?: number; elapsed_seconds?: number; size_bytes?: number;
+  status: string; progress: number; message?: string; error?: string;
+};
+type Health = { ok: boolean; runtime?: { cuda_available?: boolean; device?: string; error?: string }; active_job?: ApiJob };
+
+function outputFromJob(job: ApiJob): OutputItem {
   const runtime = Number(job.runtime_seconds || 0);
   const sizeBytes = Number(job.size_bytes || 0);
   return {
     id: String(job.id),
     name: String(job.filename),
-    src: `${MEDIA_BASE}${String(job.output_url)}?t=${Date.now()}`,
-    poster: job.poster_url ? `${MEDIA_BASE}${String(job.poster_url)}?t=${Date.now()}` : undefined,
+    src: `${MEDIA_BASE || API_BASE}${String(job.output_url)}`,
+    download: `${MEDIA_BASE || API_BASE}${String(job.output_url)}?download=1`,
+    poster: job.poster_url ? `${MEDIA_BASE || API_BASE}${String(job.poster_url)}` : undefined,
     meta: `${job.width} × ${job.height} · ${job.frames} frames · ${job.fps} FPS`,
     runtime: runtime > 0 ? `${runtime} sec` : "Completed",
     size: `${Math.max(0.1, sizeBytes / 1024 / 1024).toFixed(1)} MB`,
@@ -96,8 +94,9 @@ function outputFromJob(job: Record<string, number | string>): OutputItem {
 
 type TabKey = "create" | "assets" | "outputs" | "environment";
 type Locale = "zh-TW" | "en" | "ja";
-const API_BASE = (process.env.NEXT_PUBLIC_LTX_API_BASE || "").replace(/\/$/, "");
-const MEDIA_BASE = (process.env.NEXT_PUBLIC_LTX_MEDIA_BASE || "").replace(/\/$/, "");
+// Browser traffic stays same-origin. Only the server knows the worker address.
+const API_BASE = "";
+const MEDIA_BASE = "";
 
 const translations = {
   "zh-TW": {
@@ -181,11 +180,11 @@ function Label({ children }: { children: React.ReactNode }) {
   return <span className="mb-2 block text-[10px] font-bold uppercase tracking-[0.18em] text-muted-foreground">{children}</span>;
 }
 
-function ToggleRow({ label, note, checked, onChange }: { label: string; note: string; checked: boolean; onChange: (value: boolean) => void }) {
+function ToggleRow({ label, note, checked, onChange, disabled }: { label: string; note: string; checked: boolean; onChange: (value: boolean) => void; disabled?: boolean }) {
   return (
     <div className="flex items-center justify-between gap-4 border-b border-border py-4 last:border-b-0">
       <div><p className="text-xs font-bold">{label}</p><p className="mt-1 text-[10px] leading-4 text-muted-foreground">{note}</p></div>
-      <Switch checked={checked} onCheckedChange={onChange} />
+      <Switch checked={checked} onCheckedChange={onChange} disabled={disabled} />
     </div>
   );
 }
@@ -200,21 +199,24 @@ function Stat({ label, value, accent }: { label: string; value: string; accent?:
 }
 
 export default function Home() {
+  return <AccountGate><Studio /></AccountGate>;
+}
+
+function Studio() {
   const [locale, setLocale] = useState<Locale>("zh-TW");
   const [tab, setTab] = useState<TabKey>("create");
   const [prompt, setPrompt] = useState(initialPrompt);
-  const [negativePrompt, setNegativePrompt] = useState("blurry, distorted anatomy, text, watermark, flicker, oversaturated");
   const [model, setModel] = useState("ltx23-distilled");
+  const [models, setModels] = useState<InstalledModel[]>([]);
+  const [catalogError, setCatalogError] = useState(false);
   const [mode, setMode] = useState("t2v");
   const [width, setWidth] = useState(768);
   const [height, setHeight] = useState(512);
   const [frames, setFrames] = useState(49);
   const [fps, setFps] = useState("24");
-  const [steps, setSteps] = useState(8);
   const [seed, setSeed] = useState(42);
-  const [cfg, setCfg] = useState(3);
-  const [precision, setPrecision] = useState("bf16");
-  const [attention, setAttention] = useState("sdpa");
+  const precision = "bf16";
+  const attention = "sdpa";
   const [upscaler, setUpscaler] = useState(true);
   const [offload, setOffload] = useState(false);
   const [tiling, setTiling] = useState(true);
@@ -222,11 +224,16 @@ export default function Home() {
   const [generating, setGenerating] = useState(false);
   const [progress, setProgress] = useState(0);
   const [jobStatus, setJobStatus] = useState("READY");
-  const [selectedOutput, setSelectedOutput] = useState<OutputItem>(outputItems[0]);
+  const [selectedOutput, setSelectedOutput] = useState<OutputItem>(emptyOutput);
   const [liveOutputs, setLiveOutputs] = useState<OutputItem[]>(outputItems);
   const [backendOnline, setBackendOnline] = useState(false);
   const [jobMessage, setJobMessage] = useState("");
   const [jobError, setJobError] = useState("");
+  const [reference, setReference] = useState<Asset | null>(null);
+  const [activeJobId, setActiveJobId] = useState<string | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const [computeDevice, setComputeDevice] = useState("");
+  const transfer = fileCopy[locale];
   const ui = translations[locale];
   const visibleStatus = generating
     ? ui.generating
@@ -240,7 +247,6 @@ export default function Home() {
 
   const duration = useMemo(() => (frames / Number(fps)).toFixed(2), [frames, fps]);
   const durationPreset = String(Math.max(2, Math.min(10, Math.round(frames / Number(fps) / 2) * 2)));
-  const estimatedRuntime = Math.max(35, Math.round(45 * (frames / 49)));
   const setDurationSeconds = (seconds: string) => {
     const targetFrames = Math.round((Number(seconds) * Number(fps)) / 8) * 8 + 1;
     setFrames(Math.min(257, targetFrames));
@@ -251,12 +257,13 @@ export default function Home() {
     setFrames(Math.min(257, Math.round((seconds * Number(nextFps)) / 8) * 8 + 1));
   };
   const command = useMemo(
-    () => `LTX_WIDTH=${width} LTX_HEIGHT=${height} LTX_FRAMES=${frames} LTX_FPS=${fps} LTX_SEED=${seed}${offload ? " LTX_OFFLOAD=cpu" : ""} ./run-ltx-2.3.sh \"${prompt.slice(0, 42)}${prompt.length > 42 ? "…" : ""}\" output.mp4`,
-    [prompt, width, height, frames, fps, seed, offload]
+    () => `LTX_WIDTH=${width} LTX_HEIGHT=${height} LTX_FRAMES=${frames} LTX_FPS=${fps} LTX_SEED=${seed} LTX_AUDIO=${audio ? 1 : 0}${offload ? " LTX_OFFLOAD=cpu" : ""}${mode === "i2v" && reference ? ` LTX_IMAGE="uploads/${reference.id}…"` : ""} ./scripts/run-ltx-2.3.sh "${prompt.slice(0, 42)}${prompt.length > 42 ? "…" : ""}" output.mp4`,
+    [prompt, width, height, frames, fps, seed, offload, audio, mode, reference]
   );
 
   useEffect(() => {
     const savedLocale = window.localStorage.getItem("ltx-studio-locale");
+    // eslint-disable-next-line react/react-compiler -- Read the browser-only saved preference after hydration.
     if (savedLocale === "zh-TW" || savedLocale === "en" || savedLocale === "ja") setLocale(savedLocale);
   }, []);
 
@@ -266,29 +273,86 @@ export default function Home() {
   }, [locale]);
 
   useEffect(() => {
+    const abort = new AbortController();
+    serviceFetch("/api/models", { signal: abort.signal }).then(async (response) => {
+      if (!response.ok) throw new Error();
+      return response.json() as Promise<{ models: InstalledModel[] }>;
+    }).then((data) => { setModels(data.models); setCatalogError(false); })
+      .catch(() => { if (!abort.signal.aborted) setCatalogError(true); });
+    return () => abort.abort();
+  }, []);
+
+  useEffect(() => {
     let active = true;
-    const checkHealth = () => fetch(`${API_BASE}/api/health`)
-      .then((response) => response.json())
-      .then((data) => { if (active) setBackendOnline(Boolean(data.ok)); })
+    const checkHealth = () => serviceFetch(`${API_BASE}/api/health`)
+      .then((response) => response.json() as Promise<Health>)
+      .then((data) => {
+        if (!active) return;
+        setBackendOnline(Boolean(data.ok));
+        setComputeDevice(data.runtime?.cuda_available ? data.runtime.device || "" : "");
+        if (data.runtime?.error) setJobError(data.runtime.error);
+        if (data.active_job && (!data.active_job.model || data.active_job.model === "ltx23-distilled")) {
+          setActiveJobId(data.active_job.id);
+          setGenerating(true);
+        }
+      })
       .catch(() => { if (active) setBackendOnline(false); });
-    const loadGeneratedOutputs = () => fetch(`${API_BASE}/api/outputs`)
-      .then((response) => response.json())
+    const loadGeneratedOutputs = () => serviceFetch(`${API_BASE}/api/outputs`)
+      .then((response) => response.json() as Promise<{ outputs?: ApiJob[] }>)
       .then((data) => {
         if (!active || !Array.isArray(data.outputs) || data.outputs.length === 0) return;
-        const restored = data.outputs.map((job: Record<string, number | string>) => outputFromJob(job));
+        const restored = data.outputs.filter((job) => !job.media_type || job.media_type === "video").map(outputFromJob);
+        if (!restored.length) return;
         setLiveOutputs([...restored, ...outputItems]);
         setSelectedOutput(restored[0]);
-        setJobStatus("COMPLETE");
-        setProgress(100);
-        setJobMessage(ui.restoredMessage);
       })
       .catch(() => undefined);
-    checkHealth();
-    loadGeneratedOutputs();
+    void checkHealth();
+    void loadGeneratedOutputs();
     const timer = window.setInterval(checkHealth, 5000);
     const restoreTimer = window.setTimeout(loadGeneratedOutputs, 2500);
     return () => { active = false; window.clearInterval(timer); window.clearTimeout(restoreTimer); };
   }, [ui.restoredMessage]);
+
+  useEffect(() => {
+    if (!activeJobId) return;
+    let stopped = false;
+    let pending = false;
+    const poll = async () => {
+      if (pending) return;
+      pending = true;
+      try {
+        const response = await serviceFetch(`${API_BASE}/api/jobs/${activeJobId}`);
+        const job = await response.json() as ApiJob;
+        if (stopped) return;
+        if (!response.ok) {
+          if (response.status === 404) { setActiveJobId(null); setGenerating(false); }
+          throw new Error(job.error || ui.cannotRead);
+        }
+        setJobError("");
+        setProgress(job.progress ?? 0);
+        setElapsed(job.elapsed_seconds || job.runtime_seconds || 0);
+        setJobMessage(job.message || ui.inferenceMessage);
+        if (["succeeded", "failed", "cancelled", "interrupted"].includes(job.status)) {
+          setActiveJobId(null);
+          setGenerating(false);
+          setJobStatus(job.status === "succeeded" ? "COMPLETE" : "FAILED");
+          if (job.status === "succeeded") {
+            const generated = outputFromJob(job);
+            setLiveOutputs((current) => [generated, ...current.filter((item) => item.id !== generated.id)]);
+            setSelectedOutput(generated);
+            setJobMessage(ui.completedMessage);
+          } else setJobError(job.message || ui.cannotRead);
+        }
+      } catch (error) {
+        if (!stopped) setJobError(error instanceof Error ? error.message : ui.cannotConnect);
+        // A temporary network failure must not abandon the GPU job.
+      } finally { pending = false; }
+    };
+    void poll();
+    const timer = window.setInterval(poll, 3000);
+    return () => { stopped = true; window.clearInterval(timer); };
+  }, [activeJobId, ui.cannotRead, ui.inferenceMessage, ui.completedMessage, ui.cannotConnect]);
 
   const simulateGeneration = async () => {
     if (generating) return;
@@ -297,52 +361,24 @@ export default function Home() {
     setGenerating(true);
     setJobStatus("CONNECTING");
     setProgress(1);
+    setElapsed(0);
     try {
-      const response = await fetch(`${API_BASE}/api/jobs`, {
+      const response = await serviceFetch(`${API_BASE}/api/jobs`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, model, mode, width, height, frames, fps: Number(fps), seed, offload }),
+        body: JSON.stringify({ prompt, model, mode, width, height, frames, fps: Number(fps), seed, offload, audio, image_id: mode === "i2v" ? reference?.id : undefined }),
       });
-      const created = await response.json();
+      const created = await response.json() as ApiJob;
       if (!response.ok) throw new Error(created.error || ui.cannotCreate);
       setBackendOnline(true);
       setJobStatus("GENERATING");
       setProgress(created.progress || 3);
       setJobMessage(created.message || ui.inferenceMessage);
 
-      const poll = window.setInterval(async () => {
-        try {
-          const statusResponse = await fetch(`${API_BASE}/api/jobs/${created.id}`);
-          const job = await statusResponse.json();
-          if (!statusResponse.ok) throw new Error(job.error || ui.cannotRead);
-          setProgress(job.progress ?? 0);
-          setJobMessage(job.message || ui.inferenceMessage);
-          if (job.status === "succeeded") {
-            window.clearInterval(poll);
-            const generated = outputFromJob(job);
-            setLiveOutputs((current) => [generated, ...current]);
-            setSelectedOutput(generated);
-            setGenerating(false);
-            setJobStatus("COMPLETE");
-            setProgress(100);
-            setJobMessage(ui.completedMessage);
-          } else if (job.status === "failed") {
-            window.clearInterval(poll);
-            setGenerating(false);
-            setJobStatus("FAILED");
-            setJobError(job.message || "影片生成失敗。");
-          }
-        } catch (error) {
-          window.clearInterval(poll);
-          setGenerating(false);
-          setJobStatus("OFFLINE");
-          setJobError(error instanceof Error ? error.message : ui.cannotConnect);
-        }
-      }, 1500);
+      setActiveJobId(created.id);
     } catch (error) {
       setGenerating(false);
-      setBackendOnline(false);
-      setJobStatus("OFFLINE");
+      setJobStatus("FAILED");
       setProgress(0);
       setJobError(error instanceof Error ? error.message : ui.cannotConnect);
     }
@@ -370,6 +406,7 @@ export default function Home() {
               <SelectTrigger aria-label="Language" className="h-10 w-[132px] rounded-none border-border bg-white text-[10px] font-bold tracking-[0.1em]"><SelectValue /></SelectTrigger>
               <SelectContent align="end" className="min-w-[150px]"><SelectItem value="zh-TW">繁體中文</SelectItem><SelectItem value="en">English</SelectItem><SelectItem value="ja">日本語</SelectItem></SelectContent>
             </Select>
+            <AccountMenu locale={locale} />
             <div className="hidden items-center gap-2 text-[10px] font-bold tracking-[0.1em] sm:flex"><span className={`size-2 rounded-full ${generating ? "animate-pulse bg-[#ff6f91]" : backendOnline ? "bg-[#25b6a6]" : "bg-[#b8b8b2]"} shadow-[0_0_0_4px_rgba(37,182,166,.12)]`} />{visibleStatus}</div>
           </div>
         </div>
@@ -379,7 +416,14 @@ export default function Home() {
       </header>
 
       <div className="mx-auto max-w-[1560px] px-5 py-8 lg:px-10 lg:py-10">
-        {tab === "create" && (
+        {tab === "create" && <section className="mb-6 flex flex-wrap items-center gap-4 border border-border bg-white p-5">
+          <label className="min-w-64 text-xs font-bold">{ui.model}
+            <Select value={model} disabled={generating || !models.length} onValueChange={(value) => value && setModel(value)}><SelectTrigger className="mt-2 w-full"><SelectValue /></SelectTrigger><SelectContent>{models.map((item) => <SelectItem key={item.id} value={item.id}>{item.label} · {item.media_type}</SelectItem>)}</SelectContent></Select>
+          </label>
+          <p className="text-xs text-muted-foreground">{catalogError ? (locale === "zh-TW" ? "無法讀取模型清單，請檢查服務後重新整理。" : locale === "en" ? "Model catalog unavailable. Check the service and reload." : "モデル一覧を取得できません。接続を確認して再読込してください。") : (locale === "zh-TW" ? "僅顯示主機已安裝並註冊的模型 · 帳號與 API 不隨模型更換" : locale === "en" ? "Installed host adapters only · Same account and API across models" : "導入・登録済みモデルのみ表示 · アカウントとAPIは共通")}</p>
+        </section>}
+        {tab === "create" && model !== "ltx23-distilled" && models.find((item) => item.id === model) && <ModelComposer key={model} model={models.find((item) => item.id === model)!} locale={locale} />}
+        {tab === "create" && model === "ltx23-distilled" && (
           <section>
             <SectionTitle eyebrow={ui.createEyebrow} title={ui.createTitle} note={ui.createNote} />
             <div className="grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(400px,.82fr)]">
@@ -390,8 +434,7 @@ export default function Home() {
                     <span className="hidden text-[10px] text-white/50 sm:block">{selectedOutput.name}</span>
                   </div>
                   <div className="relative aspect-video bg-black">
-                    <video key={selectedOutput.src} className="h-full w-full object-contain" controls preload="auto" poster={selectedOutput.poster || undefined} src={selectedOutput.src} />
-                    <span className="pointer-events-none absolute left-4 top-4 rounded-full bg-[#25b6a6] px-3 py-1 text-[9px] font-bold tracking-[0.14em] text-white">{ui.verifiedOutput}</span>
+                    {selectedOutput.src ? <><video key={selectedOutput.src} className="h-full w-full object-contain" controls preload="metadata" poster={selectedOutput.poster || undefined} src={selectedOutput.src} /><span className="pointer-events-none absolute left-4 top-4 rounded-full bg-[#25b6a6] px-3 py-1 text-[9px] font-bold tracking-[0.14em] text-white">{ui.outputPreview}</span></> : <div className="grid h-full place-items-center text-center text-white/50"><div><Video className="mx-auto mb-4 size-8" /><p className="text-xs">{locale === "zh-TW" ? "你的第一支作品將顯示在這裡" : locale === "en" ? "Your first creation will appear here" : "最初の作品がここに表示されます"}</p></div></div>}
                   </div>
                   <div className="grid grid-cols-3 divide-x divide-white/10 border-t border-white/10 bg-white/[.035] text-xs">
                     <div className="px-5 py-4"><span className="block text-[9px] tracking-[0.14em] text-white/45">{ui.runtime}</span><strong className="mt-1 block">{formatRuntime(selectedOutput.runtime)}</strong></div>
@@ -401,25 +444,26 @@ export default function Home() {
                 </section>
 
                 <section className="border border-border bg-white">
-                  <div className="flex items-center justify-between border-b border-border px-5 py-4"><div className="flex items-center gap-2"><Settings2 className="size-4 text-[#e85578]"/><h2 className="text-xs font-extrabold tracking-[0.13em]">{ui.generationSettings}</h2></div><button onClick={() => { setWidth(768); setHeight(512); setFrames(49); setSteps(8); setSeed(42); setCfg(3); }} className="flex items-center gap-2 text-[10px] font-bold tracking-[0.1em] text-muted-foreground hover:text-foreground"><RotateCcw className="size-3"/>{ui.reset}</button></div>
+                  <div className="flex items-center justify-between border-b border-border px-5 py-4"><div className="flex items-center gap-2"><Settings2 className="size-4 text-[#e85578]"/><h2 className="text-xs font-extrabold tracking-[0.13em]">{ui.generationSettings}</h2></div><button onClick={() => { setWidth(768); setHeight(512); setFrames(49); setFps("24"); setSeed(42); }} className="flex items-center gap-2 text-[10px] font-bold tracking-[0.1em] text-muted-foreground hover:text-foreground"><RotateCcw className="size-3"/>{ui.reset}</button></div>
                   <div className="grid gap-px bg-border md:grid-cols-2 xl:grid-cols-3">
                     <label className="bg-white p-5"><Label>{ui.width}</Label><Input type="number" value={width} onChange={(e) => setWidth(Number(e.target.value))} className="rounded-none" /></label>
                     <label className="bg-white p-5"><Label>{ui.height}</Label><Input type="number" value={height} onChange={(e) => setHeight(Number(e.target.value))} className="rounded-none" /></label>
                     <label className="bg-white p-5"><Label>{ui.frames}</Label><Input type="number" value={frames} onChange={(e) => setFrames(Number(e.target.value))} className="rounded-none" /></label>
-                    <label className="bg-white p-5"><Label>{ui.videoDuration}</Label><Select value={durationPreset} onValueChange={setDurationSeconds}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{[2,4,6,8,10].map((value) => <SelectItem key={value} value={String(value)} disabled={value === 10 && Number(fps) === 30}>{value} {ui.seconds}</SelectItem>)}</SelectContent></Select><span className="mt-2 block text-[9px] text-muted-foreground">{ui.actual} {duration}s · {ui.estimatedInference} {estimatedRuntime}s</span></label>
-                    <label className="bg-white p-5"><Label>{ui.frameRate}</Label><Select value={fps} onValueChange={setFrameRateKeepingDuration}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="16">16 FPS</SelectItem><SelectItem value="24">24 FPS</SelectItem><SelectItem value="30">30 FPS</SelectItem></SelectContent></Select></label>
-                    <label className="bg-white p-5"><Label>{ui.inferenceSteps}</Label><Input type="number" value={steps} onChange={(e) => setSteps(Number(e.target.value))} className="rounded-none" /></label>
-                    <label className="bg-white p-5"><Label>{ui.cfgScale}</Label><Input type="number" step="0.5" value={cfg} onChange={(e) => setCfg(Number(e.target.value))} className="rounded-none" /></label>
+                    <label className="bg-white p-5"><Label>{ui.videoDuration}</Label><Select value={durationPreset} onValueChange={(value) => value && setDurationSeconds(value)}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{[2,4,6,8,10].map((value) => <SelectItem key={value} value={String(value)} disabled={value === 10 && Number(fps) === 30}>{value} {ui.seconds}</SelectItem>)}</SelectContent></Select><span className="mt-2 block text-[9px] text-muted-foreground">{ui.actual} {duration}s · {transfer.estimated}</span></label>
+                    <label className="bg-white p-5"><Label>{ui.frameRate}</Label><Select value={fps} onValueChange={(value) => value && setFrameRateKeepingDuration(value)}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="16">16 FPS</SelectItem><SelectItem value="24">24 FPS</SelectItem><SelectItem value="30">30 FPS</SelectItem></SelectContent></Select></label>
+                    <label className="bg-white p-5"><Label>{ui.inferenceSteps}</Label><Input value="8 + 3" disabled className="rounded-none" /></label>
+                    <label className="bg-white p-5"><Label>{ui.cfgScale}</Label><Input value="—" disabled className="rounded-none" /></label>
                     <label className="bg-white p-5"><Label>{ui.seed}</Label><Input type="number" value={seed} onChange={(e) => setSeed(Number(e.target.value))} className="rounded-none" /></label>
-                    <label className="bg-white p-5"><Label>{ui.precision}</Label><Select value={precision} onValueChange={setPrecision}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="bf16">BF16</SelectItem><SelectItem value="fp16">FP16</SelectItem><SelectItem value="fp32">FP32</SelectItem></SelectContent></Select></label>
-                    <label className="bg-white p-5"><Label>{ui.attention}</Label><Select value={attention} onValueChange={setAttention}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="sdpa">SDPA</SelectItem><SelectItem value="flash">Flash Attention</SelectItem><SelectItem value="xformers">xFormers</SelectItem></SelectContent></Select></label>
+                    <label className="bg-white p-5"><Label>{ui.precision}</Label><Select value={precision} disabled><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="bf16">BF16</SelectItem></SelectContent></Select></label>
+                    <label className="bg-white p-5"><Label>{ui.attention}</Label><Select value={attention} disabled><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="sdpa">SDPA</SelectItem></SelectContent></Select></label>
                   </div>
                   <div className="grid gap-x-8 px-5 md:grid-cols-2">
-                    <ToggleRow label={ui.upscaler} note={ui.upscalerNote} checked={upscaler} onChange={setUpscaler} />
+                    <ToggleRow label={ui.upscaler} note={ui.upscalerNote} checked={upscaler} onChange={setUpscaler} disabled />
                     <ToggleRow label={ui.offload} note={ui.offloadNote} checked={offload} onChange={setOffload} />
-                    <ToggleRow label={ui.tiling} note={ui.tilingNote} checked={tiling} onChange={setTiling} />
+                    <ToggleRow label={ui.tiling} note={ui.tilingNote} checked={tiling} onChange={setTiling} disabled />
                     <ToggleRow label={ui.audio} note={ui.audioNote} checked={audio} onChange={setAudio} />
                   </div>
+                  <div className="border-t border-border p-5"><p className="text-[10px] leading-5 text-muted-foreground">{transfer.fixed}</p><Button variant="outline" className="mt-3 rounded-none text-[10px]" disabled={generating} onClick={() => { setWidth(384); setHeight(256); setFrames(17); setFps("24"); setOffload(false); }}><Zap className="size-3" />{transfer.draft}</Button></div>
                 </section>
               </div>
 
@@ -429,17 +473,20 @@ export default function Home() {
                   <div className="space-y-5 p-6">
                     <div className="flex flex-wrap gap-2">{promptPresets.map(([label, value], index) => <button key={label} onClick={() => setPrompt(value)} className="border border-border px-3 py-2 text-[9px] font-bold tracking-[0.12em] hover:border-[#ff6f91] hover:bg-[#fff5f7]">{[ui.cinematic, ui.portrait, ui.product][index]}</button>)}</div>
                     <label className="block"><Label>{ui.prompt}</Label><Textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} className="min-h-40 resize-none rounded-none bg-[#fafaf8] text-sm leading-6 shadow-none focus-visible:ring-[#ff6f91]/25" /><span className="mt-2 block text-right text-[10px] text-muted-foreground">{prompt.length} {ui.characters}</span></label>
-                    <label className="block"><Label>{ui.negativePrompt}</Label><Textarea value={negativePrompt} onChange={(e) => setNegativePrompt(e.target.value)} className="min-h-20 resize-none rounded-none bg-[#fafaf8] text-xs leading-5 shadow-none" /></label>
+                    <label className="block"><Label>{ui.negativePrompt}</Label><Textarea value="—" disabled className="min-h-12 resize-none rounded-none bg-[#fafaf8] text-xs leading-5 shadow-none" /></label>
                     <div className="grid gap-4 sm:grid-cols-2">
-                      <label><Label>{ui.model}</Label><Select value={model} onValueChange={setModel}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="ltx23-distilled">LTX-2.3 Distilled</SelectItem><SelectItem value="ltx23-dev">LTX-2.3 Dev</SelectItem><SelectItem value="ltx2">LTX-2</SelectItem></SelectContent></Select></label>
-                      <label><Label>{ui.mode}</Label><Select value={mode} onValueChange={setMode}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="t2v">{ui.t2v}</SelectItem><SelectItem value="i2v">{ui.i2v}</SelectItem><SelectItem value="v2v">{ui.v2v}</SelectItem></SelectContent></Select></label>
+                      <label><Label>{ui.model}</Label><Input value="LTX-2.3 Distilled" readOnly className="rounded-none" /></label>
+                      <label><Label>{ui.mode}</Label><Select value={mode} onValueChange={(value) => value && setMode(value)}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="t2v">{ui.t2v}</SelectItem><SelectItem value="i2v">{ui.i2v}</SelectItem><SelectItem value="v2v" disabled>{ui.v2v}</SelectItem></SelectContent></Select></label>
                     </div>
                     {mode !== "t2v" && <div className="border border-dashed border-[#b8b8b2] bg-[#fafaf8] p-5 text-center"><ImageIcon className="mx-auto size-5 text-[#25b6a6]"/><p className="mt-2 text-xs font-bold">{ui.chooseAsset}</p><button onClick={() => setTab("assets")} className="mt-2 text-[10px] font-bold text-[#e85578] underline underline-offset-4">{ui.openAssetLibrary}</button></div>}
+                    {mode === "i2v" && reference && <div className="border border-[#bfe8e3] p-3"><img src={`${API_BASE}${reference.url}`} alt={reference.name} className="max-h-32 w-full object-contain" /><p className="mt-2 truncate text-[10px]">{transfer.selected}: {reference.name} · frame 0 / 0.8</p><button onClick={() => setReference(null)} className="mt-2 text-[10px] text-[#e85578] underline">{transfer.remove}</button></div>}
                     <div className="grid grid-cols-3 gap-px bg-border text-center"><div className="bg-[#fafaf8] p-3"><p className="text-[9px] text-muted-foreground">{ui.duration}</p><strong className="mt-1 block text-xs">{duration}s</strong></div><div className="bg-[#fafaf8] p-3"><p className="text-[9px] text-muted-foreground">{ui.canvas}</p><strong className="mt-1 block text-xs">{width}×{height}</strong></div><div className="bg-[#fafaf8] p-3"><p className="text-[9px] text-muted-foreground">VRAM</p><strong className="mt-1 block text-xs">~42 GiB</strong></div></div>
                     <div className={`border px-4 py-3 text-[10px] leading-5 ${backendOnline ? "border-[#bfe8e3] bg-[#f0fbf9] text-[#11786f]" : "border-[#e2e2de] bg-[#fafaf8] text-muted-foreground"}`}><span className="font-bold">{ui.localEngine} · </span>{backendOnline ? ui.engineConnected : ui.engineWaiting}</div>
                     {generating || progress > 0 ? <div className="space-y-2"><div className="flex justify-between text-[10px] font-bold tracking-[0.12em]"><span>{visibleStatus}</span><span>{progress}%</span></div><Progress value={progress} className="h-1.5 rounded-none [&>div]:bg-[#25b6a6]" />{jobMessage && <p className="text-[10px] leading-4 text-muted-foreground">{jobMessage}</p>}</div> : null}
+                    <p className="text-[10px] leading-5 text-muted-foreground">{transfer.gpu}: {computeDevice || transfer.offline}{generating && <><br />{transfer.stage} · {transfer.elapsed} {Math.round(elapsed)}s</>}</p>
                     {jobError && <div role="alert" className="border border-red-200 bg-red-50 px-4 py-3 text-[10px] leading-5 text-red-700"><strong className="block">{ui.generationFailed}</strong>{jobError}</div>}
-                    <Button onClick={simulateGeneration} disabled={generating} className="h-12 w-full rounded-none bg-foreground text-[11px] font-bold tracking-[0.16em] text-background hover:bg-[#e85578]"><Play className="size-3.5 fill-current"/>{generating ? ui.generatingVideo : ui.generateVideo}</Button>
+                    <Button onClick={simulateGeneration} disabled={generating || !backendOnline || (mode === "i2v" && !reference)} className="h-12 w-full rounded-none bg-foreground text-[11px] font-bold tracking-[0.16em] text-background hover:bg-[#e85578]"><Play className="size-3.5 fill-current"/>{generating ? ui.generatingVideo : ui.generateVideo}</Button>
+                    {selectedOutput.src && <a href={selectedOutput.download || selectedOutput.src} download={selectedOutput.name} className="block border border-border p-3 text-center text-[11px] font-bold hover:border-[#e85578]">{transfer.download} · MP4</a>}
                     <p className="text-center text-[9px] leading-4 text-muted-foreground">{ui.generateNote}</p>
                   </div>
                 </section>
@@ -452,6 +499,7 @@ export default function Home() {
         {tab === "assets" && (
           <section>
             <SectionTitle eyebrow={ui.assetsEyebrow} title={ui.assetsTitle} note={ui.assetsNote} />
+            <MediaLibrary locale={locale} onSelect={(asset) => { setReference(asset); setMode("i2v"); setTab("create"); }} />
             <div className="grid gap-6 lg:grid-cols-[1.35fr_.65fr]">
               <div>
                 <div className="mb-4 flex items-center justify-between"><p className="text-[10px] font-bold tracking-[0.15em]">{ui.mediaReferences}</p><Button variant="outline" className="rounded-none text-[10px] font-bold tracking-[0.12em]"><FolderOpen className="size-3.5"/>{ui.openFolder}</Button></div>
@@ -487,6 +535,7 @@ export default function Home() {
             <div className="grid gap-6 xl:grid-cols-2">
               {liveOutputs.map((item, index) => (
                 <article key={item.id} className="overflow-hidden border border-border bg-white">
+                  <a href={item.download || item.src} download={item.name} className="block border-b border-border px-6 py-3 text-right text-[11px] font-bold hover:text-[#e85578]">{transfer.download} · MP4</a>
                   <div className="relative aspect-video bg-black"><video className="h-full w-full object-contain" controls preload="metadata" poster={item.poster || undefined} src={item.src}/><span className="absolute left-4 top-4 bg-[#25b6a6] px-3 py-1 text-[9px] font-bold tracking-[0.12em] text-white">RUN 0{index + 1} · {ui.runPassed}</span></div>
                   <div className="p-6"><div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start"><div><p className="text-base font-extrabold tracking-[0.03em]">{item.name}</p><p className="mt-2 text-xs text-muted-foreground">{formatMeta(item.meta)}</p></div><Button onClick={() => { setSelectedOutput(item); setTab("create"); }} variant="outline" className="rounded-none text-[10px] font-bold tracking-[0.1em]">{ui.useAsPreview}<ChevronRight className="size-3.5"/></Button></div><div className="mt-6 grid grid-cols-3 gap-px bg-border"><div className="bg-[#fafaf8] p-4"><Label>{ui.runtime}</Label><strong className="text-sm">{formatRuntime(item.runtime)}</strong></div><div className="bg-[#fafaf8] p-4"><Label>{ui.fileSize}</Label><strong className="text-sm">{item.size}</strong></div><div className="bg-[#fafaf8] p-4"><Label>{ui.codec}</Label><strong className="text-sm">H.264/AAC</strong></div></div></div>
                 </article>
@@ -499,6 +548,7 @@ export default function Home() {
         {tab === "environment" && (
           <section>
             <SectionTitle eyebrow={ui.envEyebrow} title={ui.envTitle} note={ui.envNote} />
+            <p className="mb-4 border border-border bg-white p-4 text-xs">{transfer.gpu}: <strong>{computeDevice || transfer.offline}</strong></p>
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Stat label={ui.accelerator} value="NVIDIA GB10" accent/><Stat label={ui.unifiedMemory} value="121.69 GiB"/><Stat label={ui.peakResident} value="~42 GiB"/><Stat label={ui.architecture} value="ARM64"/></div>
             <div className="mt-6 grid gap-6 lg:grid-cols-2">
               <section className="border border-border bg-white"><div className="border-b border-border px-5 py-4"><div className="flex items-center gap-2"><Cpu className="size-4 text-[#e85578]"/><h2 className="text-xs font-extrabold tracking-[0.13em]">{ui.runtimeStack}</h2></div></div><div className="grid gap-px bg-border sm:grid-cols-2">

@@ -1,0 +1,21 @@
+# Copy this file to config.yml. The real file is intentionally ignored by Git.
+tunnel: YOUR_TUNNEL_UUID
+credentials-file: /absolute/path/to/YOUR_TUNNEL_UUID.json
+# HTTP/2 works on networks where outbound QUIC/UDP 7844 is unavailable.
+protocol: http2
+
+ingress:
+  # Keep API and generated media behind the same Access-protected hostname.
+  - hostname: ltx.example.com
+    path: ^/api(?:/.*)?$
+    service: http://127.0.0.1:8787
+  - hostname: ltx.example.com
+    path: ^/generated(?:/.*)?$
+    service: http://127.0.0.1:8787
+
+  # All remaining requests go to the LTX Local Studio web UI.
+  - hostname: ltx.example.com
+    service: http://127.0.0.1:3000
+
+  # Cloudflare requires a final catch-all rule.
+  - service: http_status:404

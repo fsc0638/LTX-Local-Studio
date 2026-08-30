@@ -19,6 +19,7 @@ if [[ -f .env.local ]]; then
     set +a
 fi
 
+python3 scripts/check-service-layout.py
 python3 local_backend.py &
 api_pid=$!
 

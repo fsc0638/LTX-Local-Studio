@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+studio_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 ltx_repo_root="${LTX_REPO_ROOT:?Set LTX_REPO_ROOT to the LTX-2 checkout path}"
 python_bin="${LTX_PYTHON:-$ltx_repo_root/.venv/bin/python}"
@@ -25,7 +26,7 @@ mkdir -p "$(dirname "$output_path")"
 cd "$ltx_repo_root"
 
 args=(
-    -m ltx_pipelines.distilled
+    "$studio_root/scripts/run_local.py"
     --distilled-checkpoint-path "$checkpoint"
     --spatial-upsampler-path "$upsampler"
     --gemma-root "$gemma_root"
