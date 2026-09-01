@@ -26,6 +26,10 @@ from auth_http import AuthHandlerMixin
 from user_auth import AuthSettings, AuthStore
 from cloudflare_access import AccessSettings, AccessClient, AccessVerifier, sync_enrollment
 import model_registry
+import media_store
+from media_deletion import prepare_archive
+from video_settings import image_geometry
+import mv_timeline
 
 
 SITE_ROOT = Path(__file__).resolve().parent
@@ -54,6 +58,7 @@ RUNTIME: dict[str, Any] = {}
 STORE: ProductionStore | None = None
 STORE_ERROR = ""
 WORK_DIR = Path(os.environ.get("LTX_WORK_DIR", SITE_ROOT / "data/worker/work")).expanduser().absolute()
+TRASH_DIR = SITE_ROOT / "data/worker/trash"
 STOPPING = False
 USER_AUTH_ENABLED = os.environ.get("LTX_USER_AUTH_ENABLED", "1") != "0"
 AUTH = None
@@ -139,6 +144,12 @@ def generation_provenance(payload):
                   "weights_content_verified": False}
     if payload.get("image_id"):
         provenance["reference"] = file_fingerprint(asset_path(asset_by_id(payload["image_id"])), digest=True)
+    if payload.get("timeline", {}).get("audio_id"):
+        provenance["source_audio"] = file_fingerprint(asset_path(asset_by_id(payload["timeline"]["audio_id"])), digest=True)
+        provenance["audio_conditioning"] = "experimental_distilled_frozen_audio_v1" if payload["timeline"].get("audio_mode") == "condition" else "soundtrack_only"
+    provenance["render_mode"] = payload.get("render_mode", "single")
+    provenance["composition_code"] = [file_fingerprint(SITE_ROOT / name, digest=True) for name in
+                                      ("mv_timeline.py", "scripts/sequence_media.py", "scripts/audio_conditioning.py", "video_settings.py")]
     return provenance
 
 
@@ -189,7 +200,7 @@ def job_environment(payload):
         "LTX_WORKER_PARENT_PID": str(os.getpid()),
         "PYTHONUNBUFFERED": "1",
     })
-    for key in ("LTX_IMAGE", "LTX_IMAGE_FRAME", "LTX_IMAGE_STRENGTH"):
+    for key in ("LTX_IMAGE", "LTX_IMAGE_FRAME", "LTX_IMAGE_STRENGTH", "LTX_AUDIO_REFERENCE"):
         env.pop(key, None)
     if payload.get("image_id"):
         env["LTX_IMAGE"] = str(asset_path(asset_by_id(payload["image_id"])))
@@ -248,53 +259,104 @@ def run_job(job_id: str, payload: dict[str, Any]) -> None:
             raise JobFailure("validation_failed", "Output verification process failed: " + stderr[-500:])
         return stdout
 
+    def generate_part(part, target, log_file, index=0, count=1, reference_path=None, music_path=None):
+        nonlocal process
+        env = job_environment(part)
+        if reference_path:
+            env["LTX_IMAGE"] = str(reference_path)
+        if music_path:
+            env["LTX_AUDIO_REFERENCE"] = str(music_path)
+        check_abort(job, deadline)
+        process = subprocess.Popen(
+            adapter.command(part, target, {"launcher": LAUNCHER, "python": LTX_PYTHON, "root": SITE_ROOT}),
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, env=env, start_new_session=True)
+        with LOCK:
+            job["process"] = process
+        recent = []
+        persisted_at = time.monotonic()
+        stage = {"progress": 3}
+        for line in process.stdout:
+            log_file.write(line)
+            log_file.flush()
+            if line.strip():
+                recent = (recent + [line.strip()])[-18:]
+            update_progress(stage, line)
+            with LOCK:
+                old_phase = job.get("phase")
+                if payload.get("render_mode") == "sequence":
+                    job.update(progress=max(job.get("progress", 3), round(94 * (index + stage["progress"] / 100) / count)),
+                               phase="shot_" + str(index + 1), segment_index=index + 1, segment_count=count,
+                               message=f"鏡頭 / Shot {index + 1}/{count} · " + stage.get("message", "Generating"))
+                else:
+                    job.update(stage)
+                if old_phase != job.get("phase") or time.monotonic() - persisted_at >= 2:
+                    record_job(job)
+                    persisted_at = time.monotonic()
+        return_code = process.wait()
+        process.stdout.close()
+        check_abort(job, deadline)
+        if return_code or not target.is_file():
+            raise JobFailure("generation_failed", "\n".join(recent[-5:]) or f"Generator exited with code {return_code}", retryable=True)
+
     try:
         check_abort(job, deadline)
         adapter = model_registry.get(payload["model"])
         work_path.mkdir(parents=True, exist_ok=False, mode=0o700)
         log_path = work_path / "generation.log"
-        env = job_environment(payload)
         watchdog = threading.Thread(target=watch, daemon=True)
         watchdog.start()
+        media_command = [str(LTX_PYTHON), str(SITE_ROOT / "scripts/sequence_media.py")]
+        reference_path = None
+        if payload.get("image_id") and payload["model"] == "ltx23-distilled":
+            reference_path = work_path / "reference.png"
+            auxiliary([*media_command, "image", str(asset_path(asset_by_id(payload["image_id"]))), str(reference_path),
+                       str(payload["width"]), str(payload["height"])], 30)
+        job["log_path"] = str(log_path)
         with log_path.open("w", encoding="utf-8") as log_file:
-            process = subprocess.Popen(
-                adapter.command(payload, output_path, {"launcher": LAUNCHER, "python": LTX_PYTHON, "root": SITE_ROOT}),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                env=env,
-                start_new_session=True,
-            )
-            with LOCK:
-                job["process"] = process
-                job["log_path"] = str(log_path)
-            recent: list[str] = []
-            persisted_at = time.monotonic()
-            assert process.stdout is not None
-            for line in process.stdout:
-                log_file.write(line)
-                log_file.flush()
-                cleaned = line.strip()
-                if cleaned:
-                    recent = (recent + [cleaned])[-18:]
+            if payload.get("render_mode") == "sequence":
+                timeline = payload["timeline"]
+                audio_source = asset_path(asset_by_id(timeline["audio_id"])) if timeline.get("audio_id") else None
+                parts = []
+                for index, segment in enumerate(payload["segments"]):
+                    check_abort(job, deadline)
+                    if shutil.disk_usage(work_path).free < 2 * 1024**3:
+                        raise JobFailure("insufficient_disk", "Insufficient space for remaining shots")
+                    target = work_path / f"shot-{index + 1:03d}.mp4"
+                    part = {**payload, "frames": segment["frames"], "prompt": segment["prompt"],
+                            "seed": (payload["seed"] + index) % 2**32, "audio": False if audio_source else payload["audio"]}
+                    music = None
+                    if audio_source and timeline.get("audio_mode") == "condition":
+                        music = work_path / f"shot-{index + 1:03d}.wav"
+                        auxiliary([*media_command, "audio", str(audio_source), str(music),
+                                   str(timeline["audio_start_seconds"] + segment["start_seconds"]), str(part["frames"] / part["fps"])], 45)
+                    generate_part(part, target, log_file, index, len(payload["segments"]), reference_path, music)
+                    expected_part = json.dumps({key: part[key] for key in ("width", "height", "frames", "fps", "audio")})
+                    checked = json.loads(auxiliary([str(LTX_PYTHON), str(SITE_ROOT / "scripts/check_output.py"), str(target), expected_part], 120))
+                    if not checked["quality_control"]["passed"]:
+                        raise JobFailure("shot_quality_failed", f"Shot {index + 1} failed technical validation")
+                    parts.append({"path": str(target), "keep_frames": segment["keep_frames"]})
                 with LOCK:
-                    previous_phase = job.get("phase")
-                    update_progress(job, line)
-                    if job.get("phase") != previous_phase or time.monotonic() - persisted_at >= 2:
-                        record_job(job)
-                        persisted_at = time.monotonic()
-            return_code = process.wait()
-            process.stdout.close()
-        check_abort(job, deadline)
-        if return_code != 0 or not output_path.is_file():
-            raise JobFailure("generation_failed", "\n".join(recent[-5:]) or f"LTX process exited with code {return_code}.", retryable=True)
+                    job.update(progress=95, phase="assembly", message="組合鏡頭與連續音樂母帶 / Assembling timeline")
+                    record_job(job)
+                manifest = work_path / "sequence.json"
+                manifest.write_text(json.dumps({"segments": parts, "fps": payload["fps"], "width": payload["width"],
+                                               "height": payload["height"], "audio": payload["audio"],
+                                               "audio_path": str(audio_source) if audio_source else None,
+                                               "audio_start_seconds": timeline["audio_start_seconds"]}), encoding="utf-8")
+                auxiliary([*media_command, "assemble", str(manifest), str(output_path)], 1800)
+            else:
+                part = {**payload, "prompt": mv_timeline.compose_prompt(payload["prompt"], payload.get("directing", {}))}
+                generate_part(part, output_path, log_file, reference_path=reference_path)
         with LOCK:
             job.update(progress=98, phase="validation", message="完整解碼與成品驗證 / Validating output")
             record_job(job)
         expected = json.dumps({name: payload.get(name) for name in ("width", "height", "frames", "fps", "audio")})
         check_command = [str(LTX_PYTHON), str(SITE_ROOT / "scripts/check_output.py"), str(output_path), expected] if adapter.media_type == "video" else [str(LTX_PYTHON), str(SITE_ROOT / "scripts/check_media_output.py"), str(output_path), adapter.media_type, expected]
-        result = json.loads(auxiliary(check_command, 120))
+        result = json.loads(auxiliary(check_command, 600 if payload.get("render_mode") == "sequence" else 120))
+        if payload.get("render_mode") == "sequence":
+            result["quality_control"]["warnings"].append("independent_shots_continuity_requires_review")
+            if payload["timeline"].get("audio_mode") == "condition":
+                result["quality_control"]["warnings"].append("experimental_audio_conditioning_not_verified_lip_sync")
         with LOCK:
             job.update(result)
         if not result.get("quality_control", {}).get("passed"):
@@ -361,16 +423,44 @@ def parse_payload(raw: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("提示詞不可超過 4000 個字元。")
     if raw.get("model", "ltx23-distilled") != "ltx23-distilled":
         raise ValueError("目前本機後端已連接 LTX-2.3 Distilled；其他模型尚未安裝對應執行器。")
+    if "negative_prompt" in raw and (not isinstance(raw["negative_prompt"], str) or raw["negative_prompt"].strip()):
+        raise ValueError("LTX-2.3 Distilled 不支援負面提示詞（CFG=1）。需安裝 Dev 模型及 guided 執行器；不會默默忽略此欄位。")
     mode = raw.get("mode", "t2v")
     if mode not in {"t2v", "i2v"}:
         raise ValueError("支援文字或圖片生成；影片轉影片尚未接通。")
+    render_mode = raw.get("render_mode", "single")
+    if render_mode not in {"single", "sequence"}:
+        raise ValueError("render_mode must be single or sequence")
+    if render_mode != "sequence" and ("timeline" in raw or "segment_seconds" in raw):
+        raise ValueError("Timeline and segment_seconds require render_mode=sequence")
+    if render_mode == "sequence" and "frames" in raw:
+        raise ValueError("Sequence uses duration_seconds, not frames")
+    directing = mv_timeline.normalize_directing(raw.get("directing", {}))
+    mv_timeline.compose_prompt(prompt, directing)
     image_id = None
     if mode == "i2v":
         image_id = str(raw.get("image_id", ""))
         if asset_by_id(image_id)["kind"] != "image":
             raise ValueError("圖片生成必須選擇圖片素材。")
-    width = int(raw.get("width", 768))
-    height = int(raw.get("height", 512))
+    ratio = raw.get("aspect_ratio")
+    dimensions = {}
+    source_geometry = image_geometry(asset_by_id(image_id)["width"], asset_by_id(image_id)["height"]) if image_id else None
+    if "aspect_ratio" in raw:
+        if not isinstance(ratio, str) or ratio not in {*worker.ASPECT_RATIOS, "source"}:
+            raise ValueError("不支援此長寬比例，請查詢 capabilities.aspect_ratios。")
+        if "width" in raw or "height" in raw:
+            raise ValueError("請選用 aspect_ratio 或 width/height，不可同時設定。")
+        if ratio == "source":
+            if not source_geometry:
+                raise ValueError("Source ratio requires an image reference")
+            dimensions = source_geometry["suggested_dimensions"]
+        else:
+            dimensions = worker.ASPECT_RATIOS[ratio]
+    elif image_id and "width" not in raw and "height" not in raw:
+        ratio = "source"
+        dimensions = source_geometry["suggested_dimensions"]
+    width = int(dimensions.get("width", raw.get("width", 768)))
+    height = int(dimensions.get("height", raw.get("height", 512)))
     frames = int(raw.get("frames", 49))
     fps = int(raw.get("fps", 24))
     seed = int(raw.get("seed", 42))
@@ -378,8 +468,8 @@ def parse_payload(raw: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("二階段生成寬度必須介於 256–1536，且為 64 的倍數。")
     if height < 256 or height > 1536 or height % 64:
         raise ValueError("二階段生成高度必須介於 256–1536，且為 64 的倍數。")
-    if frames < 9 or frames > 257 or (frames - 1) % 8:
-        raise ValueError("幀數必須為 8n+1，範圍 9–257；最長秒數 = 257 ÷ FPS。")
+    if frames < 9 or frames > worker.MAX_FRAMES or (frames - 1) % 8:
+        raise ValueError(f"幀數必須為 8n+1，範圍 9–{worker.MAX_FRAMES}；最長秒數 = {worker.MAX_FRAMES} ÷ FPS。")
     if fps < 8 or fps > 60:
         raise ValueError("FPS 必須介於 8–60。")
     if seed < 0 or seed > 2**32 - 1:
@@ -393,7 +483,7 @@ def parse_payload(raw: dict[str, Any]) -> dict[str, Any]:
     timeout = raw.get("timeout_seconds", worker.default_timeout())
     if type(timeout) is not int or not 30 <= timeout <= worker.MAX_TIMEOUT:
         raise ValueError(f"timeout_seconds 必須是 30–{worker.MAX_TIMEOUT} 的整數。")
-    return {
+    payload = {
         "prompt": prompt,
         "model": "ltx23-distilled",
         "mode": mode,
@@ -401,6 +491,7 @@ def parse_payload(raw: dict[str, Any]) -> dict[str, Any]:
         "audio": raw.get("audio", True),
         "width": width,
         "height": height,
+        "aspect_ratio": ratio,
         "frames": frames,
         "fps": fps,
         "seed": seed,
@@ -409,7 +500,13 @@ def parse_payload(raw: dict[str, Any]) -> dict[str, Any]:
         "image_strength": strength if mode == "i2v" else None,
         "timeout_seconds": timeout,
         "media_type": "video",
+        "render_mode": render_mode,
+        "directing": directing,
+        "source_geometry": source_geometry,
     }
+    if render_mode == "sequence":
+        payload.update(mv_timeline.normalize_sequence(raw, payload, worker.MAX_FRAMES, asset_by_id))
+    return payload
 
 
 def replay_job(key, request_hash):
@@ -421,6 +518,8 @@ def replay_job(key, request_hash):
     saved, fingerprint = previous
     if fingerprint != request_hash:
         return 409, {"error": "Idempotency key was already used with a different payload", "code": "idempotency_conflict"}
+    if saved.get("deleted_at"):
+        return 410, {"error": "This job was deleted; use a new idempotency key for a new generation", "code": "job_deleted"}
     current = JOBS.get(saved["id"], saved)
     return 200, {**public_job(current), "idempotent_replay": True}
 
@@ -435,6 +534,13 @@ def submit_job(payload, *, key=None, request_hash=None, external=None, requested
             return 503, {"error": "Worker is shutting down", "code": "worker_unavailable"}
         if any(job["status"] in {"queued", "running"} for job in JOBS.values()):
             return 409, {"error": "GPU busy; retry this request later with the same idempotency key", "code": "worker_busy", "retry_after_seconds": 5}
+        for reference_id in (payload.get("image_id"), payload.get("timeline", {}).get("audio_id")):
+            # Serialize final reference validation with deletion and admission.
+            if not reference_id:
+                continue
+            asset = asset_by_id(reference_id)
+            if owner_id and asset.get("owner_id") != owner_id:
+                raise ValueError("Reference asset is not available to this account")
         adapter = model_registry.get(payload["model"])
         if adapter.requires_cuda and not RUNTIME.get("cuda_available"):
             return 503, {"error": "CUDA GPU unavailable", "code": "worker_unavailable"}
@@ -506,6 +612,11 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
             asset = asset_by_id(str(raw["image_id"]))
             if not self.can_access(asset) or asset.get("kind") != "image":
                 raise ValueError("Reference asset is not available to this account")
+        timeline = raw.get("timeline") if isinstance(raw, dict) else None
+        if isinstance(timeline, dict) and timeline.get("audio_id"):
+            asset = asset_by_id(str(timeline["audio_id"]))
+            if not self.can_access(asset) or asset.get("kind") != "audio":
+                raise ValueError("Audio asset is not available to this account")
 
     def cors_origin(self) -> str:
         origin = self.headers.get("Origin", "").rstrip("/")
@@ -520,7 +631,7 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", self.cors_origin())
         self.send_header("Access-Control-Allow-Headers", "Content-Type, X-CSRF-Token")
-        self.send_header("Access-Control-Allow-Methods", "GET, HEAD, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, HEAD, POST, DELETE, OPTIONS")
         self.send_header("Cache-Control", "private, no-store")
         self.send_header("Vary", "Origin")
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -538,6 +649,81 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
 
     def do_HEAD(self):
         self.do_GET()
+
+    def do_DELETE(self):
+        origin = self.headers.get("Origin", "").rstrip("/")
+        if origin and origin not in self.auth_origins:
+            self.send_json(403, {"error": "Origin not allowed", "code": "origin_not_allowed"})
+            return
+        if self.headers.get("Transfer-Encoding") or self.headers.get("Content-Length", "0") != "0":
+            self.close_connection = True
+            self.send_json(400, {"error": "DELETE must not have a body", "code": "invalid_request"})
+            return
+        # Destructive routes always need a real account or privileged service key,
+        # even on installations that have disabled browser account authentication.
+        if not self.require_principal(worker_only=True):
+            return
+        path = urlparse(self.path).path
+        match = re.fullmatch(r"/api/(?:v1/)?(jobs|assets)/([a-f0-9]{12,32})", path)
+        if not match:
+            self.send_json(404, {"error": "Not found", "code": "not_found"})
+            return
+        kind, identity = match.groups()
+        try:
+            with LOCK:
+                if kind == "assets":
+                    try:
+                        asset = asset_by_id(identity)
+                    except ValueError:
+                        self.send_json(404, {"error": "Asset not found", "code": "asset_not_found"})
+                        return
+                    if not self.can_access(asset):
+                        self.send_json(404, {"error": "Asset not found", "code": "asset_not_found"})
+                        return
+                    if any(identity in (j.get("image_id"), j.get("timeline", {}).get("audio_id")) and j["status"] in {"queued", "running"} for j in JOBS.values()):
+                        self.send_json(409, {"error": "Reference is being used by a generation job", "code": "asset_in_use"})
+                        return
+                    with media_store.UPLOAD_LOCK:
+                        archive = prepare_archive([media_store.UPLOAD_DIR / f"{identity}.json", asset_path(asset)],
+                                                  TRASH_DIR, {"kind": "asset", "asset": asset})
+                        archive.remove_sources()
+                else:
+                    if STORE is None:
+                        raise sqlite3.OperationalError()
+                    job = JOBS.get(identity) or STORE.get(identity)
+                    if not job or (self.principal["kind"] != "service" and job.get("owner_id") != self.principal["id"]):
+                        self.send_json(404, {"error": "Job not found", "code": "job_not_found"})
+                        return
+                    if job.get("deleted_at"):
+                        self.send_json(200, {"deleted": True, "recoverable": True})
+                        return
+                    if job["status"] in {"queued", "running"}:
+                        self.send_json(409, {"error": "Cancel the active job and wait for it to stop first", "code": "job_active"})
+                        return
+                    filename = job.get("filename", "")
+                    if not re.fullmatch(r"[A-Za-z0-9_-]+\.(mp4|png|txt)", filename):
+                        raise ValueError("Invalid stored media filename")
+                    names = {filename, str(Path(filename).with_suffix(".json")), str(Path(filename).with_suffix(".jpg"))}
+                    paths = [folder / name for folder in (OUTPUT_DIR, LEGACY_OUTPUT_DIR, WORK_DIR / identity) for name in sorted(names)]
+                    private_work = WORK_DIR / identity
+                    if private_work.is_dir() and not private_work.is_symlink():
+                        paths.extend(path for path in private_work.iterdir() if path.suffix in {".mp4", ".wav", ".png", ".jpg", ".json"})
+                    paths = list(dict.fromkeys(paths))
+                    archive = prepare_archive(paths, TRASH_DIR, {"kind": "job", "job": public_job(job)})
+                    tombstone = {**public_job(job), "deleted_at": time.time()}
+                    STORE.record(tombstone)
+                    job.update(deleted_at=tombstone["deleted_at"])
+                    JOBS[identity] = job
+                    try:
+                        archive.remove_sources()
+                    except (OSError, ValueError):
+                        # The durable tombstone denies every download even if a
+                        # filesystem error leaves an original name behind.
+                        self.send_json(200, {"deleted": True, "recoverable": True, "cleanup_pending": True})
+                        return
+            self.send_json(200, {"deleted": True, "recoverable": True})
+        except (OSError, sqlite3.Error, ValueError):
+            self.send_json(503, {"error": "Media deletion failed; retained files are recoverable", "code": "delete_failed"})
 
     def worker_authorized(self):
         return self.require_principal(worker_only=True)
@@ -651,8 +837,8 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
                 self.send_json(415, {"error": "Content-Type must be application/json"})
                 return
             length = int(self.headers.get("Content-Length", "0"))
-            if length < 1 or length > 32_000:
-                raise ValueError("Body must be 1–32000 bytes")
+            if length < 1 or length > 128_000:
+                raise ValueError("Body must be 1–128000 bytes")
             self.connection.settimeout(15)
             raw = json.loads(self.rfile.read(length))
             key, fingerprint = worker.validate_request(raw, self.headers.get("Idempotency-Key", "") if path == "/api/v1/jobs" else "validate-only")
@@ -708,6 +894,15 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
             return
         media_match = re.fullmatch(r"/generated/([a-zA-Z0-9_-]+\.(mp4|jpg|png|txt))", path)
         if media_match:
+            try:
+                filename = str(Path(media_match.group(1)).with_suffix(".mp4")) if media_match.group(2) == "jpg" else media_match.group(1)
+                stored = STORE.by_filename(filename) if STORE else None
+                if stored and stored.get("deleted_at"):
+                    self.send_json(404, {"error": "Artifact not found"})
+                    return
+            except (OSError, sqlite3.Error):
+                self.send_json(503, {"error": "Job store unavailable"})
+                return
             if self.principal["kind"] != "service":
                 try:
                     filename = str(Path(media_match.group(1)).with_suffix(".mp4")) if media_match.group(2) == "jpg" else media_match.group(1)
@@ -746,7 +941,7 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
             outputs: list[dict[str, Any]] = []
             seen: set[str] = set()
             with LOCK:
-                completed = [public_job(job) for job in JOBS.values() if job["status"] == "succeeded"]
+                completed = [public_job(job) for job in JOBS.values() if job["status"] == "succeeded" and not job.get("deleted_at")]
             for job in completed:
                 outputs.append(job)
                 seen.add(job["filename"])
@@ -760,7 +955,8 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
                 if metadata_path.exists():
                     try:
                         saved = json.loads(metadata_path.read_text(encoding="utf-8"))
-                        if saved.get("status") == "succeeded":
+                        stored = STORE.get(saved.get("id", "")) if STORE else None
+                        if saved.get("status") == "succeeded" and not saved.get("deleted_at") and not (stored and stored.get("deleted_at")):
                             outputs.append(saved)
                         continue
                     except (OSError, ValueError, TypeError):

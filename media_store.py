@@ -9,13 +9,16 @@ import time
 import uuid
 from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
+from video_settings import image_geometry
 
 ROOT = Path(__file__).resolve().parent
 UPLOAD_DIR = Path(os.environ.get("LTX_UPLOAD_DIR", ROOT / "uploads")).resolve()
 MAX_UPLOAD = 50 * 1024 * 1024
 MAX_LIBRARY = 2 * 1024 * 1024 * 1024
 UPLOAD_LOCK = threading.Lock()
-FORMATS = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "video/mp4": ".mp4"}
+FORMATS = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "video/mp4": ".mp4",
+           "audio/wav": ".wav", "audio/x-wav": ".wav", "audio/mpeg": ".mp3", "audio/flac": ".flac",
+           "audio/x-flac": ".flac", "audio/mp4": ".m4a", "audio/ogg": ".ogg"}
 
 
 def asset_by_id(asset_id):
@@ -24,6 +27,8 @@ def asset_by_id(asset_id):
     try:
         asset = json.loads((UPLOAD_DIR / f"{asset_id}.json").read_text())
         asset_path(asset)
+        if asset.get("kind") == "image":
+            asset.update(image_geometry(asset["width"], asset["height"]))
         return asset
     except (OSError, KeyError, TypeError) as exc:
         raise ValueError("找不到素材，請重新上傳。") from exc
@@ -31,7 +36,7 @@ def asset_by_id(asset_id):
 
 def asset_path(asset):
     filename = asset["filename"]
-    if not re.fullmatch(r"[a-f0-9]{32}\.(png|jpg|webp|mp4)", filename):
+    if not re.fullmatch(r"[a-f0-9]{32}\.(png|jpg|webp|mp4|wav|mp3|flac|m4a|ogg)", filename):
         raise ValueError("無效的素材檔名。")
     path = UPLOAD_DIR / filename
     if path.is_symlink() or not path.is_file() or path.resolve().parent != UPLOAD_DIR:
@@ -120,7 +125,7 @@ class MediaHandlerMixin:
             self.send_json(413, {"error": "單一檔案需介於 1 byte–50 MiB。"})
             return
         if content_type not in FORMATS:
-            self.send_json(415, {"error": "僅支援 PNG、JPEG、WebP 圖片與 MP4 影片。"})
+            self.send_json(415, {"error": "支援 PNG/JPEG/WebP、MP4 及 WAV/MP3/FLAC/M4A/OGG 音樂。"})
             return
         if not UPLOAD_LOCK.acquire(blocking=False):
             self.send_json(409, {"error": "另一個檔案正在上傳，請稍後再試。"})
@@ -150,7 +155,7 @@ class MediaHandlerMixin:
                         raise ValueError("檔案未完整上傳。")
                     output.write(chunk)
                     remaining -= len(chunk)
-            kind = "video" if content_type == "video/mp4" else "image"
+            kind = "audio" if content_type.startswith("audio/") else "video" if content_type == "video/mp4" else "image"
             with temporary.open("rb") as source:
                 signature = source.read(16)
             valid_signature = {
@@ -158,6 +163,13 @@ class MediaHandlerMixin:
                 "image/jpeg": signature.startswith(b"\xff\xd8\xff"),
                 "image/webp": signature.startswith(b"RIFF") and signature[8:12] == b"WEBP",
                 "video/mp4": signature[4:8] == b"ftyp",
+                "audio/wav": signature.startswith(b"RIFF") and signature[8:12] == b"WAVE",
+                "audio/x-wav": signature.startswith(b"RIFF") and signature[8:12] == b"WAVE",
+                "audio/mpeg": signature.startswith(b"ID3") or (len(signature) >= 2 and signature[0] == 255 and signature[1] & 224 == 224),
+                "audio/flac": signature.startswith(b"fLaC"),
+                "audio/x-flac": signature.startswith(b"fLaC"),
+                "audio/mp4": signature[4:8] == b"ftyp",
+                "audio/ogg": signature.startswith(b"OggS"),
             }[content_type]
             if not valid_signature:
                 raise ValueError("檔案內容與格式不符。")
@@ -171,6 +183,8 @@ class MediaHandlerMixin:
                      "content_type": content_type, "size_bytes": length, "created_at": time.time(),
                      "owner_id": getattr(self, "principal", {}).get("id"),
                      "url": f"/api/assets/{asset_id}/file", **json.loads(checked.stdout)}
+            if kind == "image":
+                asset.update(image_geometry(asset["width"], asset["height"]))
             temporary.rename(UPLOAD_DIR / filename)
             (UPLOAD_DIR / f"{asset_id}.json").write_text(json.dumps(asset, ensure_ascii=False), encoding="utf-8")
             response = {**asset, "url": f"/api/v1/assets/{asset_id}/file"} if urlparse(self.path).path.startswith("/api/v1/") else asset

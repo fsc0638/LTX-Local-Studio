@@ -14,7 +14,9 @@ FIELDS = ("id", "status", "progress", "phase", "created_at", "started_at", "fini
           "seed", "mode", "image_id", "audio", "offload", "model", "device", "runtime_seconds",
           "size_bytes", "message", "provenance", "measured_media", "external", "requested_duration_seconds", "artifact_sha256",
           "profile", "image_strength", "timeout_seconds", "contract_version", "error", "quality_control", "cancel_requested", "owner_id",
-          "parameters", "media_type", "content_type")
+          "parameters", "media_type", "content_type", "deleted_at", "aspect_ratio",
+          "render_mode", "directing", "timeline", "segments", "segment_seconds", "duration_seconds", "source_geometry",
+          "segment_index", "segment_count", "timeline_warnings")
 
 
 def encode(value):
@@ -68,7 +70,7 @@ class ProductionStore:
             raise ValueError("Invalid job ID")
         snapshot = {field: job[field] for field in FIELDS if field in job}
         now = job.get("finished_at") or job.get("created_at") or time.time()
-        conflict = "DO NOTHING" if only_if_missing else "DO UPDATE SET snapshot=excluded.snapshot, updated_at=excluded.updated_at"
+        conflict = "DO NOTHING" if only_if_missing else "DO UPDATE SET snapshot=excluded.snapshot, updated_at=excluded.updated_at WHERE json_extract(jobs.snapshot,'$.deleted_at') IS NULL"
         # Updates deliberately preserve the original idempotency key and hash.
         with self.connect() as db:
             db.execute(f"INSERT INTO jobs(id,snapshot,updated_at,idempotency_key,request_hash) VALUES(?,?,?,?,?) ON CONFLICT(id) {conflict}",
@@ -88,7 +90,9 @@ class ProductionStore:
         if limit < 1 or limit > 100 or offset < 0:
             raise ValueError("Invalid pagination")
         with self.connect() as db:
-            where = "WHERE json_extract(snapshot,'$.owner_id')=?" if owner_id else ""
+            where = "WHERE json_extract(snapshot,'$.deleted_at') IS NULL"
+            if owner_id:
+                where += " AND json_extract(snapshot,'$.owner_id')=?"
             values = (owner_id,) if owner_id else ()
             rows = db.execute(f"SELECT snapshot FROM jobs {where} ORDER BY updated_at DESC,id LIMIT ? OFFSET ?", (*values, limit, offset)).fetchall()
             total = db.execute(f"SELECT count(*) FROM jobs {where}", values).fetchone()[0]
@@ -108,7 +112,7 @@ class ProductionStore:
         # sidecar, repair its status without changing its idempotency mapping.
         for metadata in Path(output_dir).glob("*.json"):
             try:
-                if metadata.is_symlink() or metadata.stat().st_size > 128_000:
+                if metadata.is_symlink() or metadata.stat().st_size > 4 * 1024 * 1024:
                     continue
                 job = json.loads(metadata.read_text(encoding="utf-8"))
                 if not isinstance(job, dict) or job.get("status") != "succeeded":
@@ -120,7 +124,7 @@ class ProductionStore:
                 if video.is_symlink() or not video.is_file():
                     continue
                 previous = self.get(job.get("id", ""))
-                if previous and previous.get("status") == "succeeded":
+                if previous and (previous.get("deleted_at") or previous.get("status") == "succeeded"):
                     continue
                 job.setdefault("provenance", {"source": "legacy_output", "reproducibility": "incomplete"})
                 job.update(progress=100, output_url=f"/generated/{filename}")

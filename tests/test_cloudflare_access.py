@@ -227,6 +227,24 @@ class AccessHTTPTests(test_backend.BackendTests):
         self.assertEqual(self.call('POST', '/api/auth/register', raw, external=True)[0], 403)
         self.client.append.assert_not_called()
 
+    def test_logout_after_switching_cloudflare_identity_is_safe(self):
+        raw = dict(name='Alice', username='alice', email='alice@example.test', password='Abcd1234')
+        self.assertEqual(self.call('POST', '/api/auth/register', raw)[0], 201)
+        login = self.call('POST', '/api/auth/login', raw, external=True)
+        cookie = login[1]['Set-Cookie'].split(';', 1)[0]
+        csrf = json.loads(login[2])['csrf_token']
+        session = json.loads(self.call('GET', '/api/auth/session', external=True, cookie=cookie)[2])
+        self.assertEqual(session['cloudflare_logout_url'], '/cdn-cgi/access/logout')
+        self.verifier.verify.side_effect = lambda _: 'bob@example.test'
+        self.assertEqual(self.call('GET', '/api/models', external=True, cookie=cookie)[0], 403)
+        headers = {'Origin': settings().origin, 'Host': 'video.example.test', 'Cf-Access-Jwt-Assertion': 'valid', 'Cookie': cookie}
+        self.assertEqual(self.request('POST', '/api/auth/logout', headers=headers)[0], 403)
+        result = self.request('POST', '/api/auth/logout', headers={**headers, 'X-CSRF-Token': csrf})
+        self.assertEqual(result[0], 200, result)
+        self.assertIn('Max-Age=0; Secure', result[1]['Set-Cookie'])
+        self.assertEqual(json.loads(result[2])['cloudflare_logout_url'], '/cdn-cgi/access/logout')
+        self.assertIsNone(self.auth.session(cookie.split('=', 1)[1], require_verified=False))
+
     # Base suite covers legacy behavior separately; these tests explicitly assert
     # that the same media/worker endpoints cannot bypass the new external gate.
     def test_cuda_failure_and_payload_validation(self):

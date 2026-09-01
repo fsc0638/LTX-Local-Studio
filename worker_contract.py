@@ -7,10 +7,11 @@ import os
 from pathlib import Path
 import re
 import model_registry
+from video_settings import ASPECT_RATIOS, MAX_FRAMES
+import mv_timeline
 
 
-MAX_FRAMES = 257
-CONTRACT_VERSION = "1.2.0"
+CONTRACT_VERSION = "1.4.0"
 # Immutable named defaults. Explicit request fields override a profile; return
 # all resolved values so clients never have to reconstruct them from defaults.
 PROFILES = {
@@ -21,7 +22,8 @@ PROFILES = {
 }
 MAX_TIMEOUT = 7200
 PARAMETERS = ("model", "profile", "mode", "prompt", "image_id", "image_strength", "width", "height",
-              "frames", "fps", "seed", "audio", "offload", "timeout_seconds", "parameters", "media_type")
+              "frames", "fps", "seed", "audio", "offload", "timeout_seconds", "parameters", "media_type", "aspect_ratio",
+              "render_mode", "directing", "timeline", "segment_seconds", "duration_seconds", "segments", "source_geometry")
 
 
 def default_timeout():
@@ -50,9 +52,10 @@ def validate_request(raw, idempotency_key):
         raise ValueError("Expected a JSON object")
     allowed = {"prompt", "model", "mode", "image_id", "width", "height", "frames", "fps",
                "duration_seconds", "seed", "audio", "offload", "external", "profile",
-               "image_strength", "timeout_seconds", "parameters"}
+               "image_strength", "timeout_seconds", "parameters", "aspect_ratio", "negative_prompt",
+               "render_mode", "directing", "timeline", "segment_seconds"}
     if set(raw) - allowed:
-        raise ValueError("Unsupported field. Character/music/marketing assets belong to the calling project.")
+        raise ValueError("Unsupported request field; query the generic worker contract.")
     if not isinstance(idempotency_key, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{8,128}", idempotency_key):
         raise ValueError("Idempotency-Key must be 8–128 letters, digits, dots, underscores, colons or hyphens")
     if not isinstance(raw.get("prompt"), str):
@@ -83,10 +86,24 @@ def parse_request(raw, parse_payload):
     if not isinstance(profile, str) or profile not in PROFILES:
         raise ValueError("Unknown profile; query capabilities for versioned profiles")
     payload = {**PROFILES[profile], **raw, "profile": profile}
+    if raw.get("mode") == "i2v" and "aspect_ratio" not in raw and "width" not in raw and "height" not in raw:
+        payload.pop("width", None)
+        payload.pop("height", None)
+    if "aspect_ratio" in raw:
+        if "width" in raw or "height" in raw:
+            raise ValueError("Use aspect_ratio OR width/height, not both")
+        payload.pop("width", None)
+        payload.pop("height", None)
     requested = payload.pop("duration_seconds", None)
     external = payload.pop("external", {})
     if payload.get("mode", "t2v") == "t2v" and ("image_id" in raw or "image_strength" in raw):
         raise ValueError("image_id and image_strength require mode=i2v")
+    if raw.get("render_mode") == "sequence":
+        if "frames" in raw:
+            raise ValueError("Sequence uses duration_seconds, not frames")
+        payload.pop("frames", None)
+        payload["duration_seconds"] = requested
+        return parse_payload(payload), external, requested
     if "duration_seconds" in raw:
         if type(requested) not in (int, float) or not math.isfinite(requested) or requested <= 0:
             raise ValueError("duration_seconds must be positive and finite")
@@ -107,10 +124,14 @@ def resolved_parameters(payload):
 
 def validation_result(payload, external, requested):
     return {"valid": True, "contract_version": CONTRACT_VERSION,
+            "effective_prompt": mv_timeline.compose_prompt(payload["prompt"], payload.get("directing", {})),
             "resolved_parameters": resolved_parameters(payload), "external": external,
             "requested_duration_seconds": requested,
             "configured_duration_seconds": payload["frames"] / payload["fps"] if payload.get("frames") and payload.get("fps") else None,
-            "warnings": ["Parameter validation is not a GPU memory or visual quality guarantee."]}
+            "warnings": ["Parameter validation is not a GPU memory or visual quality guarantee."] +
+                        (["Long clips beyond 20 seconds are experimental; temporal consistency and motion may degrade."]
+                         if payload.get("frames") and payload.get("fps") and (payload["frames"] - 1) / payload["fps"] > 20 else []) + payload.get("timeline_warnings", []) +
+                        (["Sequence joins independently generated shots. Character continuity and lip sync require visual review."] if payload.get("render_mode") == "sequence" else [])}
 
 
 def describe_job(job):
@@ -152,6 +173,15 @@ def capabilities(runtime):
                        "timeout_seconds_min": 30, "timeout_seconds_max": MAX_TIMEOUT},
             "profiles": PROFILES, "default_profile": "compat-v1", "default_timeout_seconds": default_timeout(),
             "image_strength": {"min": 0, "max": 1, "default": 0.8},
+            "aspect_ratios": ASPECT_RATIOS,
+            "source_aspect_ratio": {"value": "source", "requires": "image_id", "alignment": 64, "fit": "contain_letterbox_no_crop"},
+            "directing": mv_timeline.DIRECTING,
+            "sequence": {"supported": True, "max_seconds": mv_timeline.MAX_SECONDS, "max_segments": mv_timeline.MAX_SEGMENTS,
+                         "default_segment_seconds": 10, "audio_conditioning": "experimental_distilled_frozen_audio_v1",
+                         "precise_lip_sync": False, "lrc": "line_timestamps_with_offset", "continuous_shot": False},
+            "negative_prompt": {"supported": False, "reason": "Installed distilled pipeline uses CFG=1 and encodes only the positive prompt. Dev + guided pipeline is required."},
+            "duration_guidance": {"recommended_max_seconds": 20, "longer_clips_experimental": True,
+                                  "host_frame_limit_is_not_a_model_quality_guarantee": True},
             "sampling": {"schedule": "distilled_fixed", "stage_1_steps": 8, "stage_2_steps": 3,
                          "custom_steps": False, "custom_guidance": False},
             "quality_control": "full_decode_v1_technical_gate_visual_warnings_only",

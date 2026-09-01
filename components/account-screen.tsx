@@ -138,6 +138,9 @@ export function AccountScreen({ mode }: { mode: Mode }) {
     // eslint-disable-next-line react/react-compiler -- Hydrate browser-only preferences after the server render.
     if (saved === "zh-TW" || saved === "en" || saved === "ja") setLocale(saved);
     const value = new URLSearchParams(location.hash.slice(1)).get("token") || "";
+    if (new URLSearchParams(location.search).get("signed_out") === "1") {
+      setNotice(saved === "en" ? "Signed out of this service. Sign in again to generate media." : saved === "ja" ? "サービスからログアウトしました。生成には再ログインが必要です。" : "已登出本站。再次使用影片服務時請重新登入。");
+    }
     setToken(value);
     if (location.hash) history.replaceState(null, "", location.pathname);
     fetch("/api/auth/config", {credentials: "same-origin", cache: "no-store"}).then(r => {

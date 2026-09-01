@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable next/no-img-element, jsx-a11y/media-has-caption -- Authenticated local media uses direct URLs; generated/source videos do not yet have caption files. */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Box,
   Check,
@@ -44,6 +44,9 @@ import { MediaLibrary, fileCopy, type Asset } from "@/components/media-library";
 import { AccountGate, AccountMenu } from "@/components/account-gate";
 import { serviceFetch } from "@/lib/service-session";
 import { ModelComposer, type InstalledModel } from "@/components/model-composer";
+import { DeleteMediaButton } from "@/components/delete-media-button";
+import { durationFrames, durationPresets, sequenceFrames, videoCopy, type VideoCapabilities } from "@/lib/video-settings";
+import { DirectingControls, TimelineControls, emptyTimeline, mvCopy, type Directing, type TimelineDraft } from "@/components/mv-controls";
 
 const initialPrompt =
   "電影感近景，一位穿著深色外套的女性站在潮濕的台北街口。鏡頭緩慢向前推進，霓虹燈在積水中形成珊瑚紅與青綠色倒影，微風帶動髮絲，自然環境音，細緻膠片顆粒。";
@@ -210,9 +213,10 @@ function Studio() {
   const [models, setModels] = useState<InstalledModel[]>([]);
   const [catalogError, setCatalogError] = useState(false);
   const [mode, setMode] = useState("t2v");
-  const [width, setWidth] = useState(768);
-  const [height, setHeight] = useState(512);
-  const [frames, setFrames] = useState(49);
+  const [aspectRatio, setAspectRatio] = useState("16:9");
+  const [seconds, setSeconds] = useState("2");
+  const [capabilities, setCapabilities] = useState<VideoCapabilities | null>(null);
+  const [capabilitiesFailed, setCapabilitiesFailed] = useState(false);
   const [fps, setFps] = useState("24");
   const [seed, setSeed] = useState(42);
   const precision = "bf16";
@@ -230,10 +234,46 @@ function Studio() {
   const [jobMessage, setJobMessage] = useState("");
   const [jobError, setJobError] = useState("");
   const [reference, setReference] = useState<Asset | null>(null);
+  const [directing, setDirecting] = useState<Directing>({});
+  const [timeline, setTimeline] = useState<TimelineDraft>({ ...emptyTimeline });
+  const [referenceUploading, setReferenceUploading] = useState(false);
+  const referenceInput = useRef<HTMLInputElement>(null);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [computeDevice, setComputeDevice] = useState("");
+  const deletedOutputs = useRef(new Set<string>());
   const transfer = fileCopy[locale];
+  const videoText = videoCopy[locale];
+  const mvText = mvCopy[locale];
+  const maxFrames = capabilities?.limits.max_frames || 481;
+  const dimensions = aspectRatio === "source" ? reference?.suggested_dimensions : capabilities?.aspect_ratios[aspectRatio];
+  const { width, height } = dimensions || { width: 1024, height: 576 };
+  const isSequence = timeline.enabled || Number(seconds) > maxFrames / Number(fps);
+  const validFrames = isSequence ? sequenceFrames(Number(seconds), Number(fps), capabilities?.sequence?.max_seconds || 180) : durationFrames(Number(seconds), Number(fps), maxFrames);
+  const frames = validFrames || 0;
+  const maximumSeconds = capabilities?.sequence?.max_seconds || maxFrames / Number(fps);
+  const settingsReady = Boolean(capabilities && dimensions && validFrames && (!isSequence || capabilities.sequence?.supported));
+  const selectReference = (asset: Asset) => {
+    setReference(asset); setMode("i2v"); setAspectRatio(asset.suggested_aspect_ratio || "source"); setTab("create");
+  };
+  const uploadReference = async (file?: File) => {
+    if (!file) return;
+    setReferenceUploading(true); setJobError("");
+    try {
+      if (file.size > 50 * 1024 * 1024) throw new Error(transfer.tooLarge);
+      const mime = file.type || ({ png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp" } as Record<string, string>)[file.name.split(".").pop()?.toLowerCase() || ""];
+      if (!mime?.startsWith("image/")) throw new Error("PNG / JPEG / WebP");
+      const response = await serviceFetch(`/api/v1/assets?name=${encodeURIComponent(file.name)}`, { method: "POST", headers: { "Content-Type": mime }, body: file });
+      const result = await response.json() as Asset & { error?: string };
+      if (!response.ok) throw new Error(result.error || transfer.failed);
+      selectReference(result);
+    } catch (issue) { setJobError(issue instanceof Error ? issue.message : transfer.failed); } finally { setReferenceUploading(false); }
+  };
+  const removeOutput = (id: string) => {
+    deletedOutputs.current.add(id);
+    setLiveOutputs(current => current.filter(item => item.id !== id));
+    setSelectedOutput(current => current.id === id ? emptyOutput : current);
+  };
   const ui = translations[locale];
   const visibleStatus = generating
     ? ui.generating
@@ -245,21 +285,14 @@ function Studio() {
   const formatMeta = (value: string) => value.replace("frames", ui.frameUnit);
   const formatRuntime = (value: string) => value === "Completed" ? ui.completedValue : value.replace("sec", ui.secondAbbr);
 
-  const duration = useMemo(() => (frames / Number(fps)).toFixed(2), [frames, fps]);
-  const durationPreset = String(Math.max(2, Math.min(10, Math.round(frames / Number(fps) / 2) * 2)));
-  const setDurationSeconds = (seconds: string) => {
-    const targetFrames = Math.round((Number(seconds) * Number(fps)) / 8) * 8 + 1;
-    setFrames(Math.min(257, targetFrames));
-  };
-  const setFrameRateKeepingDuration = (nextFps: string) => {
-    const seconds = frames / Number(fps);
-    setFps(nextFps);
-    setFrames(Math.min(257, Math.round((seconds * Number(nextFps)) / 8) * 8 + 1));
-  };
-  const command = useMemo(
-    () => `LTX_WIDTH=${width} LTX_HEIGHT=${height} LTX_FRAMES=${frames} LTX_FPS=${fps} LTX_SEED=${seed} LTX_AUDIO=${audio ? 1 : 0}${offload ? " LTX_OFFLOAD=cpu" : ""}${mode === "i2v" && reference ? ` LTX_IMAGE="uploads/${reference.id}…"` : ""} ./scripts/run-ltx-2.3.sh "${prompt.slice(0, 42)}${prompt.length > 42 ? "…" : ""}" output.mp4`,
-    [prompt, width, height, frames, fps, seed, offload, audio, mode, reference]
-  );
+  const duration = validFrames ? (frames / Number(fps)).toFixed(3) : "—";
+  const durationPreset = durationPresets.includes(Number(seconds)) && Number(seconds) <= maximumSeconds ? String(Number(seconds)) : "custom";
+  const generationRequest = { prompt, model, mode, aspect_ratio: aspectRatio, duration_seconds: Number(seconds),
+    fps: Number(fps), seed, offload, audio: isSequence && timeline.music ? true : audio,
+    image_id: mode === "i2v" ? reference?.id : undefined, directing,
+    ...(isSequence ? { render_mode: "sequence", segment_seconds: timeline.segmentSeconds,
+      timeline: { audio_id: timeline.music?.id, audio_start_seconds: timeline.audioStart, audio_mode: timeline.music ? timeline.audioMode : "soundtrack", lrc: timeline.lrc, cues: timeline.cues } } : {}) };
+  const command = `POST /api/v1/jobs\n${JSON.stringify(generationRequest, null, 2)}`;
 
   useEffect(() => {
     const savedLocale = window.localStorage.getItem("ltx-studio-locale");
@@ -274,6 +307,12 @@ function Studio() {
 
   useEffect(() => {
     const abort = new AbortController();
+    serviceFetch("/api/v1/capabilities", { signal: abort.signal }).then(async response => {
+      if (!response.ok) throw new Error();
+      const data = await response.json() as VideoCapabilities;
+      if (!data.aspect_ratios || !data.limits?.max_frames) throw new Error();
+      if (!abort.signal.aborted) setCapabilities(data);
+    }).catch(() => { if (!abort.signal.aborted) setCapabilitiesFailed(true); });
     serviceFetch("/api/models", { signal: abort.signal }).then(async (response) => {
       if (!response.ok) throw new Error();
       return response.json() as Promise<{ models: InstalledModel[] }>;
@@ -300,11 +339,10 @@ function Studio() {
     const loadGeneratedOutputs = () => serviceFetch(`${API_BASE}/api/outputs`)
       .then((response) => response.json() as Promise<{ outputs?: ApiJob[] }>)
       .then((data) => {
-        if (!active || !Array.isArray(data.outputs) || data.outputs.length === 0) return;
-        const restored = data.outputs.filter((job) => !job.media_type || job.media_type === "video").map(outputFromJob);
-        if (!restored.length) return;
+        if (!active || !Array.isArray(data.outputs)) return;
+        const restored = data.outputs.filter((job) => (!job.media_type || job.media_type === "video") && !deletedOutputs.current.has(job.id)).map(outputFromJob);
         setLiveOutputs([...restored, ...outputItems]);
-        setSelectedOutput(restored[0]);
+        setSelectedOutput(current => restored.find(item => item.id === current.id) || restored[0] || emptyOutput);
       })
       .catch(() => undefined);
     void checkHealth();
@@ -355,7 +393,7 @@ function Studio() {
   }, [activeJobId, ui.cannotRead, ui.inferenceMessage, ui.completedMessage, ui.cannotConnect]);
 
   const simulateGeneration = async () => {
-    if (generating) return;
+    if (generating || !settingsReady) return;
     setJobError("");
     setJobMessage(ui.sendingMessage);
     setGenerating(true);
@@ -363,10 +401,10 @@ function Studio() {
     setProgress(1);
     setElapsed(0);
     try {
-      const response = await serviceFetch(`${API_BASE}/api/jobs`, {
+      const response = await serviceFetch(`${API_BASE}/api/v1/jobs`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, model, mode, width, height, frames, fps: Number(fps), seed, offload, audio, image_id: mode === "i2v" ? reference?.id : undefined }),
+        headers: { "Content-Type": "application/json", "Idempotency-Key": crypto.randomUUID() },
+        body: JSON.stringify(generationRequest),
       });
       const created = await response.json() as ApiJob;
       if (!response.ok) throw new Error(created.error || ui.cannotCreate);
@@ -444,15 +482,13 @@ function Studio() {
                 </section>
 
                 <section className="border border-border bg-white">
-                  <div className="flex items-center justify-between border-b border-border px-5 py-4"><div className="flex items-center gap-2"><Settings2 className="size-4 text-[#e85578]"/><h2 className="text-xs font-extrabold tracking-[0.13em]">{ui.generationSettings}</h2></div><button onClick={() => { setWidth(768); setHeight(512); setFrames(49); setFps("24"); setSeed(42); }} className="flex items-center gap-2 text-[10px] font-bold tracking-[0.1em] text-muted-foreground hover:text-foreground"><RotateCcw className="size-3"/>{ui.reset}</button></div>
+                  <div className="flex items-center justify-between border-b border-border px-5 py-4"><div className="flex items-center gap-2"><Settings2 className="size-4 text-[#e85578]"/><h2 className="text-xs font-extrabold tracking-[0.13em]">{ui.generationSettings}</h2></div><button onClick={() => { setAspectRatio("16:9"); setSeconds("2"); setFps("24"); setSeed(42); }} className="flex items-center gap-2 text-[10px] font-bold tracking-[0.1em] text-muted-foreground hover:text-foreground"><RotateCcw className="size-3"/>{ui.reset}</button></div>
                   <div className="grid gap-px bg-border md:grid-cols-2 xl:grid-cols-3">
-                    <label className="bg-white p-5"><Label>{ui.width}</Label><Input type="number" value={width} onChange={(e) => setWidth(Number(e.target.value))} className="rounded-none" /></label>
-                    <label className="bg-white p-5"><Label>{ui.height}</Label><Input type="number" value={height} onChange={(e) => setHeight(Number(e.target.value))} className="rounded-none" /></label>
-                    <label className="bg-white p-5"><Label>{ui.frames}</Label><Input type="number" value={frames} onChange={(e) => setFrames(Number(e.target.value))} className="rounded-none" /></label>
-                    <label className="bg-white p-5"><Label>{ui.videoDuration}</Label><Select value={durationPreset} onValueChange={(value) => value && setDurationSeconds(value)}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{[2,4,6,8,10].map((value) => <SelectItem key={value} value={String(value)} disabled={value === 10 && Number(fps) === 30}>{value} {ui.seconds}</SelectItem>)}</SelectContent></Select><span className="mt-2 block text-[9px] text-muted-foreground">{ui.actual} {duration}s · {transfer.estimated}</span></label>
-                    <label className="bg-white p-5"><Label>{ui.frameRate}</Label><Select value={fps} onValueChange={(value) => value && setFrameRateKeepingDuration(value)}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="16">16 FPS</SelectItem><SelectItem value="24">24 FPS</SelectItem><SelectItem value="30">30 FPS</SelectItem></SelectContent></Select></label>
+                    <label className="bg-white p-5"><Label>{videoText.ratio}</Label><Select value={aspectRatio} onValueChange={(value) => value && setAspectRatio(value)} disabled={!capabilities}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{Object.keys(capabilities?.aspect_ratios || { "16:9": {} }).map(ratio => <SelectItem key={ratio} value={ratio}>{ratio}</SelectItem>)}{mode === "i2v" && reference && <SelectItem value="source">{mvText.source} · {reference.source_ratio}</SelectItem>}</SelectContent></Select><span className="mt-2 block text-[10px] text-muted-foreground">{videoText.dimensions} · {width} × {height}</span></label>
+                    <div className="bg-white p-5"><Label>{ui.videoDuration}</Label><Select value={durationPreset} onValueChange={value => value && setSeconds(value === "custom" ? "" : value)}><SelectTrigger aria-label={ui.videoDuration} className="w-full"><SelectValue /></SelectTrigger><SelectContent>{durationPresets.filter(value => value <= maximumSeconds).map(value => <SelectItem key={value} value={String(value)}>{value} {ui.seconds}</SelectItem>)}<SelectItem value="custom">{videoText.custom}</SelectItem></SelectContent></Select><Input aria-label={videoText.custom} type="number" min="0.125" max={maximumSeconds} step="any" value={seconds} onChange={event => setSeconds(event.target.value)} className="mt-2 rounded-none" /><Button type="button" variant="outline" disabled={!capabilities} className="mt-2 w-full rounded-none text-[10px]" onClick={() => setSeconds(String(maximumSeconds))}>{videoText.maximum} · {maximumSeconds.toFixed(3)}s</Button><span className="mt-2 block text-[10px] text-muted-foreground">{ui.actual} {duration}s · {validFrames ? frames : "—"} {ui.frameUnit}</span><span className="mt-2 block text-[10px] text-[#a32e4a]">{isSequence ? mvText.sequence : mvText.single}</span></div>
+                    <label className="bg-white p-5"><Label>{ui.frameRate}</Label><Select value={fps} onValueChange={value => value && setFps(value)}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent>{[8,16,24,25,30,50,60].filter(value => !capabilities || value >= capabilities.limits.fps_min && value <= capabilities.limits.fps_max).map(value => <SelectItem key={value} value={String(value)}>{value} FPS</SelectItem>)}</SelectContent></Select><span className="mt-2 block text-[10px] text-muted-foreground">{videoText.ceiling} · {maxFrames} {ui.frameUnit}</span></label>
                     <label className="bg-white p-5"><Label>{ui.inferenceSteps}</Label><Input value="8 + 3" disabled className="rounded-none" /></label>
-                    <label className="bg-white p-5"><Label>{ui.cfgScale}</Label><Input value="—" disabled className="rounded-none" /></label>
+                    <label className="bg-white p-5"><Label>{ui.cfgScale}</Label><Input value="1 · Distilled" readOnly className="rounded-none" /></label>
                     <label className="bg-white p-5"><Label>{ui.seed}</Label><Input type="number" value={seed} onChange={(e) => setSeed(Number(e.target.value))} className="rounded-none" /></label>
                     <label className="bg-white p-5"><Label>{ui.precision}</Label><Select value={precision} disabled><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="bf16">BF16</SelectItem></SelectContent></Select></label>
                     <label className="bg-white p-5"><Label>{ui.attention}</Label><Select value={attention} disabled><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="sdpa">SDPA</SelectItem></SelectContent></Select></label>
@@ -461,10 +497,11 @@ function Studio() {
                     <ToggleRow label={ui.upscaler} note={ui.upscalerNote} checked={upscaler} onChange={setUpscaler} disabled />
                     <ToggleRow label={ui.offload} note={ui.offloadNote} checked={offload} onChange={setOffload} />
                     <ToggleRow label={ui.tiling} note={ui.tilingNote} checked={tiling} onChange={setTiling} disabled />
-                    <ToggleRow label={ui.audio} note={ui.audioNote} checked={audio} onChange={setAudio} />
+                    <ToggleRow label={isSequence && timeline.music ? mvText.music : ui.audio} note={isSequence && timeline.music ? mvText.soundtrack : ui.audioNote} checked={isSequence && timeline.music ? true : audio} onChange={setAudio} disabled={Boolean(isSequence && timeline.music)} />
                   </div>
-                  <div className="border-t border-border p-5"><p className="text-[10px] leading-5 text-muted-foreground">{transfer.fixed}</p><Button variant="outline" className="mt-3 rounded-none text-[10px]" disabled={generating} onClick={() => { setWidth(384); setHeight(256); setFrames(17); setFps("24"); setOffload(false); }}><Zap className="size-3" />{transfer.draft}</Button></div>
+                  <div className="border-t border-border p-5"><p className="text-[10px] leading-5 text-muted-foreground">{transfer.fixed}</p><p className="mt-2 text-[11px] leading-5 text-muted-foreground">{videoText.resource}</p>{!capabilities && <output className="mt-2 block text-xs">{videoText.loading}</output>}{capabilities && !validFrames && <p role="alert" className="mt-2 text-xs text-red-700">{isSequence ? "0.125–180s" : videoText.invalid}</p>}{isSequence && <p className="mt-2 text-xs text-amber-800">{mvText.note}</p>}<Button variant="outline" className="mt-3 rounded-none text-[10px]" disabled={generating} onClick={() => { setTimeline({ ...emptyTimeline }); setAspectRatio("1:1"); setSeconds("0.667"); setFps("24"); setOffload(false); }}><Zap className="size-3" />{videoText.quick}</Button></div>
                 </section>
+                <TimelineControls locale={locale} catalog={capabilities?.directing} value={timeline} onChange={setTimeline} request={generationRequest} onDuration={value => setSeconds(String(value))} />
               </div>
 
               <aside className="space-y-6 xl:sticky xl:top-[122px] xl:self-start">
@@ -473,20 +510,23 @@ function Studio() {
                   <div className="space-y-5 p-6">
                     <div className="flex flex-wrap gap-2">{promptPresets.map(([label, value], index) => <button key={label} onClick={() => setPrompt(value)} className="border border-border px-3 py-2 text-[9px] font-bold tracking-[0.12em] hover:border-[#ff6f91] hover:bg-[#fff5f7]">{[ui.cinematic, ui.portrait, ui.product][index]}</button>)}</div>
                     <label className="block"><Label>{ui.prompt}</Label><Textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} className="min-h-40 resize-none rounded-none bg-[#fafaf8] text-sm leading-6 shadow-none focus-visible:ring-[#ff6f91]/25" /><span className="mt-2 block text-right text-[10px] text-muted-foreground">{prompt.length} {ui.characters}</span></label>
-                    <label className="block"><Label>{ui.negativePrompt}</Label><Textarea value="—" disabled className="min-h-12 resize-none rounded-none bg-[#fafaf8] text-xs leading-5 shadow-none" /></label>
+                    <section className="space-y-3 border-t border-border pt-4"><h3 className="text-xs font-bold">{mvText.director}</h3><DirectingControls locale={locale} catalog={capabilities?.directing} value={directing} onChange={setDirecting} /></section>
+                    <section aria-label={ui.negativePrompt} className="border border-[#efc4d0] bg-[#fff8fa] p-4 text-[11px] leading-6"><h3 className="font-bold text-[#a32e4a]">{videoText.negativeTitle}</h3><p className="mt-1">{videoText.negative}</p><p className="mt-2 text-muted-foreground">{videoText.promptTip}</p></section>
                     <div className="grid gap-4 sm:grid-cols-2">
                       <label><Label>{ui.model}</Label><Input value="LTX-2.3 Distilled" readOnly className="rounded-none" /></label>
-                      <label><Label>{ui.mode}</Label><Select value={mode} onValueChange={(value) => value && setMode(value)}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="t2v">{ui.t2v}</SelectItem><SelectItem value="i2v">{ui.i2v}</SelectItem><SelectItem value="v2v" disabled>{ui.v2v}</SelectItem></SelectContent></Select></label>
+                      <label><Label>{ui.mode}</Label><Select value={mode} onValueChange={(value) => { if (!value) return; setMode(value); if (value === "t2v" && aspectRatio === "source") setAspectRatio("16:9"); }}><SelectTrigger className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="t2v">{ui.t2v}</SelectItem><SelectItem value="i2v">{ui.i2v}</SelectItem><SelectItem value="v2v" disabled>{ui.v2v}</SelectItem></SelectContent></Select></label>
                     </div>
                     {mode !== "t2v" && <div className="border border-dashed border-[#b8b8b2] bg-[#fafaf8] p-5 text-center"><ImageIcon className="mx-auto size-5 text-[#25b6a6]"/><p className="mt-2 text-xs font-bold">{ui.chooseAsset}</p><button onClick={() => setTab("assets")} className="mt-2 text-[10px] font-bold text-[#e85578] underline underline-offset-4">{ui.openAssetLibrary}</button></div>}
-                    {mode === "i2v" && reference && <div className="border border-[#bfe8e3] p-3"><img src={`${API_BASE}${reference.url}`} alt={reference.name} className="max-h-32 w-full object-contain" /><p className="mt-2 truncate text-[10px]">{transfer.selected}: {reference.name} · frame 0 / 0.8</p><button onClick={() => setReference(null)} className="mt-2 text-[10px] text-[#e85578] underline">{transfer.remove}</button></div>}
-                    <div className="grid grid-cols-3 gap-px bg-border text-center"><div className="bg-[#fafaf8] p-3"><p className="text-[9px] text-muted-foreground">{ui.duration}</p><strong className="mt-1 block text-xs">{duration}s</strong></div><div className="bg-[#fafaf8] p-3"><p className="text-[9px] text-muted-foreground">{ui.canvas}</p><strong className="mt-1 block text-xs">{width}×{height}</strong></div><div className="bg-[#fafaf8] p-3"><p className="text-[9px] text-muted-foreground">VRAM</p><strong className="mt-1 block text-xs">~42 GiB</strong></div></div>
+                    <input ref={referenceInput} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" aria-label={mvText.imageImport} onChange={event => { void uploadReference(event.target.files?.[0]); event.target.value = ""; }} /><Button variant="outline" className="w-full rounded-none text-xs" disabled={referenceUploading || generating} onClick={() => referenceInput.current?.click()}><ImageIcon />{referenceUploading ? mvText.loading : mvText.imageImport}</Button>
+                    {mode === "i2v" && reference && <div className="border border-[#bfe8e3] p-3"><img src={`${API_BASE}${reference.url}`} alt={reference.name} className="max-h-32 w-full object-contain" /><p className="mt-2 truncate text-[10px]">{transfer.selected}: {reference.name} · {reference.source_ratio}</p><p className="mt-2 text-[10px] leading-5">{mvText.aligned} {reference.ratio_error_percent ? `Δ ${reference.ratio_error_percent}%` : ""}</p><button onClick={() => { setReference(null); if (aspectRatio === "source") setAspectRatio("16:9"); }} className="mt-2 text-[10px] text-[#e85578] underline">{transfer.remove}</button></div>}
+                    <div className="grid grid-cols-3 gap-px bg-border text-center"><div className="bg-[#fafaf8] p-3"><p className="text-[9px] text-muted-foreground">{ui.duration}</p><strong className="mt-1 block text-xs">{duration}s</strong></div><div className="bg-[#fafaf8] p-3"><p className="text-[9px] text-muted-foreground">{ui.canvas}</p><strong className="mt-1 block text-xs">{aspectRatio} · {width}×{height}</strong></div><div className="bg-[#fafaf8] p-3"><p className="text-[9px] text-muted-foreground">VRAM</p><strong className="mt-1 block text-xs">{videoText.memory}</strong></div></div>
                     <div className={`border px-4 py-3 text-[10px] leading-5 ${backendOnline ? "border-[#bfe8e3] bg-[#f0fbf9] text-[#11786f]" : "border-[#e2e2de] bg-[#fafaf8] text-muted-foreground"}`}><span className="font-bold">{ui.localEngine} · </span>{backendOnline ? ui.engineConnected : ui.engineWaiting}</div>
                     {generating || progress > 0 ? <div className="space-y-2"><div className="flex justify-between text-[10px] font-bold tracking-[0.12em]"><span>{visibleStatus}</span><span>{progress}%</span></div><Progress value={progress} className="h-1.5 rounded-none [&>div]:bg-[#25b6a6]" />{jobMessage && <p className="text-[10px] leading-4 text-muted-foreground">{jobMessage}</p>}</div> : null}
                     <p className="text-[10px] leading-5 text-muted-foreground">{transfer.gpu}: {computeDevice || transfer.offline}{generating && <><br />{transfer.stage} · {transfer.elapsed} {Math.round(elapsed)}s</>}</p>
                     {jobError && <div role="alert" className="border border-red-200 bg-red-50 px-4 py-3 text-[10px] leading-5 text-red-700"><strong className="block">{ui.generationFailed}</strong>{jobError}</div>}
-                    <Button onClick={simulateGeneration} disabled={generating || !backendOnline || (mode === "i2v" && !reference)} className="h-12 w-full rounded-none bg-foreground text-[11px] font-bold tracking-[0.16em] text-background hover:bg-[#e85578]"><Play className="size-3.5 fill-current"/>{generating ? ui.generatingVideo : ui.generateVideo}</Button>
-                    {selectedOutput.src && <a href={selectedOutput.download || selectedOutput.src} download={selectedOutput.name} className="block border border-border p-3 text-center text-[11px] font-bold hover:border-[#e85578]">{transfer.download} · MP4</a>}
+                    {capabilitiesFailed && <div role="alert" className="border border-red-200 p-3 text-xs text-red-700">{ui.cannotConnect}<Button variant="outline" onClick={() => location.reload()} className="ml-2 rounded-none">{locale === "zh-TW" ? "重新載入" : locale === "en" ? "Reload" : "再読み込み"}</Button></div>}
+                    <Button onClick={simulateGeneration} disabled={generating || !backendOnline || !settingsReady || !prompt.trim() || (mode === "i2v" && !reference)} className="h-12 w-full rounded-none bg-foreground text-[11px] font-bold tracking-[0.16em] text-background hover:bg-[#e85578]"><Play className="size-3.5 fill-current"/>{generating ? ui.generatingVideo : ui.generateVideo}</Button>
+                    {selectedOutput.src && <><a href={selectedOutput.download || selectedOutput.src} download={selectedOutput.name} className="block border border-border p-3 text-center text-[11px] font-bold hover:border-[#e85578]">{transfer.download} · MP4</a><DeleteMediaButton locale={locale} kind="jobs" id={selectedOutput.id} name={selectedOutput.name} onDeleted={() => removeOutput(selectedOutput.id)} /></>}
                     <p className="text-center text-[9px] leading-4 text-muted-foreground">{ui.generateNote}</p>
                   </div>
                 </section>
@@ -499,7 +539,7 @@ function Studio() {
         {tab === "assets" && (
           <section>
             <SectionTitle eyebrow={ui.assetsEyebrow} title={ui.assetsTitle} note={ui.assetsNote} />
-            <MediaLibrary locale={locale} onSelect={(asset) => { setReference(asset); setMode("i2v"); setTab("create"); }} />
+            <MediaLibrary locale={locale} onSelect={selectReference} onDelete={(id) => { if (reference?.id === id) { setReference(null); if (aspectRatio === "source") setAspectRatio("16:9"); } if (timeline.music?.id === id) setTimeline(current => ({ ...current, music: null, audioStart: 0 })); }} />
             <div className="grid gap-6 lg:grid-cols-[1.35fr_.65fr]">
               <div>
                 <div className="mb-4 flex items-center justify-between"><p className="text-[10px] font-bold tracking-[0.15em]">{ui.mediaReferences}</p><Button variant="outline" className="rounded-none text-[10px] font-bold tracking-[0.12em]"><FolderOpen className="size-3.5"/>{ui.openFolder}</Button></div>
@@ -535,12 +575,13 @@ function Studio() {
             <div className="grid gap-6 xl:grid-cols-2">
               {liveOutputs.map((item, index) => (
                 <article key={item.id} className="overflow-hidden border border-border bg-white">
-                  <a href={item.download || item.src} download={item.name} className="block border-b border-border px-6 py-3 text-right text-[11px] font-bold hover:text-[#e85578]">{transfer.download} · MP4</a>
+                  <div className="flex flex-wrap items-center justify-end gap-3 border-b border-border px-6 py-3"><a href={item.download || item.src} download={item.name} className="text-[11px] font-bold hover:text-[#e85578]">{transfer.download} · MP4</a><DeleteMediaButton locale={locale} kind="jobs" id={item.id} name={item.name} onDeleted={() => removeOutput(item.id)} /></div>
                   <div className="relative aspect-video bg-black"><video className="h-full w-full object-contain" controls preload="metadata" poster={item.poster || undefined} src={item.src}/><span className="absolute left-4 top-4 bg-[#25b6a6] px-3 py-1 text-[9px] font-bold tracking-[0.12em] text-white">RUN 0{index + 1} · {ui.runPassed}</span></div>
                   <div className="p-6"><div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start"><div><p className="text-base font-extrabold tracking-[0.03em]">{item.name}</p><p className="mt-2 text-xs text-muted-foreground">{formatMeta(item.meta)}</p></div><Button onClick={() => { setSelectedOutput(item); setTab("create"); }} variant="outline" className="rounded-none text-[10px] font-bold tracking-[0.1em]">{ui.useAsPreview}<ChevronRight className="size-3.5"/></Button></div><div className="mt-6 grid grid-cols-3 gap-px bg-border"><div className="bg-[#fafaf8] p-4"><Label>{ui.runtime}</Label><strong className="text-sm">{formatRuntime(item.runtime)}</strong></div><div className="bg-[#fafaf8] p-4"><Label>{ui.fileSize}</Label><strong className="text-sm">{item.size}</strong></div><div className="bg-[#fafaf8] p-4"><Label>{ui.codec}</Label><strong className="text-sm">H.264/AAC</strong></div></div></div>
                 </article>
               ))}
             </div>
+            {liveOutputs.length === 0 && <p className="border border-dashed border-border bg-white p-12 text-center text-sm text-muted-foreground">{locale === "zh-TW" ? "尚無產出，完成生成後會顯示於此。" : locale === "en" ? "No outputs yet. Completed generations will appear here." : "作品はありません。生成が完了するとここに表示されます。"}</p>}
             <div className="mt-6 border border-border bg-[#171918] p-6 text-white"><div className="grid gap-5 md:grid-cols-[auto_1fr_auto] md:items-center"><div className="grid size-12 place-items-center rounded-full border border-white/15"><Check className="size-5 text-[#25b6a6]"/></div><div><p className="text-sm font-bold">{ui.workflowConnected}</p><p className="mt-1 text-[11px] leading-5 text-white/55">{ui.workflowNote}</p></div><span className="text-[10px] font-bold tracking-[0.14em] text-[#76d5cb]">{liveOutputs.length} {ui.outputCount}</span></div></div>
           </section>
         )}

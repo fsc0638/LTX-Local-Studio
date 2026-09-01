@@ -48,7 +48,8 @@ class WorkerTests(test_backend.BackendTests):
             self.assertEqual(self.request(method, path)[0], 401)
         self.assertEqual(self.call("GET", "/api/v1/capabilities", Authorization="Bearer invalid")[0], 401)
         caps = json.loads(self.call("GET", "/api/v1/capabilities")[2])
-        self.assertEqual(caps["limits"]["max_frames"], 257)
+        self.assertEqual(caps["limits"]["max_frames"], contract.MAX_FRAMES)
+        self.assertFalse(caps["negative_prompt"]["supported"])
         self.assertFalse(caps["automatic_training"])
         self.assertFalse(caps["tenant_isolation"])
         with patch.object(contract, "api_key", return_value=""):
@@ -90,7 +91,7 @@ class WorkerTests(test_backend.BackendTests):
                 payload, _, _ = contract.parse_request(self.payload(duration_seconds=duration, fps=fps), backend.parse_payload)
                 self.assertGreaterEqual(payload["frames"] / fps, duration)
                 self.assertEqual((payload["frames"] - 1) % 8, 0)
-        for extra in ({"duration_seconds": 10, "fps": 30}, {"duration_seconds": 20},
+        for extra in ({"duration_seconds": contract.MAX_FRAMES / 30 + 1, "fps": 30}, {"duration_seconds": contract.MAX_FRAMES / 24 + 1},
                       {"duration_seconds": 0}, {"duration_seconds": -2}, {"duration_seconds": float("nan")},
                       {"duration_seconds": None},
                       {"duration_seconds": 2, "frames": 49}, {"width": 768.1}, {"frames": True},
@@ -100,6 +101,51 @@ class WorkerTests(test_backend.BackendTests):
             self.assertEqual(response[0], 400, (extra, response))
         self.assertEqual(self.call("POST", "/api/v1/jobs", self.payload(), key="")[0], 400)
         self.assertEqual(self.store.list_jobs()["total"], 0)
+
+    def test_extended_duration_exact_aspect_ratios_and_negative_prompt_contract(self):
+        for seconds, fps in ((12, 24), (20, 24), (30, 16), (60, 8)):
+            result = self.call("POST", "/api/v1/validate", {"prompt": "test", "duration_seconds": seconds, "fps": fps, "aspect_ratio": "9:16"})
+            self.assertEqual(result[0], 200, result)
+            resolved = json.loads(result[2])["resolved_parameters"]
+            self.assertGreaterEqual(resolved["frames"] / fps, seconds)
+            self.assertEqual((resolved["width"], resolved["height"]), (576, 1024))
+            self.assertEqual(resolved["aspect_ratio"], "9:16")
+        for ratio, size in contract.ASPECT_RATIOS.items():
+            actual = backend.parse_payload({"prompt": "test", "aspect_ratio": ratio})
+            a, b = map(int, ratio.split(":"))
+            self.assertEqual(actual["width"] * b, actual["height"] * a)
+            self.assertEqual(actual["width"] % 64, 0)
+            self.assertEqual(actual["height"] % 64, 0)
+            self.assertEqual(actual["width"], size["width"])
+        for extra in ({"aspect_ratio": "9:9:16"}, {"aspect_ratio": None}, {"aspect_ratio": "1:1", "width": 512},
+                      {"aspect_ratio": "4:3", "height": 512}, {"negative_prompt": "blurry"}, {"negative_prompt": None}):
+            result = self.call("POST", "/api/v1/validate", {"prompt": "test", **extra})
+            self.assertEqual(result[0], 400, (extra, result))
+            with self.assertRaises(ValueError):
+                backend.parse_payload({"prompt": "test", **extra})
+        accepted = self.call("POST", "/api/v1/jobs", {"prompt": "test", "aspect_ratio": "16:9", "duration_seconds": 20})
+        self.assertEqual(accepted[0], 202, accepted)
+        job = json.loads(accepted[2])
+        self.assertEqual(job["frames"], 481)
+        self.assertEqual(self.store.get(job["id"])["aspect_ratio"], "16:9")
+
+    def test_host_frame_setting_and_published_schema(self):
+        from video_settings import frame_limit
+        from worker_schema import openapi_document
+        from jsonschema import Draft202012Validator
+        for value in (257, 481, 601, 1201):
+            self.assertEqual(frame_limit(str(value)), value)
+        for value in ("auto", "481.1", "0", "480", "1209"):
+            with self.assertRaises(ValueError):
+                frame_limit(value)
+        schema = openapi_document()
+        validator = Draft202012Validator({"$ref": "#/components/schemas/JobRequest", "components": schema["components"]})
+        self.assertTrue(validator.is_valid({"prompt": "test", "duration_seconds": 20, "aspect_ratio": "16:9"}))
+        self.assertFalse(validator.is_valid({"prompt": "test", "aspect_ratio": "16:9", "width": 1024}))
+        self.assertFalse(validator.is_valid({"prompt": "test", "negative_prompt": "blurry"}))
+        with patch.object(contract, "MAX_FRAMES", 601):
+            payload, _, _ = contract.parse_request({"prompt": "test", "duration_seconds": 20, "fps": 30}, backend.parse_payload)
+            self.assertEqual(payload["frames"], 601)
 
     def test_restart_recovers_status_and_idempotency(self):
         job = json.loads(self.call("POST", "/api/v1/jobs", self.payload())[2])

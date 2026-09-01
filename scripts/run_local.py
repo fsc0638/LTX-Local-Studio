@@ -73,6 +73,9 @@ def main():
     from ltx_pipelines.utils import blocks
 
     install_audio_adapter(distilled, blocks)
+    if os.environ.get("LTX_AUDIO_REFERENCE"):
+        from audio_conditioning import install
+        install(distilled)
     distilled.main()
 
 

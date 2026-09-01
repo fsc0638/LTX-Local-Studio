@@ -9,6 +9,7 @@ import math
 import os
 import re
 from typing import Callable
+from video_settings import MAX_FRAMES
 
 
 FORMATS = {"video": ("mp4", "video/mp4"), "image": ("png", "image/png"), "text": ("txt", "text/plain; charset=utf-8")}
@@ -88,7 +89,7 @@ class MediaAdapter:
         if self.media_type == "video":
             if any(type(payload.get(key)) is not int or payload[key] <= 0 for key in ("width", "height", "frames", "fps")):
                 raise ValueError("Video adapters must resolve width, height, frames and fps")
-            if payload["frames"] > 257 or payload["width"] > 1536 or payload["height"] > 1536 or payload["fps"] > 60:
+            if payload["frames"] > MAX_FRAMES or payload["width"] > 1536 or payload["height"] > 1536 or payload["fps"] > 60:
                 raise ValueError("Video adapter exceeds worker resource limits")
             payload["audio"] = values.get("audio", False)
         return payload

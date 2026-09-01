@@ -43,6 +43,12 @@ class AuthHandlerMixin:
         secure = "; Secure" if self.secure_account_cookie else ""
         return {"Set-Cookie": f"{self.cookie_name}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={SESSION_SECONDS if token else 0}{secure}"}
 
+    @property
+    def cloudflare_logout_url(self):
+        # Same-origin URL survives subdomain changes. Never send loopback users
+        # to a nonexistent local Cloudflare route.
+        return "/cdn-cgi/access/logout" if self.access_settings.enabled and not local_request(self) else None
+
     def require_principal(self, *, worker_only=False):
         accepted, access_email = self.access_boundary()
         if not accepted:
@@ -83,7 +89,7 @@ class AuthHandlerMixin:
         return True
 
     def can_access(self, record):
-        return self.principal["kind"] == "service" or record.get("owner_id") == self.principal["id"]
+        return not record.get("deleted_at") and (self.principal["kind"] == "service" or record.get("owner_id") == self.principal["id"])
 
     def auth_get(self, path):
         accepted, access_email = self.access_boundary()
@@ -107,6 +113,7 @@ class AuthHandlerMixin:
                     return
                 self.send_json(200, {"required": self.user_auth_enabled, "authenticated": bool(user), "user": user,
                                      "auth_mode": self.auth_settings.auth_mode,
+                                     "cloudflare_logout_url": self.cloudflare_logout_url,
                                      "csrf_token": csrf_token(token) if user else None})
             except (OSError, sqlite3.Error):
                 self.send_json(503, {"error": "Account service unavailable", "code": "auth_unavailable"})
@@ -135,10 +142,17 @@ class AuthHandlerMixin:
         try:
             self.auth_store.rate("auth:global", 60, 60)
             if action == "logout":
-                if not self.require_principal():
+                token = self.session_cookie()
+                # Expired/already-revoked sessions must still be able to clear
+                # their cookie. Logging OUT must not require an email match to
+                # a newly switched Cloudflare identity. The outer JWT, Origin,
+                # and CSRF for every live local session remain enforced.
+                user = self.auth_store.session(token, require_verified=False)
+                if user and not hmac.compare_digest(self.headers.get("X-CSRF-Token", "").encode(), csrf_token(token).encode()):
+                    self.send_json(403, {"error": "CSRF validation failed", "code": "csrf_failed"})
                     return
-                self.auth_store.logout(self.session_cookie())
-                self.send_json(200, {"ok": True}, extra_headers=self.cookie_header())
+                self.auth_store.logout(token)
+                self.send_json(200, {"ok": True, "cloudflare_logout_url": self.cloudflare_logout_url}, extra_headers=self.cookie_header())
                 return
             if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
                 raise AuthError("json_required", 415)

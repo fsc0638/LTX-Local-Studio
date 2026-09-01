@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { MediaLibrary, type Asset } from "@/components/media-library";
 import { serviceFetch } from "@/lib/service-session";
+import { DeleteMediaButton } from "@/components/delete-media-button";
 
 type Value = string | number | boolean;
 type Rule = { type: "string" | "number" | "integer" | "boolean"; title?: string; description?: string; default?: Value; enum?: Value[]; minimum?: number; maximum?: number; maxLength?: number; required?: boolean };
@@ -44,6 +45,7 @@ export function ModelComposer({ model, locale }: { model: InstalledModel; locale
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const attempt = useRef<{ body: string; key: string } | null>(null);
+  const deleted = useRef(new Set<string>());
   const chosen = jobs.find((job) => job.id === selected) || jobs[0];
   const busy = jobs.some(active);
   const artifact = chosen?.artifacts?.[0];
@@ -58,7 +60,7 @@ export function ModelComposer({ model, locale }: { model: InstalledModel; locale
         const response = await serviceFetch("/api/v1/jobs?limit=100", { signal: abort.signal });
         if (!response.ok) throw new Error();
         const result = await response.json() as { jobs: Job[] };
-        if (!abort.signal.aborted) setJobs(result.jobs.filter((job) => job.resolved_parameters.model === model.id));
+        if (!abort.signal.aborted) setJobs(result.jobs.filter((job) => job.resolved_parameters.model === model.id && !deleted.current.has(job.id)));
       } catch { if (!abort.signal.aborted) setError(t.error); }
       finally { pending = false; }
     };
@@ -105,7 +107,8 @@ export function ModelComposer({ model, locale }: { model: InstalledModel; locale
         {chosen?.error?.message && <p role="alert" className="mt-3 text-xs text-red-700">{chosen.error.message}</p>}
         <div className="mt-5 max-h-56 space-y-2 overflow-auto">{jobs.map((job) => <button key={job.id} onClick={() => setSelected(job.id)} className={`block w-full border p-3 text-left text-xs ${chosen?.id === job.id ? "border-[#e85578]" : "border-border"}`}>{job.id} · {job.status}</button>)}</div>
       </section>
-      {model.accepts_image && <MediaLibrary locale={locale} onSelect={setReference} />}
+      {chosen && !active(chosen) && <DeleteMediaButton locale={locale} kind="jobs" id={chosen.id} name={chosen.id} onDeleted={() => { deleted.current.add(chosen.id); setJobs(current => current.filter(job => job.id !== chosen.id)); setSelected(null); attempt.current = null; }} />}
+      {model.accepts_image && <MediaLibrary locale={locale} onSelect={setReference} onDelete={(id) => setReference(current => current?.id === id ? null : current)} />}
     </div>
     <form onSubmit={(event) => { event.preventDefault(); void submit(); }} className="space-y-5 self-start border border-border bg-white p-6">
       <h2 className="text-lg font-extrabold">{model.label}</h2><p className="text-xs leading-5 text-muted-foreground">{t.details}</p>

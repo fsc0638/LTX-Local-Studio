@@ -98,6 +98,25 @@ class AccountTests(test_backend.BackendTests):
         self.assertEqual(self.call("POST", "/api/auth/logout", cookie=cookie, csrf=csrf)[0], 200)
         self.assertEqual(self.call("GET", "/api/v1/capabilities", cookie=cookie)[0], 401)
 
+    def test_logout_expired_cookie_and_repeat_clear_cookie(self):
+        cookie, csrf = self.account()
+        with patch.object(auth.time, "time", return_value=time.time() + auth.SESSION_SECONDS + 1):
+            result = self.call("POST", "/api/auth/logout", cookie=cookie)
+        self.assertEqual(result[0], 200, result)
+        self.assertIn("Max-Age=0", result[1]["Set-Cookie"])
+        self.assertIsNone(json.loads(result[2])["cloudflare_logout_url"])
+        self.assertEqual(self.call("POST", "/api/auth/logout", cookie=cookie, csrf=csrf)[0], 200)
+        self.assertEqual(self.call("POST", "/api/auth/logout")[0], 200)
+        self.assertEqual(self.call("POST", "/api/auth/logout", Origin="https://evil.invalid")[0], 403)
+        self.assertEqual(self.call("POST", "/api/auth/logout", Origin="")[0], 403)
+
+    def test_logout_revokes_only_current_cookie_session(self):
+        cookie, csrf = self.account()
+        other = self.call("POST", "/api/auth/login", {"username": "alice", "password": "a long test passphrase 2026"})[1]["Set-Cookie"].split(";", 1)[0]
+        self.assertEqual(self.call("POST", "/api/auth/logout", cookie=cookie, csrf=csrf)[0], 200)
+        self.assertFalse(json.loads(self.call("GET", "/api/auth/session", cookie=cookie)[2])["authenticated"])
+        self.assertTrue(json.loads(self.call("GET", "/api/auth/session", cookie=other)[2])["authenticated"])
+
     def test_user_isolation_and_idempotency_scope(self):
         alice, acsrf = self.account("alice")
         bob, bcsrf = self.account("bob")
