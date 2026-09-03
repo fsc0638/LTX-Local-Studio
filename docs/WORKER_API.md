@@ -347,3 +347,5 @@ An operator-approved recovery can place a private `data/worker/resume-request.js
 ## 主機 Git 自動同步
 
 本機可由使用者層級的 `ltx-git-sync.timer` 定期執行 `scripts/git-sync-main.sh`。同步器只允許乾淨 `main` 的 fast-forward；依差異執行前端或 Python 測試，UI 通過正式 build 後才重啟 Web，後端則在沒有生成任務時才重啟 API。依賴清單改動、工作樹不乾淨、分支分岔、測試或 build 失敗都會停止部署並保留 journal 紀錄；不會自動安裝套件或強制覆寫本機內容。
+
+部署範圍以 `data/worker/git-sync/deployed` 記錄的「已上線 commit」為起點，而不是本機 HEAD：直接在主機上 commit 並 push 的變更也會在下一輪被 build 與重啟，不會因為本機與 origin 相同而被略過。首次執行時若沒有這個印記，會以當時的 HEAD 建立，不會無故重啟服務。驗證中途失敗留下的 pending 狀態，只要 HEAD 是往前走的（pending commit 是 HEAD 的祖先），下一輪會把驗證視窗延伸到 HEAD 繼續；reset、rebase 或印記不在 HEAD 歷史中的情況仍會停下等人處理。`tests/test_git_sync.sh` 在拋棄式 origin 上演練這些情境，同步腳本或該測試本身改動時會自動執行。
