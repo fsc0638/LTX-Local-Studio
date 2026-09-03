@@ -7,7 +7,16 @@ import {
   type Dispatch,
   type SetStateAction,
 } from 'react';
-import { Film, Music2, Plus, Trash2, Upload } from 'lucide-react';
+import {
+  Braces,
+  Film,
+  ListPlus,
+  Music2,
+  Plus,
+  RotateCcw,
+  Trash2,
+  Upload,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -22,11 +31,14 @@ import { serviceFetch } from '@/lib/service-session';
 import type { VideoCapabilities } from '@/lib/video-settings';
 import type { Asset } from '@/components/media-library';
 import {
+  type LrcRow,
   displayedLrcTime,
   formatLrcRows,
   parseLrcRows,
+  resetLrcTimes,
   storedLrcTime,
 } from '@/lib/lrc-editor';
+import { parseTimelineImport } from '@/lib/timeline-import';
 
 type Locale = 'zh-TW' | 'en' | 'ja';
 export type Directing = Record<string, string>;
@@ -63,6 +75,19 @@ export const mvCopy = {
     noMusic: '不匯入音樂',
     importMusic: '匯入音樂',
     importLrc: '匯入 LRC',
+    importJson: '匯入分鏡 JSON',
+    jsonHint: '可匯入完整 /api/v1/jobs 設定，或只有 {lrc, cues} 的子集，方便其他語言模型產出檔案。',
+    resetTimes: '重設時間',
+    noBaseline: '尚無匯入紀錄可重設，請先匯入 LRC 或 JSON。',
+    basisOutput: '時間以成片起點計算',
+    basisMusic: '時間以原始音樂計算，顯示值已扣除音樂起點',
+    addCue: '設為分鏡',
+    cueFromSelection: '選取行合併為一個分鏡',
+    selectRow: '選取此行',
+    removeRow: '刪除此行',
+    ignoredFields: '以下欄位不屬於時間軸，未套用：',
+    audioMissing: 'JSON 指定的音樂素材不在你的素材庫，音樂未套用。',
+    cueExists: '該時間點已有分鏡。',
     lrc: '歌詞 LRC',
     lrcRows: '解析後逐句時間',
     timebase: 'LRC 秒數基準',
@@ -111,6 +136,19 @@ export const mvCopy = {
     noMusic: 'No imported music',
     importMusic: 'Import music',
     importLrc: 'Import LRC',
+    importJson: 'Import shot JSON',
+    jsonHint: 'Accepts a full /api/v1/jobs payload, or just {lrc, cues}, so another language model can generate the file.',
+    resetTimes: 'Reset times',
+    noBaseline: 'Nothing to reset yet. Import an LRC or JSON file first.',
+    basisOutput: 'Times are relative to the output start',
+    basisMusic: 'Times follow the original music; the music start is already subtracted',
+    addCue: 'Make a cue',
+    cueFromSelection: 'Merge selected lines into one cue',
+    selectRow: 'Select this line',
+    removeRow: 'Delete this line',
+    ignoredFields: 'These fields are not timeline settings and were not applied:',
+    audioMissing: 'The music asset named in the JSON is not in your library; music was not applied.',
+    cueExists: 'A cue already exists at that time.',
     lrc: 'LRC lyrics',
     lrcRows: 'Parsed line timing',
     timebase: 'LRC time basis',
@@ -160,6 +198,19 @@ export const mvCopy = {
     noMusic: '音楽を選択しない',
     importMusic: '音楽を読み込む',
     importLrc: 'LRCを読み込む',
+    importJson: 'ショットJSONを読み込む',
+    jsonHint: '完全な /api/v1/jobs 設定、または {lrc, cues} だけの部分設定を受け付けます。',
+    resetTimes: '時間を再設定',
+    noBaseline: '再設定できる読み込み履歴がありません。先にLRCかJSONを読み込んでください。',
+    basisOutput: '時間は完成尺の開始が基準です',
+    basisMusic: '時間は元の音楽が基準で、表示値は音楽の開始秒を差し引いています',
+    addCue: 'ショットにする',
+    cueFromSelection: '選択行を1つのショットにまとめる',
+    selectRow: 'この行を選択',
+    removeRow: 'この行を削除',
+    ignoredFields: '以下はタイムライン設定ではないため適用していません：',
+    audioMissing: 'JSONで指定された音楽素材がライブラリにないため、音楽は適用していません。',
+    cueExists: 'その時点には既にショットがあります。',
     lrc: 'LRC歌詞',
     lrcRows: '解析した行の時間',
     timebase: 'LRC時間基準',
@@ -287,6 +338,15 @@ export function TimelineControls({
   } | null>(null);
   const musicInput = useRef<HTMLInputElement>(null);
   const lrcInput = useRef<HTMLInputElement>(null);
+  const jsonInput = useRef<HTMLInputElement>(null);
+  // Timestamps as they arrived, so "reset times" can restore them without
+  // touching lyrics the user has since tidied up.
+  const [lrcBaseline, setLrcBaseline] = useState('');
+  // Lyrics being typed. Kept aside so clearing a field does not delete the row
+  // the moment the LRC text no longer parses.
+  const [lyricDrafts, setLyricDrafts] = useState<Record<number, string>>({});
+  const [selectedRows, setSelectedRows] = useState<number[]>([]);
+  const [notice, setNotice] = useState('');
   const fingerprint = JSON.stringify(request);
   const lrcRows = parseLrcRows(value.lrc);
   useEffect(() => {
@@ -352,8 +412,121 @@ export function TimelineControls({
         lrc,
         lrcTimebase: current.music ? 'music' : 'output',
       }));
+      setLrcBaseline(lrc);
+      setLyricDrafts({});
+      setSelectedRows([]);
+      setNotice('');
       setError('');
     } catch (issue) {
+      setError(issue instanceof Error ? issue.message : text.error);
+    }
+  };
+  const writeRows = (rows: LrcRow[]) =>
+    onChange((current) => ({
+      ...current,
+      enabled: true,
+      lrc: formatLrcRows(rows),
+    }));
+  // Structural edits invalidate any in-flight typing and row selection.
+  const replaceRows = (rows: LrcRow[]) => {
+    setLyricDrafts({});
+    setSelectedRows([]);
+    writeRows(rows);
+  };
+  const resetTimes = () => {
+    const baseline = parseLrcRows(lrcBaseline);
+    if (!baseline.length) {
+      setError(text.noBaseline);
+      return;
+    }
+    setError('');
+    setNotice('');
+    replaceRows(resetLrcTimes(lrcRows, baseline));
+  };
+  // Cue times live on the output timeline, which is what the displayed LRC
+  // second already is; a line before the music start is never rendered.
+  const addCueAt = (seconds: number) => {
+    if (seconds < 0) {
+      setError(text.beforeStart);
+      return;
+    }
+    const time = Math.round(seconds * 1000) / 1000;
+    if (value.cues.some((cue) => Math.abs(cue.time - time) < 0.0005)) {
+      setError(text.cueExists);
+      return;
+    }
+    setError('');
+    setNotice('');
+    onChange((current) => ({
+      ...current,
+      enabled: true,
+      cues: [...current.cues, { time, action: '', directing: {} }].sort(
+        (a, b) => a.time - b.time,
+      ),
+    }));
+  };
+  const rowSeconds = (index: number) =>
+    displayedLrcTime(lrcRows[index].time, value.audioStart, value.lrcTimebase);
+  const cueFromSelection = () => {
+    if (!selectedRows.length) return;
+    addCueAt(Math.min(...selectedRows.map(rowSeconds)));
+    setSelectedRows([]);
+  };
+  const importJson = async (file?: File) => {
+    if (!file) return;
+    try {
+      if (file.size > 256000) throw new Error('JSON exceeds 250 KB');
+      const source = new TextDecoder('utf-8', { fatal: true }).decode(
+        await file.arrayBuffer(),
+      );
+      const imported = parseTimelineImport(source, catalog);
+      const music = imported.audioId
+        ? (assets.find((asset) => asset.id === imported.audioId) ?? null)
+        : null;
+      onChange((current) => {
+        const nextMusic = music ?? current.music;
+        // Music-dependent settings are dropped rather than sent to a worker
+        // that would reject the whole job for an unusable combination.
+        const timebase =
+          imported.lrcTimebase && (imported.lrcTimebase === 'output' || nextMusic)
+            ? imported.lrcTimebase
+            : current.lrcTimebase;
+        const mode =
+          imported.audioMode && (imported.audioMode === 'soundtrack' || nextMusic)
+            ? imported.audioMode
+            : current.audioMode;
+        return {
+          ...current,
+          enabled: true,
+          lrc: imported.lrc ?? current.lrc,
+          lrcTimebase: timebase,
+          cues: imported.cues ?? current.cues,
+          audioMode: mode,
+          audioStart:
+            imported.audioStart !== undefined && nextMusic
+              ? imported.audioStart
+              : current.audioStart,
+          segmentSeconds: imported.segmentSeconds ?? current.segmentSeconds,
+          music: nextMusic,
+        };
+      });
+      if (imported.durationSeconds !== undefined) onDuration(imported.durationSeconds);
+      if (imported.lrc !== undefined) setLrcBaseline(imported.lrc);
+      setLyricDrafts({});
+      setSelectedRows([]);
+      setError('');
+      setNotice(
+        [
+          imported.audioId && !music ? text.audioMissing : '',
+          imported.ignored.length
+            ? `${text.ignoredFields} ${imported.ignored.join(', ')}`
+            : '',
+        ]
+          .filter(Boolean)
+          .join(' '),
+      );
+    } catch (issue) {
+      setNotice('');
       setError(issue instanceof Error ? issue.message : text.error);
     }
   };
@@ -468,6 +641,17 @@ export function TimelineControls({
             <Music2 />
             {text.importMusic}
           </Button>
+          <input
+            ref={jsonInput}
+            type="file"
+            accept=".json,application/json"
+            className="hidden"
+            aria-label={text.importJson}
+            onChange={(event) => {
+              void importJson(event.target.files?.[0]);
+              event.target.value = '';
+            }}
+          />
           <Button
             variant="outline"
             className="rounded-none text-xs"
@@ -477,7 +661,22 @@ export function TimelineControls({
             <Upload />
             {text.importLrc}
           </Button>
+          <Button
+            variant="outline"
+            className="rounded-none text-xs"
+            disabled={pending}
+            onClick={() => jsonInput.current?.click()}
+          >
+            <Braces />
+            {text.importJson}
+          </Button>
         </div>
+        <p className="text-[10px] leading-5 text-muted-foreground">
+          {text.jsonHint}
+        </p>
+        {notice && (
+          <p className="text-[10px] leading-5 text-amber-800">{notice}</p>
+        )}
         <label className="block text-xs font-semibold">
           {text.music}
           <Select
@@ -628,7 +827,34 @@ export function TimelineControls({
         </label>
         {lrcRows.length > 0 && (
           <section className="space-y-2">
-            <h3 className="text-xs font-bold">{text.lrcRows}</h3>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-xs font-bold">{text.lrcRows}</h3>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  className="h-7 rounded-none px-2 text-[10px]"
+                  disabled={!selectedRows.length || value.cues.length >= 60}
+                  onClick={cueFromSelection}
+                >
+                  <ListPlus />
+                  {text.cueFromSelection}
+                  {selectedRows.length > 0 && ` (${selectedRows.length})`}
+                </Button>
+                <Button
+                  variant="outline"
+                  className="h-7 rounded-none px-2 text-[10px]"
+                  onClick={resetTimes}
+                >
+                  <RotateCcw />
+                  {text.resetTimes}
+                </Button>
+              </div>
+            </div>
+            <p className="text-[10px] text-muted-foreground">
+              {value.lrcTimebase === 'music'
+                ? `${text.basisMusic} (${value.audioStart}s)`
+                : text.basisOutput}
+            </p>
             <div className="max-h-80 space-y-2 overflow-y-auto">
               {lrcRows.map((row, index) => {
                 const shown = displayedLrcTime(
@@ -636,11 +862,25 @@ export function TimelineControls({
                   value.audioStart,
                   value.lrcTimebase,
                 );
+                const selected = selectedRows.includes(index);
                 return (
                   <div
                     key={`${row.time}-${index}`}
-                    className="grid grid-cols-[108px_minmax(0,1fr)] gap-3 border border-border bg-[#fafaf8] p-3"
+                    className="grid grid-cols-[20px_108px_minmax(0,1fr)_auto] items-start gap-3 border border-border bg-[#fafaf8] p-3"
                   >
+                    <input
+                      type="checkbox"
+                      className="mt-5 size-3.5 accent-[#25b6a6]"
+                      aria-label={`${text.selectRow}: ${row.text}`}
+                      checked={selected}
+                      onChange={() =>
+                        setSelectedRows((current) =>
+                          selected
+                            ? current.filter((item) => item !== index)
+                            : [...current, index],
+                        )
+                      }
+                    />
                     <label className="text-[9px] font-bold">
                       {text.time}
                       <Input
@@ -652,35 +892,76 @@ export function TimelineControls({
                         value={shown}
                         className="mt-1 rounded-none bg-white"
                         onChange={(event) => {
-                          const next = lrcRows.map((item, i) =>
-                            i === index
-                              ? {
-                                  ...item,
-                                  time: storedLrcTime(
-                                    Number(event.target.value),
-                                    value.audioStart,
-                                    value.lrcTimebase,
-                                  ),
-                                }
-                              : item,
+                          writeRows(
+                            lrcRows.map((item, i) =>
+                              i === index
+                                ? {
+                                    ...item,
+                                    time: storedLrcTime(
+                                      Number(event.target.value),
+                                      value.audioStart,
+                                      value.lrcTimebase,
+                                    ),
+                                  }
+                                : item,
+                            ),
                           );
-                          onChange({
-                            ...value,
-                            enabled: true,
-                            lrc: formatLrcRows(next),
-                          });
                         }}
                       />
                     </label>
                     <div className="min-w-0">
-                      <p className="break-words text-xs leading-5">
-                        {row.text}
-                      </p>
+                      <label className="text-[9px] font-bold">
+                        {text.lrc}
+                        <Input
+                          maxLength={500}
+                          value={lyricDrafts[index] ?? row.text}
+                          className="mt-1 rounded-none bg-white text-xs"
+                          onChange={(event) => {
+                            const next = event.target.value;
+                            setLyricDrafts((current) => ({
+                              ...current,
+                              [index]: next,
+                            }));
+                            // An empty line would not parse back, so the row is
+                            // kept until it is removed deliberately.
+                            if (next.trim()) {
+                              writeRows(
+                                lrcRows.map((item, i) =>
+                                  i === index ? { ...item, text: next } : item,
+                                ),
+                              );
+                            }
+                          }}
+                        />
+                      </label>
                       {shown < 0 && (
                         <p className="mt-1 text-[9px] text-amber-800">
                           {text.beforeStart}
                         </p>
                       )}
+                    </div>
+                    <div className="mt-4 flex gap-1">
+                      <Button
+                        variant="ghost"
+                        className="size-7 rounded-none p-0"
+                        aria-label={`${text.addCue}: ${row.text}`}
+                        title={text.addCue}
+                        disabled={value.cues.length >= 60}
+                        onClick={() => addCueAt(shown)}
+                      >
+                        <Plus />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        className="size-7 rounded-none p-0"
+                        aria-label={`${text.removeRow}: ${row.text}`}
+                        title={text.removeRow}
+                        onClick={() =>
+                          replaceRows(lrcRows.filter((_, i) => i !== index))
+                        }
+                      >
+                        <Trash2 />
+                      </Button>
                     </div>
                   </div>
                 );

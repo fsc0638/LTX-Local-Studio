@@ -55,3 +55,14 @@ export function storedLrcTime(
     ) / 1000
   );
 }
+
+/**
+ * Restore each row's timestamp from the baseline captured at import time while
+ * keeping the lyrics currently on screen. Rows added beyond the baseline keep
+ * their own time, so a partial baseline never silently drops work.
+ */
+export function resetLrcTimes(rows: LrcRow[], baseline: LrcRow[]): LrcRow[] {
+  return rows.map((row, index) =>
+    index < baseline.length ? { ...row, time: baseline[index].time } : row,
+  );
+}

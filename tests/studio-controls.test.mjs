@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {durationFrames, maximumDurationInput, sequenceFrames} from '../lib/video-settings.ts';
 import {readSession, serviceFetch, signOut, sessionChangeKey} from '../lib/service-session.ts';
-import {displayedLrcTime, formatLrcRows, parseLrcRows, storedLrcTime} from '../lib/lrc-editor.ts';
+import {displayedLrcTime, formatLrcRows, parseLrcRows, resetLrcTimes, storedLrcTime} from '../lib/lrc-editor.ts';
+import {parseTimelineImport} from '../lib/timeline-import.ts';
 
 test('LRC rows expose editable seconds and follow the selected music start', () => {
   const rows = parseLrcRows('[00:05.50]First line\n[00:08.000]Second line');
@@ -85,4 +86,68 @@ test('sign-out cannot redirect to an external URL supplied by a response', async
   await readSession();
   globalThis.fetch.mock.mockImplementation(async () => response({ok:true,cloudflare_logout_url:'https://evil.invalid/'}));
   assert.equal(await signOut(true), '/auth/login?signed_out=1');
+});
+
+test('resetting times restores the imported timestamps and keeps edited lyrics', () => {
+  const baseline = parseLrcRows('[00:05.000]First\n[00:09.000]Second');
+  const edited = [{time:1,text:'First, tidied'},{time:2,text:'Second'},{time:30,text:'Added later'}];
+  assert.deepEqual(resetLrcTimes(edited, baseline), [
+    {time:5,text:'First, tidied'},{time:9,text:'Second'},{time:30,text:'Added later'},
+  ]);
+  assert.deepEqual(resetLrcTimes([], baseline), []);
+});
+
+const catalog = {emotion:{calm:{},hope:{}}, camera:{locked:{}}};
+test('a full job payload imports its timeline and reports fields it cannot apply', () => {
+  const imported = parseTimelineImport(JSON.stringify({
+    prompt:'A performer by the sea', model:'ltx23-distilled', render_mode:'sequence',
+    duration_seconds:120, segment_seconds:8, directing:{emotion:'hope'},
+    timeline:{lrc:'[00:02.00]Line', lrc_timebase:'music', audio_id:'a'.repeat(32),
+      audio_start_seconds:12, audio_mode:'condition',
+      cues:[{time:9,action:'Turns away',directing:{emotion:'calm'}},{time:1,action:'Looks up'}]},
+  }), catalog);
+  assert.equal(imported.lrc, '[00:02.00]Line');
+  assert.equal(imported.lrcTimebase, 'music');
+  assert.equal(imported.durationSeconds, 120);
+  assert.equal(imported.segmentSeconds, 8);
+  assert.equal(imported.audioStart, 12);
+  assert.equal(imported.audioMode, 'condition');
+  assert.equal(imported.audioId, 'a'.repeat(32));
+  assert.deepEqual(imported.cues.map(cue => cue.time), [1, 9]);
+  assert.deepEqual(imported.cues[1].directing, {emotion:'calm'});
+  assert.deepEqual(imported.cues[0].directing, {});
+  // Prompt-level settings belong to the request, not the timeline panel.
+  assert.deepEqual(imported.ignored.sort(), ['directing','model','prompt','render_mode']);
+});
+
+test('a bare timeline subset imports without touching unrelated settings', () => {
+  const imported = parseTimelineImport('{"cues":[{"time":4,"action":"Steps forward"}]}', catalog);
+  assert.equal(imported.lrc, undefined);
+  assert.equal(imported.durationSeconds, undefined);
+  assert.deepEqual(imported.cues, [{time:4,action:'Steps forward',directing:{}}]);
+  assert.deepEqual(imported.ignored, []);
+});
+
+test('imported shot plans are rejected before they can reach the worker', () => {
+  const fails = (source, fragment) =>
+    assert.throws(() => parseTimelineImport(source, catalog), error => error.message.includes(fragment));
+  fails('not json', 'not valid JSON');
+  fails('[]', 'must be a JSON object');
+  fails('{"prompt":"only a prompt"}', 'Provide a "timeline" object');
+  fails('{"timeline":{"lrc":"","tempo":120}}', 'found tempo');
+  fails('{"cues":[{"time":1,"shot":"wide"}]}', 'found shot');
+  fails('{"cues":[{"time":1},{"time":1}]}', 'cannot share a timestamp');
+  fails('{"cues":[{"time":181}]}', 'between 0 and 180');
+  fails('{"cues":[{"time":"4"}]}', 'must be a number');
+  fails('{"cues":[{"time":1,"directing":{"lighting":"warm"}}]}', 'not a directing field');
+  fails('{"cues":[{"time":1,"directing":{"emotion":"furious"}}]}', 'not a supported option');
+  fails('{"cues":[{"time":1,"action":' + JSON.stringify('x'.repeat(601)) + '}]}', 'up to 600 characters');
+  fails(JSON.stringify({cues:Array.from({length:61},(_,i)=>({time:i}))}), 'At most 60');
+  fails('{"lrc":"x","lrc_timebase":"bar"}', 'must be "output" or "music"');
+  fails('{"lrc":"x","audio_mode":"loud"}', 'must be "soundtrack" or "condition"');
+});
+
+test('directing options are trusted to the worker when no catalog has loaded', () => {
+  const imported = parseTimelineImport('{"cues":[{"time":1,"directing":{"emotion":"calm"}}]}', undefined);
+  assert.deepEqual(imported.cues[0].directing, {emotion:'calm'});
 });
