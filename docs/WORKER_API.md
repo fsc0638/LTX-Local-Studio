@@ -343,3 +343,7 @@ node examples/worker-smoke.mjs --generate --profile portrait-v1 --reference /abs
 ## 中斷後的分段續跑
 
 An operator-approved recovery can place a private `data/worker/resume-request.json` marker before restarting the API. At startup, the worker accepts only a failed or interrupted sequence with a retryable failure and an existing private workspace. Every existing shot is technically validated and reused; generation resumes at the first missing shot before normal assembly and final quality control. The marker is single-use and is removed only after it has been validated and claimed.
+
+## 主機 Git 自動同步
+
+本機可由使用者層級的 `ltx-git-sync.timer` 定期執行 `scripts/git-sync-main.sh`。同步器只允許乾淨 `main` 的 fast-forward；依差異執行前端或 Python 測試，UI 通過正式 build 後才重啟 Web，後端則在沒有生成任務時才重啟 API。依賴清單改動、工作樹不乾淨、分支分岔、測試或 build 失敗都會停止部署並保留 journal 紀錄；不會自動安裝套件或強制覆寫本機內容。
