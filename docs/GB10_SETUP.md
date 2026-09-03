@@ -8,6 +8,7 @@
 - 現有 LTX venv 可用，且 `.env.local` 有 `LTX_PYTHON`（或執行時 `export LTX_PYTHON=...`）。新 venv 會鎖定同一個 torch 版本與 wheel index，避免在 aarch64 上重新摸索 CUDA build。
 - 目前使用者有 sudo（建立 `/opt/studio`、apt 裝 ffmpeg／libsndfile1）。
 - 磁碟餘量 ≥ 120 GB（影像模型約 75 GB、其餘約 10 GB）。
+- 選配 `python3-dev`：沒有它，whisper 跑起來會噴 `Python.h: 沒有此一檔案或目錄`（triton 想 JIT 編 CUDA kernel），會靜默 fallback、不影響正確性，但可能吃掉速度。
 - **執行 `40-imagegen.sh` 時不能有 LTX 任務在跑**：Qwen-Image-Edit 與 LTX 無法同時放進 128 GB。
 
 ## 順序
@@ -88,6 +89,51 @@ bash infra/gb10/50-post.sh
 
 跑完保留兩組數字：`40-imagegen.sh` 最後兩行的 `generate` 秒數與 `peak` GB（LP 預算公式的輸入），以及下一節校準報告的門檻。
 
+## 首次實測（GB10，2026-09-04）
+
+環境：aarch64、NVIDIA GB10、driver 580.126.09、統一記憶體 121 GB、torch 2.11.0+cu130（對齊 LTX venv）。
+裝完 `/opt/studio` 共 107 GB（hf 權重 88 GB、三個 venv 15 GB、whisper 2.9 GB）。
+
+**LP 預算公式的輸入**：
+
+```
+z-image-turbo:        load  75.5s, generate 12.9s (8 steps, 1024px),               peak 23.3 GB
+qwen-image-edit-2509: load 336.2s, generate 25.8s (8 steps, 768px, 1 ref, cfg 1.0), peak 61.2 GB
+```
+
+Qwen 的 load 是 generate 的 13 倍，編排器若每個 shot 重載模型，成本會被載入時間支配 — 常駐或批次化是必要的。
+peak 61.2 GB 也再次確認它與 LTX 不能同時在記憶體裡。
+
+**OpenAI**（`10-openai.sh`）：structured output 52 in / 93 out（其中 reasoning 73）；vision 21 in / 5 out（reasoning 0）。
+兩次都通過，但都不能拿來估成本 — 探針太簡單。另外探針回的 `model_seen` 是 `ChatGPT` 而非 `gpt-5.6`：
+**這個欄位不是驗證訊號**，模型不可靠地知道自己的 API model id。真正的證據是 API 收下 `model: "gpt-5.6"` 沒回 404。
+
+**節拍**（`30-audio.sh`，沖縄／三線リフで帰ろう）：104.2 BPM、285 beats，間距穩定在 0.576 s，與 BPM 自洽。
+是否對齊真正的下拍仍待人工抽查。
+
+## 對時精度：先扣掉常數偏移
+
+用帶時間碼的 `.lrc` 當 ground truth，可以把「人工抽查 10 個 beat」升級成可量測的誤差分布。
+方法上有個坑：**不能用 segment index 比對** — stable-ts 會把 40 行歌詞併成 7 個 segment，逐行對逐 segment 會得到完全錯誤的數字。
+要拿逐字時間、依字元位置映回歌詞行。
+
+三首沖縄專輯歌曲（歌詞來自 Mikamiu.Studio 的 `17_Music｜音樂與音訊/02_Lyrics｜歌詞/`）：
+
+| 歌曲 | 行數 | 偏移（中位數） | 去偏移後 p50 | p90 | 最大 |
+|---|---|---|---|---|---|
+| 三線リフで帰ろう | 40 | −0.61s | 0.42s | 1.63s | 13.34s |
+| 結いビート | 31 | −0.93s | 0.20s | 0.50s | 2.81s |
+| エイサーの足音 | 40 | −0.91s | 0.38s | 1.04s | 1.29s |
+
+三首都出現 −0.9s 上下的一致偏移。兩種解釋這批資料分不出來：stable-ts 系統性提早約 0.9 秒，
+或這批 LRC 的時間碼是「該開始讀」而非「該開始唱」（同專輯多半同一套工具產出，後者更可能）。
+分辨方法：拿一首有商業字幕的歌來對，或人工聽三個點。**在分辨出來之前，LS 應把它當可校正的常數偏移，
+而不是隨機誤差** — 扣掉偏移後 p90 只有 0.5～1.0s，實際精度比原始數字好得多。
+
+已知資料問題：`三線リフで帰ろう.lrc` 前三行時間碼是壞的（標 0.00 / 0.87 / 2.07，實唱 10.4 / 12.6 / 14.8），
+上表 13.34s 的最大誤差全來自這三行，不是對時失敗。
+
+
 ## 校準（第 1 期最值得先做的實驗）
 
 裁判門檻不能沿用架構頁的 0.80／0.85，每個嵌入模型尺度不同。準備：
@@ -109,7 +155,8 @@ calibration/
 ## 這裡沒做的事
 
 - 沒有把影像模型註冊成 `local_adapters`，沒有裁判 loopback 服務，沒有 Agent 編排器。這些是程式變更，另案。
-- RIFE 權重（作者以雲端連結發布）需手動放到 `/opt/studio/tools/rife/train_log`。
+- RIFE 權重（作者以雲端連結發布）需手動放到 `/opt/studio/tools/rife/train_log`。首次實測後仍未放。
+- 嵌入門檻校準未跑：缺 `calibration/` 素材。
 - ComfyUI 沒裝。第一版用 diffusers 官方 pipeline，行為可控、可量測；需要節點式工作流再加。
 
 ## 授權對照
