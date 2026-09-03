@@ -68,6 +68,10 @@ import {
   emptyCharacter,
   type CharacterDraft,
 } from '@/components/character-lock';
+import {
+  ProductionFactory,
+  type FactoryIncoming,
+} from '@/components/production-factory';
 
 const initialPrompt =
   '電影感近景，一位穿著深色外套的女性站在潮濕的台北街口。鏡頭緩慢向前推進，霓虹燈在積水中形成珊瑚紅與青綠色倒影，微風帶動髮絲，自然環境音，細緻膠片顆粒。';
@@ -150,7 +154,7 @@ function outputFromJob(job: ApiJob): OutputItem {
   };
 }
 
-type TabKey = 'create' | 'assets' | 'outputs' | 'environment';
+type TabKey = 'create' | 'factory' | 'assets' | 'outputs' | 'environment';
 type Locale = 'zh-TW' | 'en' | 'ja';
 // Browser traffic stays same-origin. Only the server knows the worker address.
 const API_BASE = '';
@@ -161,6 +165,7 @@ const translations = {
     topStrip: '本機生成 · 檔案保留在此裝置 · NVIDIA GB10',
     console: 'GB10 控制台',
     createTab: '生成',
+    factoryTab: '製片工廠',
     assetsTab: '素材',
     outputsTab: '產出',
     environmentTab: '環境',
@@ -222,10 +227,11 @@ const translations = {
     generationFailed: '生成失敗',
     generateVideo: '生成影片',
     generatingVideo: '影片生成中…',
+    addToFactory: '加入製片工廠',
     generateNote:
       '會真正呼叫本機 LTX-2.3 Distilled；一次只執行一個 GPU 任務，完成後自動更新預覽。',
     commandPreview: '命令預覽',
-    assetsEyebrow: '02 / 素材',
+    assetsEyebrow: '03 / 素材',
     assetsTitle: '參照素材與來源',
     assetsNote:
       '集中檢視影像、影片、模型與設定檔的來源；所有素材都保留在本機。',
@@ -241,7 +247,7 @@ const translations = {
     primaryTransformer: '主要擴散 Transformer',
     promptEncoder: '提示詞增強編碼器',
     detailRecovery: '第二階段細節恢復',
-    outputsEyebrow: '03 / 產出',
+    outputsEyebrow: '04 / 產出',
     outputsTitle: '產出預覽與紀錄',
     outputsNote:
       '新的生成結果會自動加入這裡；可直接播放或切回生成頁作為主預覽。',
@@ -253,7 +259,7 @@ const translations = {
     workflowNote:
       '模型載入、推論、VAE 解碼、空間放大、音訊與 MP4 封裝均會反映在這個頁面。',
     outputCount: '個產出',
-    envEyebrow: '04 / 環境',
+    envEyebrow: '05 / 環境',
     envTitle: '裝置與執行環境',
     envNote:
       '以下資料來自本機實測環境，用來判斷 LTX-2 / LTX-2.3 的可執行性、記憶體餘裕與相容性。',
@@ -294,6 +300,7 @@ const translations = {
     topStrip: 'Local generation · Files stay on this device · NVIDIA GB10',
     console: 'GB10 Console',
     createTab: 'CREATE',
+    factoryTab: 'FACTORY',
     assetsTab: 'ASSETS',
     outputsTab: 'OUTPUTS',
     environmentTab: 'ENVIRONMENT',
@@ -355,10 +362,11 @@ const translations = {
     generationFailed: 'Generation failed',
     generateVideo: 'Generate video',
     generatingVideo: 'Generating video…',
+    addToFactory: 'Add to production factory',
     generateNote:
       'Calls the local LTX-2.3 Distilled model. One GPU job runs at a time and the preview updates automatically.',
     commandPreview: 'Command preview',
-    assetsEyebrow: '02 / Assets',
+    assetsEyebrow: '03 / Assets',
     assetsTitle: 'References & sources',
     assetsNote:
       'Review image, video, model, and configuration sources. Every asset remains on this device.',
@@ -374,7 +382,7 @@ const translations = {
     primaryTransformer: 'Primary diffusion transformer',
     promptEncoder: 'Prompt enhancement encoder',
     detailRecovery: 'Second-pass detail recovery',
-    outputsEyebrow: '03 / Outputs',
+    outputsEyebrow: '04 / Outputs',
     outputsTitle: 'Output previews & history',
     outputsNote:
       'New generations appear here automatically. Play them directly or set one as the main preview.',
@@ -386,7 +394,7 @@ const translations = {
     workflowNote:
       'Model loading, inference, VAE decoding, upscaling, audio, and MP4 packaging all appear in this workspace.',
     outputCount: 'outputs',
-    envEyebrow: '04 / Environment',
+    envEyebrow: '05 / Environment',
     envTitle: 'Device & runtime',
     envNote:
       'Measured local data for evaluating LTX-2 / LTX-2.3 compatibility, memory headroom, and performance.',
@@ -428,6 +436,7 @@ const translations = {
     topStrip: 'ローカル生成 · ファイルはこのデバイスに保存 · NVIDIA GB10',
     console: 'GB10 コンソール',
     createTab: '生成',
+    factoryTab: '制作工場',
     assetsTab: '素材',
     outputsTab: '出力',
     environmentTab: '環境',
@@ -489,10 +498,11 @@ const translations = {
     generationFailed: '生成に失敗',
     generateVideo: '動画を生成',
     generatingVideo: '動画を生成中…',
+    addToFactory: '制作工場に追加',
     generateNote:
       'ローカルの LTX-2.3 Distilled を実行します。GPUジョブは一度に1件で、完了後プレビューを自動更新します。',
     commandPreview: 'コマンドプレビュー',
-    assetsEyebrow: '02 / 素材',
+    assetsEyebrow: '03 / 素材',
     assetsTitle: '参照素材とソース',
     assetsNote:
       '画像、動画、モデル、設定ファイルのソースを確認できます。すべての素材はローカルに保存されます。',
@@ -508,7 +518,7 @@ const translations = {
     primaryTransformer: 'メイン拡散 Transformer',
     promptEncoder: 'プロンプト拡張エンコーダー',
     detailRecovery: '第2段階のディテール復元',
-    outputsEyebrow: '03 / 出力',
+    outputsEyebrow: '04 / 出力',
     outputsTitle: '出力プレビューと履歴',
     outputsNote:
       '新しい生成結果は自動的に追加され、直接再生したりメインプレビューに設定できます。',
@@ -520,7 +530,7 @@ const translations = {
     workflowNote:
       'モデル読込、推論、VAEデコード、アップスケール、音声、MP4出力がこの画面に反映されます。',
     outputCount: '件の出力',
-    envEyebrow: '04 / 環境',
+    envEyebrow: '05 / 環境',
     envTitle: 'デバイスと実行環境',
     envNote:
       'LTX-2 / LTX-2.3 の互換性、メモリ余裕、性能を判断するためのローカル実測データです。',
@@ -693,6 +703,8 @@ function Studio() {
   });
   const [directing, setDirecting] = useState<Directing>({});
   const [timeline, setTimeline] = useState<TimelineDraft>({ ...emptyTimeline });
+  const [factoryIncoming, setFactoryIncoming] =
+    useState<FactoryIncoming | null>(null);
   const [referenceUploading, setReferenceUploading] = useState(false);
   const referenceInput = useRef<HTMLInputElement>(null);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
@@ -851,9 +863,10 @@ function Studio() {
 
   useEffect(() => {
     const savedLocale = window.localStorage.getItem('ltx-studio-locale');
-    // eslint-disable-next-line react/react-compiler -- Read the browser-only saved preference after hydration.
-    if (savedLocale === 'zh-TW' || savedLocale === 'en' || savedLocale === 'ja')
+    if (savedLocale === 'zh-TW' || savedLocale === 'en' || savedLocale === 'ja') {
+      // eslint-disable-next-line react/react-compiler -- Read the browser-only saved preference after hydration.
       setLocale(savedLocale);
+    }
   }, []);
 
   useEffect(() => {
@@ -1045,6 +1058,7 @@ function Studio() {
 
   const navItems: [TabKey, string][] = [
     ['create', ui.createTab],
+    ['factory', ui.factoryTab],
     ['assets', ui.assetsTab],
     ['outputs', ui.outputsTab],
     ['environment', ui.environmentTab],
@@ -1850,6 +1864,27 @@ function Studio() {
                       <Play className="size-3.5 fill-current" />
                       {generating ? ui.generatingVideo : ui.generateVideo}
                     </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={
+                        !prompt.trim() ||
+                        !settingsReady ||
+                        !characterReady ||
+                        (mode === 'i2v' && !reference)
+                      }
+                      onClick={() => {
+                        setFactoryIncoming({
+                          token: crypto.randomUUID(),
+                          request: generationRequest,
+                        });
+                        setTab('factory');
+                      }}
+                      className="h-12 w-full rounded-none text-[11px] font-bold tracking-[0.12em]"
+                    >
+                      <Layers3 className="size-3.5" />
+                      {ui.addToFactory}
+                    </Button>
                     {canSubmit && (!settingsReady || !characterReady) && (
                       <p className="border-l-2 border-amber-500 pl-3 text-[10px] leading-5 text-amber-800">
                         {locale === 'zh-TW'
@@ -1895,6 +1930,15 @@ function Studio() {
             </div>
           </section>
         )}
+
+        <div hidden={tab !== 'factory'}>
+          <ProductionFactory
+            locale={locale}
+            online={backendOnline}
+            incoming={factoryIncoming}
+            onIncomingConsumed={() => setFactoryIncoming(null)}
+          />
+        </div>
 
         {tab === 'assets' && (
           <section>

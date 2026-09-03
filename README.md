@@ -29,6 +29,7 @@ LTX Local Studio combines a multilingual browser UI, a local job API, and an LTX
 - Text-to-video prompt workflow
 - Resolution, frame rate, duration, seed, precision, and memory controls
 - Real-time job progress and persistent local output history
+- Production Factory shot queue with validation, pause/resume, retry, JSON handoff, and per-shot output review
 - MP4 preview and generated poster frames
 - Local-only model weights and outputs
 - Environment-based paths for portable GitHub use
@@ -77,6 +78,8 @@ npm run start:cloudflare
 ```
 
 See [Cloudflare setup](docs/CLOUDFLARE.md) for the account-side security requirements. Never publish the hostname before its Cloudflare Access policy is active.
+
+The first [Production Factory](docs/PRODUCTION_FACTORY.md) control layer batches standard `/api/v1/jobs` requests without creating project-specific model routes. It runs one validated shot at a time, pauses on failure, resumes after refresh, and exports a portable JSON production manifest.
 
 Optional [registration-to-Access synchronization](docs/CLOUDFLARE_ACCOUNT_SYNC.md) appends new registered emails once to a dedicated Cloudflare EMAIL list, preserves dashboard revocations, and binds external Access identity to the local account. It is off by default for new installations and enabled on this host. Adding an email does not itself send an OTP or verify ownership; users request a code on the Cloudflare login page. The dedicated token must be rotated before November 29, 2026 (Asia/Taipei).
 
