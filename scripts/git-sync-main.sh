@@ -25,7 +25,26 @@ sync_commit_from_file() {
   local sync_file="$1" sync_value
   sync_value="$(<"${sync_file}")"
   if [[ ! "${sync_value}" =~ ^[0-9a-f]{40}$ ]]; then
-    sync_log "Invalid sync state in ${sync_file}; refusing to continue."
+    sync_log "Invalid sync state in ${sync_file}; refusing to continue." >&2
+    return 1
+  fi
+  printf '%s' "${sync_value}"
+}
+
+# The commit whose UI build and services are live. Written after every completed cycle; a host
+# that was deployed by hand before the stamp existed bootstraps to HEAD. Fails when the stamp is
+# not an ancestor of HEAD, which means main was reset or rebased underneath the deployment.
+sync_deployed_commit() {
+  local sync_head="$1" sync_file="${sync_state_dir}/deployed" sync_value
+  if [[ ! -f "${sync_file}" ]]; then
+    printf '%s\n' "${sync_head}" >"${sync_file}"
+    sync_log "No deployed-commit stamp; recording ${sync_head:0:7} as currently deployed." >&2
+    printf '%s' "${sync_head}"
+    return 0
+  fi
+  sync_value="$(sync_commit_from_file "${sync_file}")" || return 1
+  if ! /usr/bin/git merge-base --is-ancestor "${sync_value}" "${sync_head}"; then
+    sync_log "Deployed commit ${sync_value:0:7} is not an ancestor of HEAD; manual review is required." >&2
     return 1
   fi
   printf '%s' "${sync_value}"
@@ -98,6 +117,7 @@ sync_apply_restarts
 
 sync_pending_from="${sync_state_dir}/pending-from"
 sync_pending_to="${sync_state_dir}/pending-to"
+sync_head="$(/usr/bin/git rev-parse HEAD)"
 if [[ -f "${sync_pending_from}" || -f "${sync_pending_to}" ]]; then
   [[ -f "${sync_pending_from}" && -f "${sync_pending_to}" ]] || {
     sync_log "Incomplete pending-validation state; refusing to continue."
@@ -105,26 +125,44 @@ if [[ -f "${sync_pending_from}" || -f "${sync_pending_to}" ]]; then
   }
   sync_from="$(sync_commit_from_file "${sync_pending_from}")"
   sync_to="$(sync_commit_from_file "${sync_pending_to}")"
-  [[ "$(/usr/bin/git rev-parse HEAD)" == "${sync_to}" ]] || {
-    sync_log "HEAD changed while validation was pending; manual review is required."
-    exit 1
-  }
+  if [[ "${sync_head}" != "${sync_to}" ]]; then
+    # A cycle that died mid-validation must not pin the host to that commit forever. When main has
+    # simply moved forward since, widen the window to HEAD and validate everything from the last
+    # deployed commit. A reset or rebase still needs a person.
+    if ! /usr/bin/git merge-base --is-ancestor "${sync_to}" "${sync_head}"; then
+      sync_log "HEAD moved off the pending commit ${sync_to:0:7} (now ${sync_head:0:7}); manual review is required."
+      exit 1
+    fi
+    sync_log "HEAD advanced from ${sync_to:0:7} to ${sync_head:0:7} while validation was pending; extending the window."
+    sync_to="${sync_head}"
+    printf '%s\n' "${sync_to}" >"${sync_pending_to}"
+  fi
 else
   /usr/bin/git fetch --prune origin main
-  sync_from="$(/usr/bin/git rev-parse HEAD)"
-  sync_to="$(/usr/bin/git rev-parse origin/main)"
-  if [[ "${sync_from}" == "${sync_to}" ]]; then
-    sync_log "origin/main is already synchronized."
-    exit 0
+  sync_remote="$(/usr/bin/git rev-parse origin/main)"
+  # Validate from the last deployed commit, not from HEAD. Commits pushed from this host move HEAD
+  # without going through a deploy; a window that starts at HEAD would never build them.
+  sync_from="$(sync_deployed_commit "${sync_head}")"
+  if [[ "${sync_remote}" == "${sync_head}" ]]; then
+    if [[ "${sync_from}" == "${sync_head}" ]]; then
+      sync_log "origin/main is already synchronized and ${sync_head:0:7} is deployed."
+      exit 0
+    fi
+    sync_to="${sync_head}"
+    printf '%s\n' "${sync_from}" >"${sync_pending_from}"
+    printf '%s\n' "${sync_to}" >"${sync_pending_to}"
+    sync_log "Deploying ${sync_from:0:7}..${sync_to:0:7}, which reached main from this host."
+  else
+    if ! /usr/bin/git merge-base --is-ancestor "${sync_head}" "${sync_remote}"; then
+      sync_log "Local main and origin/main have diverged; automatic merge is disabled."
+      exit 1
+    fi
+    sync_to="${sync_remote}"
+    printf '%s\n' "${sync_from}" >"${sync_pending_from}"
+    printf '%s\n' "${sync_to}" >"${sync_pending_to}"
+    /usr/bin/git merge --ff-only "${sync_to}"
+    sync_log "Fast-forwarded main from ${sync_head:0:7} to ${sync_to:0:7}."
   fi
-  if ! /usr/bin/git merge-base --is-ancestor "${sync_from}" "${sync_to}"; then
-    sync_log "Local main and origin/main have diverged; automatic merge is disabled."
-    exit 1
-  fi
-  printf '%s\n' "${sync_from}" >"${sync_pending_from}"
-  printf '%s\n' "${sync_to}" >"${sync_pending_to}"
-  /usr/bin/git merge --ff-only "${sync_to}"
-  sync_log "Fast-forwarded main from ${sync_from:0:7} to ${sync_to:0:7}."
 fi
 
 sync_changes="$(/usr/bin/git diff --name-only "${sync_from}..${sync_to}")"
@@ -168,6 +206,7 @@ if [[ "${sync_backend}" == "1" ]]; then
 fi
 
 rm -f "${sync_pending_from}" "${sync_pending_to}"
+printf '%s\n' "${sync_to}" >"${sync_state_dir}/deployed"
 sync_log "Validation passed for ${sync_to:0:7}; applying required service restarts."
 sync_apply_restarts
 sync_log "Automatic sync cycle completed successfully."
