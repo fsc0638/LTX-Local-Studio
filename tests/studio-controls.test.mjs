@@ -2,6 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {durationFrames, maximumDurationInput, sequenceFrames} from '../lib/video-settings.ts';
 import {readSession, serviceFetch, signOut, sessionChangeKey} from '../lib/service-session.ts';
+import {displayedLrcTime, formatLrcRows, parseLrcRows, storedLrcTime} from '../lib/lrc-editor.ts';
+
+test('LRC rows expose editable seconds and follow the selected music start', () => {
+  const rows = parseLrcRows('[00:05.50]First line\n[00:08.000]Second line');
+  assert.deepEqual(rows, [{time:5.5,text:'First line'},{time:8,text:'Second line'}]);
+  assert.equal(displayedLrcTime(rows[0].time, 2, 'music'), 3.5);
+  assert.equal(storedLrcTime(4.25, 2, 'music'), 6.25);
+  assert.equal(formatLrcRows([{time:6.25,text:'First line'}]), '[00:06.250]First line');
+});
 
 test('duration is rounded up; changing FPS never silently trims the request', () => {
   assert.equal(durationFrames(20, 24, 481), 481);

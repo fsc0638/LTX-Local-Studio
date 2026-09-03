@@ -69,11 +69,23 @@ def audio_clip(source, output, start, seconds):
         encode_audio(dest, stream, samples)
 
 
-def prepare_image(source, output, width, height):
+def prepare_image(source, output, width, height, background_mode="source"):
     with Image.open(source) as image:
-        image = ImageOps.exif_transpose(image).convert("RGB")
+        image = ImageOps.exif_transpose(image)
+        if background_mode == "alpha_neutral":
+            if "A" not in image.getbands() or image.getchannel("A").getextrema() == (255, 255):
+                raise ValueError("alpha_neutral requires a transparent PNG subject cutout")
+            foreground = image.convert("RGBA")
+            neutral = Image.new("RGBA", foreground.size, (127, 127, 127, 255))
+            neutral.alpha_composite(foreground)
+            image = neutral.convert("RGB")
+        elif background_mode == "source":
+            image = image.convert("RGB")
+        else:
+            raise ValueError("Unknown reference background mode")
         fitted = ImageOps.contain(image, (width, height), Image.Resampling.LANCZOS)
-        canvas = Image.new("RGB", (width, height), (0, 0, 0))
+        canvas_color = (127, 127, 127) if background_mode == "alpha_neutral" else (0, 0, 0)
+        canvas = Image.new("RGB", (width, height), canvas_color)
         canvas.paste(fitted, ((width - fitted.width) // 2, (height - fitted.height) // 2))
         canvas.save(output)
 
@@ -137,7 +149,7 @@ if __name__ == "__main__":
     if mode == "audio":
         audio_clip(args[0], args[1], float(args[2]), float(args[3]))
     elif mode == "image":
-        prepare_image(args[0], args[1], int(args[2]), int(args[3]))
+        prepare_image(args[0], args[1], int(args[2]), int(args[3]), args[4] if len(args) > 4 else "source")
     elif mode == "assemble":
         assemble(*args)
     else:

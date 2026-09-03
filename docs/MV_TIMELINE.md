@@ -62,6 +62,8 @@
 
 先 POST `/api/v1/validate`，再以相同 JSON 及 `Idempotency-Key` POST `/api/v1/jobs`。不接受上游直接指定路徑、URL、shell命令、預製segments。Cookie 請求仍需 Origin + CSRF；service key 是主機級權限。音樂及圖片都檢查所有者，使用中的素材不能刪除。
 
+LRC 可用 `timeline.lrc_timebase` 指定秒數基準：`output`（預設）以成片0秒為準；`music` 表示LRC保留原始歌曲時間，worker會自動減去 `audio_start_seconds`，早於所選音樂起點的歌詞略過。網頁會把解析後的每句秒數列成可編輯欄位；調整音樂起點時，顯示的成片秒數同步反向移動，不改壞原始歌曲時間。
+
 ## 製作依據
 
 本機先前報告 `AI_MV_Production_Research_2026-08-30.md` 第1、5、6節：景別／角度／運鏡／情緒分開；每鏡一個主要動作；Breathing Frame 定義為敘事留白、微動態與構圖空間，不是正式模型控制參數；最終母帶連續铺底。

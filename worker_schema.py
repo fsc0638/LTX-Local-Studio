@@ -2,6 +2,7 @@
 import worker_contract as contract
 import model_registry
 import mv_timeline
+import character_consistency
 from media_store import FORMATS
 
 
@@ -27,6 +28,8 @@ def openapi_document():
         "mode": {"type": "string", "enum": ["t2v", "i2v"], "default": "t2v"},
         "image_id": {"type": "string", "pattern": "^[a-f0-9]{32}$"},
         "image_strength": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.8},
+        "reference_background": {"enum": ["source", "alpha_neutral"], "default": "source", "description": "alpha_neutral requires transparent PNG references and composites the subject on neutral gray to reduce source-background conditioning."},
+        "character": ref("Character"),
         "width": {"type": "integer", "minimum": 256, "maximum": 1536, "multipleOf": 64},
         "height": {"type": "integer", "minimum": 256, "maximum": 1536, "multipleOf": 64},
         "aspect_ratio": {"type": "string", "enum": [*contract.ASPECT_RATIOS, "source"], "description": "Preset or source image ratio; mutually exclusive with width/height. Source may require letterboxing on the 64px grid."},
@@ -50,6 +53,16 @@ def openapi_document():
     nullable_string = {"type": ["string", "null"]}
     arbitrary_nullable = {"type": ["object", "null"], "additionalProperties": True}
     schemas = {
+        "CharacterReference": {"type": "object", "additionalProperties": False,
+                               "required": ["image_id", "view"], "properties": {
+                                   "image_id": {"type": "string", "pattern": "^[a-f0-9]{32}$"},
+                                   "view": {"enum": sorted(character_consistency.REFERENCE_VIEWS)}}},
+        "Character": {"type": "object", "additionalProperties": False,
+                      "required": ["name", "description", "references"], "properties": {
+                          "name": {"type": "string", "minLength": 1, "maxLength": 80},
+                          "description": {"type": "string", "minLength": 1, "maxLength": 1200},
+                          "references": {"type": "array", "minItems": 1, "maxItems": 8,
+                                         "items": ref("CharacterReference")}}},
         "Directing": {"type": "object", "additionalProperties": False, "properties": {
             key: {"type": "string", "enum": list(values)} for key, values in mv_timeline.DIRECTING.items()}},
         "Timeline": {"type": "object", "additionalProperties": False, "properties": {
@@ -57,6 +70,7 @@ def openapi_document():
             "audio_start_seconds": {"type": "number", "minimum": 0, "maximum": 600},
             "audio_mode": {"enum": ["soundtrack", "condition"], "default": "soundtrack", "description": "condition is experimental frozen audio conditioning, not guaranteed precise lip sync"},
             "lrc": {"type": "string", "maxLength": 16000, "description": "UTF-8 line LRC timestamps relative to output start; offset supported. Not phoneme alignment."},
+            "lrc_timebase": {"enum": ["output", "music"], "default": "output", "description": "music subtracts audio_start_seconds from original-song timestamps; lines before the selected start are skipped."},
             "cues": {"type": "array", "maxItems": 60, "items": {"type": "object", "additionalProperties": False,
                 "required": ["time"], "properties": {"time": {"type": "number", "minimum": 0, "exclusiveMaximum": 180},
                 "action": {"type": "string", "maxLength": 600}, "directing": ref("Directing")}}}}},
@@ -79,7 +93,7 @@ def openapi_document():
                                  {"not": {"required": ["aspect_ratio", "height"]}},
                                  {"if": {"properties": {"mode": {"const": "i2v"}}, "required": ["mode"]},
                                   "then": {"required": ["image_id"]},
-                                  "else": {"not": {"anyOf": [{"required": ["image_id"]}, {"required": ["image_strength"]}]}}}]},
+                                  "else": {"not": {"anyOf": [{"required": ["image_id"]}, {"required": ["image_strength"]}, {"required": ["reference_background"]}, {"required": ["character"]}]}}}]},
         "ResolvedParameters": {"type": "object", "properties": {
             **{key: {"anyOf": [value, {"type": "null"}]} for key, value in request_properties.items() if key in contract.PARAMETERS},
             "image_id": nullable_string, "image_strength": nullable_number,

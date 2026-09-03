@@ -23,7 +23,12 @@ DIRECTING = {
     "angle": {
         "front": option("正面平視", "Front / eye level", "正面／目線", "Front view at eye level."),
         "three_quarter": option("3/4 側前方約45°", "Three-quarter / 45°", "斜め前45度", "Three-quarter view, the subject turned about 45 degrees relative to the camera."),
+        "left_three_quarter": option("左 3/4 約45°", "Left three-quarter / 45°", "左斜め45度", "Left three-quarter view, with the subject turned about 45 degrees relative to the camera."),
+        "right_three_quarter": option("右 3/4 約45°", "Right three-quarter / 45°", "右斜め45度", "Right three-quarter view, with the subject turned about 45 degrees relative to the camera."),
         "profile": option("側面90°", "Profile / 90°", "横顔90度", "Side profile, approximately 90 degrees to the camera."),
+        "left_profile": option("左側面90°", "Left profile / 90°", "左横顔90度", "Left side profile, approximately 90 degrees to the camera."),
+        "right_profile": option("右側面90°", "Right profile / 90°", "右横顔90度", "Right side profile, approximately 90 degrees to the camera."),
+        "back": option("背面", "Back view", "背面", "Back view of the subject, preserving the same hair, body proportions and wardrobe."),
         "low": option("低角度仰拍", "Low angle", "ローアングル", "A low camera angle looking gently upward."),
         "high": option("高角度俯拍", "High angle", "ハイアングル", "A high camera angle looking gently downward."),
         "over_shoulder": option("過肩鏡頭", "Over the shoulder", "肩越し", "Over-the-shoulder composition with a clear eyeline toward the subject."),
@@ -121,7 +126,7 @@ def normalize_sequence(raw, payload, max_frames, asset_lookup):
     max_keep = min(math.floor(segment_seconds * fps), max_frames)
     # Each shot rounds upward for inference; composition keeps exactly max_keep.
     timeline = raw.get("timeline", {})
-    if not isinstance(timeline, dict) or set(timeline) - {"audio_id", "audio_start_seconds", "audio_mode", "lrc", "cues"}:
+    if not isinstance(timeline, dict) or set(timeline) - {"audio_id", "audio_start_seconds", "audio_mode", "lrc", "lrc_timebase", "cues"}:
         raise ValueError("Invalid timeline fields")
     audio_id = timeline.get("audio_id")
     audio_mode = timeline.get("audio_mode", "soundtrack")
@@ -142,6 +147,19 @@ def normalize_sequence(raw, payload, max_frames, asset_lookup):
         raise ValueError("audio_start_seconds requires audio_id")
     lrc = timeline.get("lrc", "")
     lyrics = parse_lrc(lrc)
+    lrc_timebase = timeline.get("lrc_timebase", "output")
+    if lrc_timebase not in {"output", "music"} or (lrc_timebase == "music" and not audio_id):
+        raise ValueError("lrc_timebase=music requires imported music")
+    skipped_lyrics = 0
+    if lrc_timebase == "music":
+        shifted = []
+        for entry in lyrics:
+            when = round(entry["time"] - start, 6)
+            if when < 0:
+                skipped_lyrics += 1
+            else:
+                shifted.append({**entry, "time": when})
+        lyrics = shifted
     cues = timeline.get("cues", [])
     if not isinstance(cues, list) or len(cues) > 60:
         raise ValueError("At most 60 action cues are supported")
@@ -179,5 +197,8 @@ def normalize_sequence(raw, payload, max_frames, asset_lookup):
                          "duration_seconds": keep / fps, "lyrics": lyric, "action": cue.get("action", ""),
                          "directing": directing, "prompt": compose_prompt(payload["prompt"], directing, cue.get("action", ""), lyric)})
     return {"render_mode": "sequence", "frames": total, "duration_seconds": duration, "segment_seconds": segment_seconds,
-            "timeline": {"audio_id": audio_id, "audio_start_seconds": start, "audio_mode": audio_mode, "lrc": lrc, "cues": clean_cues},
-            "segments": segments, "timeline_warnings": ["LRC timestamps after the requested duration are not rendered."] if any(c["time"] >= duration for c in lyrics) else []}
+            "timeline": {"audio_id": audio_id, "audio_start_seconds": start, "audio_mode": audio_mode,
+                         "lrc": lrc, "lrc_timebase": lrc_timebase, "cues": clean_cues},
+            "segments": segments, "timeline_warnings":
+                (["LRC timestamps before the selected music start are skipped."] if skipped_lyrics else []) +
+                (["LRC timestamps after the requested duration are not rendered."] if any(c["time"] >= duration for c in lyrics) else [])}

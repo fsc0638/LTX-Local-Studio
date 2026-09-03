@@ -43,6 +43,19 @@ class TimelineTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 mv.parse_lrc(bad)
 
+    def test_music_timebase_tracks_audio_start(self):
+        raw = {"prompt": "Singer", "render_mode": "sequence", "duration_seconds": 4, "fps": 24,
+               "timeline": {"audio_id": "music", "audio_start_seconds": 3, "lrc_timebase": "music",
+                            "lrc": "[00:02.00]Skipped\n[00:05.00]Visible"}}
+        asset = lambda identity: {"kind": "audio", "duration_seconds": 20}
+        payload = mv.normalize_sequence(raw, {"prompt": "Singer", "fps": 24, "audio": True, "directing": {}}, 481, asset)
+        self.assertEqual(payload["timeline"]["lrc_timebase"], "music")
+        self.assertTrue(any(segment["start_seconds"] == 2 and segment["lyrics"] == "Visible" for segment in payload["segments"]))
+        self.assertIn("before the selected music start", " ".join(payload["timeline_warnings"]))
+        with self.assertRaises(ValueError):
+            mv.normalize_sequence({**raw, "timeline": {"lrc_timebase": "music", "lrc": "[00:01]No music"}},
+                                  {"prompt": "Singer", "fps": 24, "audio": True, "directing": {}}, 481, asset)
+
     def test_exact_three_minute_plan_all_fps(self):
         for fps in (8, 16, 24, 25, 30, 50, 60):
             payload, _, requested = contract.parse_request({"prompt": "Character by the sea", "render_mode": "sequence", "duration_seconds": 180, "fps": fps}, backend.parse_payload)
@@ -97,6 +110,18 @@ class TimelineTests(unittest.TestCase):
                 self.assertEqual(picture.size, (256, 256))
                 self.assertEqual(picture.getpixel((0, 128)), (0, 0, 0))
                 self.assertGreater(picture.getpixel((128, 128))[0], 200)
+        with tempfile.TemporaryDirectory() as folder:
+            source, target = Path(folder) / "cutout.png", Path(folder) / "neutral.png"
+            cutout = Image.new("RGBA", (32, 32), (0, 0, 0, 0))
+            cutout.paste((255, 0, 0, 255), (8, 8, 24, 24))
+            cutout.save(source)
+            prepare_image(source, target, 64, 64, "alpha_neutral")
+            with Image.open(target) as picture:
+                self.assertEqual(picture.getpixel((0, 0)), (127, 127, 127))
+                self.assertGreater(picture.getpixel((32, 32))[0], 200)
+            Image.new("RGB", (32, 32), "red").save(source)
+            with self.assertRaises(ValueError):
+                prepare_image(source, target, 64, 64, "alpha_neutral")
 
     def test_audio_stage_really_freezes_source_in_both_calls(self):
         from ltx_pipelines.utils.types import ModalitySpec
@@ -171,3 +196,28 @@ class TimelineAPITests(BackendTests):
             backend.run_job("abcdef654321", payload)
             self.assertEqual(store.get("abcdef654321")["status"], "cancelled")
             self.assertFalse((self.output / "cancelled.mp4").exists())
+
+    def test_sequence_resume_reuses_valid_completed_shots(self):
+        source = Path(self.temp.name) / "fixture.mp4"
+        create_video(source, frames=49, fps=24)
+        store = ProductionStore(Path(self.temp.name) / "resume-jobs.sqlite3")
+        raw = {"prompt": "valid", "render_mode": "sequence", "duration_seconds": 4, "segment_seconds": 2,
+               "width": 256, "height": 256, "fps": 24, "audio": False}
+        payload, _, _ = contract.parse_request(raw, backend.parse_payload)
+        job_id = "abcdef789012"
+        work = backend.WORK_DIR / job_id
+        work.mkdir(parents=True)
+        first = work / "shot-001.mp4"
+        first.write_bytes(source.read_bytes())
+        original = first.stat().st_mtime_ns
+        job = {**payload, "id": job_id, "filename": "resumed.mp4", "status": "failed", "created_at": 0,
+               "finished_at": 1, "runtime_seconds": 1, "error": {"code": "generation_timeout", "retryable": True}}
+        store.record(job)
+        with patch.object(backend, "STORE", store), patch.object(backend, "LAUNCHER", Path(__file__).parent / "fixtures/generator.sh"), patch.dict(os.environ, {"LTX_TEST_FIXTURE": str(source)}):
+            backend.JOBS[job_id] = job
+            backend.run_job(job_id, payload, resume=True)
+        saved = store.get(job_id)
+        self.assertEqual(saved["status"], "succeeded", saved)
+        self.assertEqual(first.stat().st_mtime_ns, original)
+        self.assertNotIn("error", saved)
+        self.assertTrue((self.output / "resumed.mp4").is_file())

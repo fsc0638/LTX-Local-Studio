@@ -1,7 +1,7 @@
 # LTX 影片生成主機：跨專案 API v1
 
-目前程式契約版本：**1.4.0**。固定路徑 `/api/v1/*`；不建立任何特定專案專用通道。
-1.4 新增：參照圖片自動比例、分鏡提示詞、LRC／音樂時間軸、最長180秒分段組片；詳見 [MV時間軸](MV_TIMELINE.md)。單鏡仍遵守原本主機幀數上限，負面提示詞能力未改變。
+目前程式契約版本：**1.6.0**。固定路徑 `/api/v1/*`；不建立任何特定專案專用通道。
+1.6 新增可編輯的 LRC 逐句秒數／音樂時間基準、素材庫多視角選取、精確左右視角，以及透明人物 PNG 的中性背景模式。1.5 的人物一致性鎖定與1.4的MV時間軸能力仍保留；詳見 [MV時間軸](MV_TIMELINE.md)。
 機器可讀 OpenAPI：`GET /api/v1/openapi.json`（需 Bearer 或已驗證帳號 session）；定義來源 `worker_schema.py`。
 正式站的版本以實際部署為準；1.2 帳號啟用前須完成 [部署檢查](ACCOUNTS_AND_MODELS.md)。
 新增欄位向後相容，呼叫端應忽略不認識的回應欄位；不相容改動另開 `/api/v2`。
@@ -125,8 +125,39 @@ Authorization: Bearer <worker-api-key>
 
 I2V 改為 `"mode": "i2v"`，另帶上傳回傳的 `"image_id": "..."`。
 參照使用第 0 幀；`image_strength` 可設0–1，預設0.8；T2V 不接受圖片條件。
-目前不接受角色 LoRA、音樂母帶、姿態／影片條件等額外欄位。
-需要精準角色時，另一個專案先用角色圖工具製作核准的「每鏡起始圖」，再傳到 worker。
+目前仍不接受角色 LoRA、姿態／影片條件等額外欄位。需要更高的一致性可使用下方人物鎖定；它不等於訓練，也不保證通過視覺審片。
+
+### 人物一致性鎖定
+
+人物鎖定採三層約束：
+
+1. `description` 作為每鏡不變的人物 bible，會附加到所有鏡頭提示詞。
+2. 分段影片所有鏡頭沿用同一 seed，避免原本每鏡 seed 遞增造成身份漂移。
+3. 每鏡依 `directing.angle` 選最接近的參照圖，再把該圖放在該鏡第0幀；沒有相符角度時回退到最外層 `image_id`。
+
+```json
+{
+  "mode": "i2v",
+  "image_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "prompt": "She walks through a quiet station.",
+  "directing": {"angle": "front", "shot_size": "medium"},
+  "character": {
+    "name": "Mina",
+    "description": "Oval face, amber eyes, short black bob, warm beige skin, slim build, navy coat with a brass collar pin.",
+    "references": [
+      {"image_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "view": "front"},
+      {"image_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "view": "left_three_quarter"},
+      {"image_id": "cccccccccccccccccccccccccccccccc", "view": "left_profile"}
+    ]
+  }
+}
+```
+
+`references` 允許1–8張且同一 `view` 不能重複；支援 `front`、`left_three_quarter`、`right_three_quarter`、`left_profile`、`right_profile`、`back`、`full_body`。最外層 `image_id` 必須也在設定集內，作為首鏡與無法配對時的基準。
+
+參照圖應是**同一人物、同一髮型與服裝版本**，使用接近的焦段、光線、白平衡與乾淨背景。前後左右資料可降低模型猜測，但 LTX-2.3 Distilled 沒有因此建立可旋轉的3D人物模型；單一長鏡頭的環繞運鏡仍只會使用一張起始圖。需要跨服裝、極端角度或強動作的硬性身份保證，仍應先製作核准的每鏡起始圖，或另建經授權的角色 LoRA／身份模型流程。
+
+上傳照片不會讓模型訓練或只學習人物；I2V 會對**整張第0幀**做條件控制，所以原背景也會影響結果。`reference_background="alpha_neutral"` 可把已去背的透明人物 PNG 合成到中性灰背景，降低原背景污染；所有人物設定集圖片都必須有有效 alpha，普通 JPG／無透明區域的 PNG 會明確拒絕。`image_strength` 可用約0.65–0.8平衡人物與背景自由度；越低越能改背景，也越可能降低人物一致性。
 
 未設定時：model=`ltx23-distilled`、mode=`t2v`、width=768、height=512、frames=49、fps=24、seed=42、audio=true、offload=false。
 `prompt` 上限 4000 字元、width/height 為 256–1536 且是 64 倍數；整數欄位不得傳浮點或字串。
@@ -309,3 +340,6 @@ node examples/worker-smoke.mjs --generate --profile portrait-v1 --reference /abs
 - 24項Python測試及2項Node用戶端測試通過；本次沒有改動前端畫面。
 - 未帶本機worker key回401；公網未登入仍回Cloudflare302，Access保護未移除。
 - 這是本機短片整合測試，不是外網第二台機器的端到端測試，也不是20秒效能測試。
+## 中斷後的分段續跑
+
+An operator-approved recovery can place a private `data/worker/resume-request.json` marker before restarting the API. At startup, the worker accepts only a failed or interrupted sequence with a retryable failure and an existing private workspace. Every existing shot is technically validated and reused; generation resumes at the first missing shot before normal assembly and final quality control. The marker is single-use and is removed only after it has been validated and claimed.

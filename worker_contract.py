@@ -9,9 +9,10 @@ import re
 import model_registry
 from video_settings import ASPECT_RATIOS, MAX_FRAMES
 import mv_timeline
+import character_consistency
 
 
-CONTRACT_VERSION = "1.4.0"
+CONTRACT_VERSION = "1.6.0"
 # Immutable named defaults. Explicit request fields override a profile; return
 # all resolved values so clients never have to reconstruct them from defaults.
 PROFILES = {
@@ -21,7 +22,7 @@ PROFILES = {
     "portrait-v1": {"width": 576, "height": 1024, "frames": 97, "fps": 24, "audio": False},
 }
 MAX_TIMEOUT = 7200
-PARAMETERS = ("model", "profile", "mode", "prompt", "image_id", "image_strength", "width", "height",
+PARAMETERS = ("model", "profile", "mode", "prompt", "image_id", "image_strength", "reference_background", "character", "width", "height",
               "frames", "fps", "seed", "audio", "offload", "timeout_seconds", "parameters", "media_type", "aspect_ratio",
               "render_mode", "directing", "timeline", "segment_seconds", "duration_seconds", "segments", "source_geometry")
 
@@ -53,7 +54,7 @@ def validate_request(raw, idempotency_key):
     allowed = {"prompt", "model", "mode", "image_id", "width", "height", "frames", "fps",
                "duration_seconds", "seed", "audio", "offload", "external", "profile",
                "image_strength", "timeout_seconds", "parameters", "aspect_ratio", "negative_prompt",
-               "render_mode", "directing", "timeline", "segment_seconds"}
+               "render_mode", "directing", "timeline", "segment_seconds", "character", "reference_background"}
     if set(raw) - allowed:
         raise ValueError("Unsupported request field; query the generic worker contract.")
     if not isinstance(idempotency_key, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{8,128}", idempotency_key):
@@ -96,8 +97,8 @@ def parse_request(raw, parse_payload):
         payload.pop("height", None)
     requested = payload.pop("duration_seconds", None)
     external = payload.pop("external", {})
-    if payload.get("mode", "t2v") == "t2v" and ("image_id" in raw or "image_strength" in raw):
-        raise ValueError("image_id and image_strength require mode=i2v")
+    if payload.get("mode", "t2v") == "t2v" and any(name in raw for name in ("image_id", "image_strength", "character", "reference_background")):
+        raise ValueError("image_id, image_strength, reference_background and character require mode=i2v")
     if raw.get("render_mode") == "sequence":
         if "frames" in raw:
             raise ValueError("Sequence uses duration_seconds, not frames")
@@ -129,6 +130,8 @@ def validation_result(payload, external, requested):
             "requested_duration_seconds": requested,
             "configured_duration_seconds": payload["frames"] / payload["fps"] if payload.get("frames") and payload.get("fps") else None,
             "warnings": ["Parameter validation is not a GPU memory or visual quality guarantee."] +
+                        (["Character lock fixes identity text and seed, then selects the closest angle reference per shot. Visual review is still required."]
+                         if payload.get("character") else []) +
                         (["Long clips beyond 20 seconds are experimental; temporal consistency and motion may degrade."]
                          if payload.get("frames") and payload.get("fps") and (payload["frames"] - 1) / payload["fps"] > 20 else []) + payload.get("timeline_warnings", []) +
                         (["Sequence joins independently generated shots. Character continuity and lip sync require visual review."] if payload.get("render_mode") == "sequence" else [])}
@@ -173,6 +176,8 @@ def capabilities(runtime):
                        "timeout_seconds_min": 30, "timeout_seconds_max": MAX_TIMEOUT},
             "profiles": PROFILES, "default_profile": "compat-v1", "default_timeout_seconds": default_timeout(),
             "image_strength": {"min": 0, "max": 1, "default": 0.8},
+            "reference_background": {"modes": ["source", "alpha_neutral"], "default": "source",
+                                     "alpha_neutral_requires": "transparent_png_subject_cutout"},
             "aspect_ratios": ASPECT_RATIOS,
             "source_aspect_ratio": {"value": "source", "requires": "image_id", "alignment": 64, "fit": "contain_letterbox_no_crop"},
             "directing": mv_timeline.DIRECTING,
@@ -189,7 +194,11 @@ def capabilities(runtime):
             "external_required": False,
             "duration_rounding": "ceil_to_8n_plus_1_no_silent_clamp", "gpu_concurrency": 1,
             "queue": "caller_managed_busy_returns_409", "idempotency": True,
-            "download": "authenticated_binary_with_range", "reference_input": "uploaded_image_id_at_frame_0",
+            "download": "authenticated_binary_with_range", "reference_input": "angle_matched_uploaded_character_reference_at_frame_0",
+            "character_consistency": {"supported": True, "max_references": 8,
+                                      "views": sorted(character_consistency.REFERENCE_VIEWS),
+                                      "strategy": "locked_identity_prompt_fixed_seed_angle_matched_per_shot",
+                                      "visual_review_required": True},
             "music_conditioning": False, "character_database": False, "automatic_training": False,
             "automatic_updates": False, "webhooks": False, "tenant_isolation": False,
             "service_key_scope": "privileged_host_access"}
