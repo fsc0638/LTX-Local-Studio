@@ -5,11 +5,16 @@ gb10_hf_env
 venv="${STUDIO_VENVS}/vision"
 [[ -x "${venv}/bin/python" ]] || gb10_die "run 20-vision.sh first"
 
-"${venv}/bin/pip" install --upgrade simple-lama-inpainting realesrgan basicsr
+"${venv}/bin/pip" install --upgrade realesrgan basicsr
+# simple-lama-inpainting pins pillow<10 and numpy<2; neither has a cp312 aarch64 wheel, and building
+# pillow 9.5 from source needs libjpeg headers. It only uses PIL.Image and np.ndarray basics, so
+# --no-deps keeps the pillow/numpy the rest of the vision venv is already on.
+"${venv}/bin/pip" install --no-deps simple-lama-inpainting
 # basicsr still imports a torchvision module that was removed upstream.
 "${venv}/bin/python" - <<'PY'
-import pathlib, basicsr
-target = pathlib.Path(basicsr.__file__).parent / "data" / "degradations.py"
+import importlib.util, pathlib
+# Locate basicsr without importing it -- the broken import is exactly what this patch fixes.
+target = pathlib.Path(importlib.util.find_spec("basicsr").submodule_search_locations[0]) / "data" / "degradations.py"
 source = target.read_text()
 patched = source.replace("torchvision.transforms.functional_tensor", "torchvision.transforms.functional")
 print("patched" if patched != source else "no patch needed", target)
