@@ -9,6 +9,7 @@ import {
 } from 'react';
 import {
   Braces,
+  Download,
   Film,
   ListPlus,
   Music2,
@@ -38,7 +39,10 @@ import {
   resetLrcTimes,
   storedLrcTime,
 } from '@/lib/lrc-editor';
-import { parseTimelineImport } from '@/lib/timeline-import';
+import {
+  parseTimelineImport,
+  serializeShotPlan,
+} from '@/lib/timeline-import';
 
 type Locale = 'zh-TW' | 'en' | 'ja';
 export type Directing = Record<string, string>;
@@ -76,7 +80,9 @@ export const mvCopy = {
     importMusic: '匯入音樂',
     importLrc: '匯入 LRC',
     importJson: '匯入分鏡 JSON',
-    jsonHint: '可匯入完整 /api/v1/jobs 設定，或只有 {lrc, cues} 的子集，方便其他語言模型產出檔案。',
+    exportJson: '匯出分鏡 JSON',
+    jsonHint:
+      '可匯入完整 /api/v1/jobs 設定，或只有 {lrc, cues} 的子集，方便其他語言模型產出檔案。匯出會寫成同一份標準格式，可直接再匯入。',
     resetTimes: '重設時間',
     noBaseline: '尚無匯入紀錄可重設，請先匯入 LRC 或 JSON。',
     basisOutput: '時間以成片起點計算',
@@ -137,7 +143,9 @@ export const mvCopy = {
     importMusic: 'Import music',
     importLrc: 'Import LRC',
     importJson: 'Import shot JSON',
-    jsonHint: 'Accepts a full /api/v1/jobs payload, or just {lrc, cues}, so another language model can generate the file.',
+    exportJson: 'Export shot JSON',
+    jsonHint:
+      'Accepts a full /api/v1/jobs payload, or just {lrc, cues}, so another language model can generate the file. Export writes that same standard format back.',
     resetTimes: 'Reset times',
     noBaseline: 'Nothing to reset yet. Import an LRC or JSON file first.',
     basisOutput: 'Times are relative to the output start',
@@ -199,7 +207,9 @@ export const mvCopy = {
     importMusic: '音楽を読み込む',
     importLrc: 'LRCを読み込む',
     importJson: 'ショットJSONを読み込む',
-    jsonHint: '完全な /api/v1/jobs 設定、または {lrc, cues} だけの部分設定を受け付けます。',
+    exportJson: 'ショットJSONを書き出す',
+    jsonHint:
+      '完全な /api/v1/jobs 設定、または {lrc, cues} だけの部分設定を受け付けます。書き出しも同じ標準形式です。',
     resetTimes: '時間を再設定',
     noBaseline: '再設定できる読み込み履歴がありません。先にLRCかJSONを読み込んでください。',
     basisOutput: '時間は完成尺の開始が基準です',
@@ -530,6 +540,20 @@ export function TimelineControls({
       setError(issue instanceof Error ? issue.message : text.error);
     }
   };
+  const exportJson = () => {
+    setError('');
+    setNotice('');
+    const { filename, source } = serializeShotPlan(request);
+    const url = URL.createObjectURL(
+      new Blob([source], { type: 'application/json' }),
+    );
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    link.click();
+    // Released on the next task so the download has taken the URL first.
+    setTimeout(() => URL.revokeObjectURL(url));
+  };
   const preview = async () => {
     setPending(true);
     setError('');
@@ -669,6 +693,15 @@ export function TimelineControls({
           >
             <Braces />
             {text.importJson}
+          </Button>
+          <Button
+            variant="outline"
+            className="rounded-none text-xs"
+            disabled={pending || !value.enabled}
+            onClick={exportJson}
+          >
+            <Download />
+            {text.exportJson}
           </Button>
         </div>
         <p className="text-[10px] leading-5 text-muted-foreground">

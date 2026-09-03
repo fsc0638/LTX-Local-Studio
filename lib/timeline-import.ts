@@ -205,3 +205,18 @@ export function parseTimelineImport(
   result.ignored = Object.keys(root).filter((key) => !TIMELINE_FIELDS.includes(key));
   return result;
 }
+
+/**
+ * Serialize the request exactly as /api/v1/jobs would receive it, so an
+ * exported file is the same standard format parseTimelineImport reads back.
+ */
+export function serializeShotPlan(
+  request: Record<string, unknown>,
+  now = new Date(),
+): { filename: string; source: string } {
+  const stamp = now.toISOString().slice(0, 19).replace(/[-:]/g, '');
+  return {
+    filename: `ltx-shot-plan-${stamp}.json`,
+    source: `${JSON.stringify(request, null, 2)}\n`,
+  };
+}

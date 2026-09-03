@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {durationFrames, maximumDurationInput, sequenceFrames} from '../lib/video-settings.ts';
 import {readSession, serviceFetch, signOut, sessionChangeKey} from '../lib/service-session.ts';
 import {displayedLrcTime, formatLrcRows, parseLrcRows, resetLrcTimes, storedLrcTime} from '../lib/lrc-editor.ts';
-import {parseTimelineImport} from '../lib/timeline-import.ts';
+import {parseTimelineImport, serializeShotPlan} from '../lib/timeline-import.ts';
 
 test('LRC rows expose editable seconds and follow the selected music start', () => {
   const rows = parseLrcRows('[00:05.50]First line\n[00:08.000]Second line');
@@ -150,4 +150,29 @@ test('imported shot plans are rejected before they can reach the worker', () => 
 test('directing options are trusted to the worker when no catalog has loaded', () => {
   const imported = parseTimelineImport('{"cues":[{"time":1,"directing":{"emotion":"calm"}}]}', undefined);
   assert.deepEqual(imported.cues[0].directing, {emotion:'calm'});
+});
+
+test('an exported shot plan is the standard payload and imports back unchanged', () => {
+  const request = {
+    prompt:'A performer by the sea', model:'ltx23-distilled', mode:'t2v',
+    duration_seconds:60, fps:24, audio:true, render_mode:'sequence', segment_seconds:10,
+    image_id:undefined, directing:{emotion:'hope'},
+    timeline:{audio_id:undefined, audio_start_seconds:0, audio_mode:'soundtrack',
+      lrc:'[00:02.000]Line one\n[00:06.500]Line two', lrc_timebase:'output',
+      cues:[{time:2,action:'Looks up',directing:{emotion:'calm'}}]},
+  };
+  const {filename, source} = serializeShotPlan(request, new Date('2026-09-03T15:04:05Z'));
+  assert.equal(filename, 'ltx-shot-plan-20260903T150405.json');
+  assert.equal(source.endsWith('\n'), true);
+  // Keys the request left undefined must not survive as JSON nulls.
+  const written = JSON.parse(source);
+  assert.equal('image_id' in written, false);
+  assert.equal(written.timeline.audio_id, undefined);
+  const imported = parseTimelineImport(source, {emotion:{calm:{},hope:{}}});
+  assert.equal(imported.lrc, request.timeline.lrc);
+  assert.equal(imported.lrcTimebase, 'output');
+  assert.equal(imported.durationSeconds, 60);
+  assert.equal(imported.segmentSeconds, 10);
+  assert.deepEqual(imported.cues, request.timeline.cues);
+  assert.deepEqual(imported.ignored.sort(), ['audio','directing','fps','mode','model','prompt','render_mode']);
 });
