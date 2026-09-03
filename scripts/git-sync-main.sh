@@ -191,6 +191,10 @@ if grep -Eq '(^|/)tests/.*\.py$' <<<"${sync_changes}" || [[ "${sync_backend}" ==
   sync_python_tests=1
 fi
 
+if grep -Eq '^(scripts/git-sync-main\.sh|tests/test_git_sync\.sh)$' <<<"${sync_changes}"; then
+  # Self-test against a throwaway origin; it never reaches systemctl or the real services.
+  bash tests/test_git_sync.sh
+fi
 if [[ "${sync_js_tests}" == "1" ]]; then
   "${sync_node}" --test tests/studio-controls.test.mjs
 fi
