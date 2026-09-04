@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import {
   ArrowDown,
   ArrowUp,
+  Braces,
   CirclePause,
   CirclePlay,
   Download,
@@ -16,24 +17,46 @@ import {
   Upload,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  CharacterLock,
+  type CharacterDraft,
+} from '@/components/character-lock';
 import { DeleteMediaButton } from '@/components/delete-media-button';
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import type { Asset } from '@/components/media-library';
 import { serviceFetch } from '@/lib/service-session';
 import {
   MAX_FACTORY_SHOTS,
   activeFactoryShot,
+  bibleFromRequest,
   clearFactoryShotOutput,
+  countPinnedShots,
   createFactoryPlan,
   createFactoryShot,
+  hasFactoryBible,
   nextQueuedShot,
+  normalizeFactoryRequest,
   parseFactoryImport,
+  pinFactoryField,
+  projectBible,
+  reprojectShots,
   reopenFactoryShot,
   restoreFactoryPlan,
   serializeFactoryPlan,
   summarizeFactory,
+  unpinFactoryField,
   type FactoryPlan,
+  type FactoryBible,
   type FactoryRequest,
   type FactoryShot,
   type FactoryShotState,
@@ -43,6 +66,7 @@ type Locale = 'zh-TW' | 'en' | 'ja';
 export type FactoryIncoming = {
   token: string;
   request: FactoryRequest;
+  bible?: FactoryBible;
 };
 
 type WorkerJob = {
@@ -70,7 +94,20 @@ const copy = {
     active: '製作中',
     completed: '已完成',
     failed: '需處理',
-    addBlank: '新增空白鏡頭',
+    addBlank: '新增鏡頭',
+    bible: '00 / 專案 Bible',
+    bibleHint: '先固定角色、音樂與輸出規格；新增鏡頭會繼承這些設定。',
+    bibleRequired: '請先設定專案 Bible，再新增鏡頭。',
+    music: '音樂母帶',
+    noMusic: '不使用音樂',
+    output: '輸出規格',
+    inherited: '繼承',
+    overridden: '此鏡覆寫',
+    restore: '還原繼承',
+    allSettings: '全部設定',
+    outgoingJson: '即將送出的 JSON',
+    valid: '設定驗證通過',
+    reprojected: 'Bible 已套用；{count} 鏡保留覆寫欄位。',
     import: '匯入製片 JSON',
     export: '匯出製片 JSON',
     start: '啟動生產線',
@@ -111,7 +148,21 @@ const copy = {
     active: 'In production',
     completed: 'Completed',
     failed: 'Needs action',
-    addBlank: 'Add blank shot',
+    addBlank: 'Add shot',
+    bible: '00 / PROJECT BIBLE',
+    bibleHint:
+      'Lock character, music and output defaults before adding inherited shots.',
+    bibleRequired: 'Set the project Bible before adding a shot.',
+    music: 'Music master',
+    noMusic: 'No music',
+    output: 'Output defaults',
+    inherited: 'Inherited',
+    overridden: 'Shot override',
+    restore: 'Restore inheritance',
+    allSettings: 'All settings',
+    outgoingJson: 'Outgoing JSON',
+    valid: 'Validation passed',
+    reprojected: 'Bible applied; {count} shots keep overrides.',
     import: 'Import factory JSON',
     export: 'Export factory JSON',
     start: 'Start production line',
@@ -158,7 +209,20 @@ const copy = {
     active: '制作中',
     completed: '完了',
     failed: '要対応',
-    addBlank: '空のショットを追加',
+    addBlank: 'ショットを追加',
+    bible: '00 / プロジェクト Bible',
+    bibleHint: '人物、音楽、出力設定を固定してから継承ショットを追加します。',
+    bibleRequired: '先にプロジェクト Bible を設定してください。',
+    music: '音楽マスター',
+    noMusic: '音楽なし',
+    output: '出力設定',
+    inherited: '継承',
+    overridden: 'ショット上書き',
+    restore: '継承に戻す',
+    allSettings: '全設定',
+    outgoingJson: '送信予定 JSON',
+    valid: '検証済み',
+    reprojected: 'Bibleを反映しました。{count}ショットは上書きを保持します。',
     import: '制作JSONを読み込む',
     export: '制作JSONを書き出す',
     start: '制作ラインを開始',
@@ -227,6 +291,116 @@ function requestMeta(request: FactoryRequest): string {
     .join(' · ');
 }
 
+function ShotSettings({
+  shot,
+  disabled,
+  labels,
+  onChange,
+  onRestore,
+}: {
+  shot: FactoryShot;
+  disabled: boolean;
+  labels: {
+    inherited: string;
+    overridden: string;
+    restore: string;
+    allSettings: string;
+    outgoingJson: string;
+    valid: string;
+    invalid: string;
+  };
+  onChange: (shot: FactoryShot) => void;
+  onRestore: (field: string) => void;
+}) {
+  const [source, setSource] = useState(() =>
+    JSON.stringify(shot.request, null, 2),
+  );
+  const [validation, setValidation] = useState('');
+  const validate = async (request: FactoryRequest) => {
+    try {
+      const response = await serviceFetch('/api/v1/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      });
+      const result = (await response.json()) as WorkerJob;
+      setValidation(
+        response.ok ? labels.valid : errorMessage(result, labels.invalid),
+      );
+    } catch {
+      setValidation(labels.invalid);
+    }
+  };
+  return (
+    <details className="border-t border-border bg-[#fafaf8] p-4">
+      <summary className="flex cursor-pointer items-center gap-2 text-[10px] font-bold">
+        <Braces className="size-3.5" /> {labels.allSettings}
+      </summary>
+      <div className="mt-4 flex flex-wrap gap-2">
+        {Object.keys(shot.request)
+          .sort()
+          .map((field) => {
+            const pinned = shot.pinned.includes(field);
+            return (
+              <Button
+                key={field}
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={disabled}
+                title={pinned ? labels.restore : labels.inherited}
+                className="h-7 rounded-none px-2 text-[9px]"
+                onClick={() =>
+                  pinned
+                    ? onRestore(field)
+                    : onChange(pinFactoryField(shot, field))
+                }
+              >
+                {field} · {pinned ? labels.overridden : labels.inherited}
+              </Button>
+            );
+          })}
+      </div>
+      <label className="mt-4 block text-[10px] font-bold">
+        {labels.outgoingJson}
+        <Textarea
+          value={source}
+          disabled={disabled}
+          spellCheck={false}
+          className="mt-2 min-h-64 rounded-none bg-white font-mono text-[10px]"
+          onChange={(event) => {
+            const nextSource = event.target.value;
+            setSource(nextSource);
+            try {
+              const request = normalizeFactoryRequest(JSON.parse(nextSource));
+              let next = { ...shot, request };
+              const fields = new Set([
+                ...Object.keys(shot.request),
+                ...Object.keys(request),
+              ]);
+              for (const field of fields) {
+                if (
+                  JSON.stringify(shot.request[field]) !==
+                  JSON.stringify(request[field])
+                ) {
+                  next = pinFactoryField(next, field);
+                }
+              }
+              onChange(next);
+              void validate(request);
+            } catch {
+              setValidation(labels.invalid);
+            }
+          }}
+        />
+      </label>
+      {validation && (
+        <p className="mt-2 text-[10px] text-muted-foreground">{validation}</p>
+      )}
+    </details>
+  );
+}
+
 export function ProductionFactory({
   locale,
   online,
@@ -245,6 +419,7 @@ export function ProductionFactory({
   const [hydrated, setHydrated] = useState(false);
   const [storageKey, setStorageKey] = useState('');
   const [notice, setNotice] = useState('');
+  const [assets, setAssets] = useState<Asset[]>([]);
   const importInput = useRef<HTMLInputElement>(null);
   const planRef = useRef(plan);
   const consumed = useRef(new Set<string>());
@@ -299,6 +474,19 @@ export function ProductionFactory({
   }, []);
 
   useEffect(() => {
+    const abort = new AbortController();
+    void serviceFetch('/api/v1/assets', { signal: abort.signal })
+      .then(async (response) =>
+        response.ok
+          ? (response.json() as Promise<{ assets?: Asset[] }>)
+          : Promise.reject(),
+      )
+      .then((result) => setAssets(result.assets || []))
+      .catch(() => undefined);
+    return () => abort.abort();
+  }, []);
+
+  useEffect(() => {
     if (!hydrated || !storageKey) return;
     try {
       window.localStorage.setItem(storageKey, JSON.stringify(plan));
@@ -321,6 +509,9 @@ export function ProductionFactory({
       if (current.status === 'running') shot.status = 'queued';
       return {
         ...current,
+        bible: hasFactoryBible(current.bible)
+          ? current.bible
+          : incoming.bible || bibleFromRequest(incoming.request),
         status: current.status === 'completed' ? 'paused' : current.status,
         shots: [...current.shots, shot],
       };
@@ -506,6 +697,34 @@ export function ProductionFactory({
   const active = activeFactoryShot(plan);
   const editable = !active && plan.status !== 'running';
   const completedShots = plan.shots.filter((shot) => shot.outputUrl);
+  const characterValue: CharacterDraft = {
+    enabled: Boolean(plan.bible.character),
+    name: plan.bible.character?.name || '',
+    description: plan.bible.character?.description || '',
+    references: (plan.bible.character?.references || []).flatMap(
+      (reference) => {
+        const asset = assets.find((item) => item.id === reference.image_id);
+        return asset
+          ? [
+              {
+                asset,
+                view: reference.view as CharacterDraft['references'][number]['view'],
+              },
+            ]
+          : [];
+      },
+    ),
+  };
+  const audioAssets = assets.filter((asset) => asset.kind === 'audio');
+
+  const updateBible = (change: (bible: FactoryBible) => FactoryBible) => {
+    const overrideCount = countPinnedShots(plan);
+    mutate((current) => {
+      const bible = change(current.bible);
+      return reprojectShots({ ...current, bible }, bible);
+    });
+    setNotice(text.reprojected.replace('{count}', String(overrideCount)));
+  };
 
   const freshIdempotencyKey = (shot: FactoryShot) =>
     `factory-${shot.id}-${crypto.randomUUID().slice(0, 8)}`;
@@ -519,22 +738,22 @@ export function ProductionFactory({
 
   const addBlank = () => {
     if (plan.shots.length >= MAX_FACTORY_SHOTS) return;
+    if (!hasFactoryBible(plan.bible)) {
+      setNotice(text.bibleRequired);
+      return;
+    }
     mutate((current) => ({
       ...current,
       status: current.status === 'completed' ? 'paused' : current.status,
       shots: [
         ...current.shots,
         createFactoryShot(
-          {
+          projectBible(current.bible, {
             prompt: text.defaultPrompt,
-            model: 'ltx23-distilled',
             mode: 't2v',
-            aspect_ratio: '16:9',
             duration_seconds: 4,
-            fps: 24,
             seed: 42 + current.shots.length,
-            audio: true,
-          },
+          }),
           crypto.randomUUID(),
           current.shots.length,
         ),
@@ -657,6 +876,271 @@ export function ProductionFactory({
 
       <div className="grid gap-6 xl:grid-cols-[1.45fr_.75fr]">
         <div className="space-y-5">
+          <section className="space-y-5 border border-border bg-white p-5">
+            <div>
+              <h2 className="text-xs font-extrabold tracking-[0.13em]">
+                {text.bible}
+              </h2>
+              <p className="mt-2 text-[10px] leading-5 text-muted-foreground">
+                {text.bibleHint}
+              </p>
+            </div>
+            <fieldset disabled={!editable}>
+              <CharacterLock
+                locale={locale}
+                value={characterValue}
+                current={null}
+                onPrimary={(asset) =>
+                  updateBible((bible) => ({
+                    ...bible,
+                    character: bible.character
+                      ? {
+                          ...bible.character,
+                          references: [
+                            ...bible.character.references.filter(
+                              (reference) => reference.image_id === asset.id,
+                            ),
+                            ...bible.character.references.filter(
+                              (reference) => reference.image_id !== asset.id,
+                            ),
+                          ],
+                        }
+                      : undefined,
+                  }))
+                }
+                onChange={(character) =>
+                  updateBible((bible) => ({
+                    ...bible,
+                    character: character.enabled
+                      ? {
+                          name: character.name.trim(),
+                          description: character.description.trim(),
+                          references: character.references.map((reference) => ({
+                            image_id: reference.asset.id,
+                            view: reference.view,
+                          })),
+                        }
+                      : undefined,
+                  }))
+                }
+              />
+            </fieldset>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <label className="text-[10px] font-bold">
+                {text.music}
+                <Select
+                  value={plan.bible.music?.audio_id || 'none'}
+                  disabled={!editable}
+                  onValueChange={(id) =>
+                    updateBible((bible) => ({
+                      ...bible,
+                      music:
+                        !id || id === 'none'
+                          ? undefined
+                          : {
+                              audio_id: id,
+                              audio_start_seconds: 0,
+                              audio_mode: 'soundtrack',
+                              lrc: '',
+                              lrc_timebase: 'output',
+                            },
+                    }))
+                  }
+                >
+                  <SelectTrigger className="mt-2 w-full rounded-none bg-white">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">{text.noMusic}</SelectItem>
+                    {audioAssets.map((asset) => (
+                      <SelectItem key={asset.id} value={asset.id}>
+                        {asset.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </label>
+              <label className="text-[10px] font-bold">
+                lyric_offset_seconds
+                <Input
+                  type="number"
+                  step="0.1"
+                  disabled={!editable}
+                  value={plan.bible.lyric_offset_seconds}
+                  onChange={(event) =>
+                    updateBible((bible) => ({
+                      ...bible,
+                      lyric_offset_seconds: Number(event.target.value),
+                    }))
+                  }
+                  className="mt-2 rounded-none"
+                />
+              </label>
+            </div>
+            {plan.bible.music && (
+              <div className="grid gap-4 lg:grid-cols-2">
+                <label className="text-[10px] font-bold">
+                  audio_start_seconds
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.1"
+                    disabled={!editable}
+                    value={plan.bible.music.audio_start_seconds}
+                    onChange={(event) =>
+                      updateBible((bible) => ({
+                        ...bible,
+                        music: bible.music
+                          ? {
+                              ...bible.music,
+                              audio_start_seconds: Number(event.target.value),
+                            }
+                          : undefined,
+                      }))
+                    }
+                    className="mt-2 rounded-none"
+                  />
+                </label>
+                <label className="text-[10px] font-bold">
+                  audio_mode
+                  <Select
+                    disabled={!editable}
+                    value={plan.bible.music.audio_mode}
+                    onValueChange={(audioMode) =>
+                      updateBible((bible) => ({
+                        ...bible,
+                        music:
+                          bible.music && audioMode
+                            ? { ...bible.music, audio_mode: audioMode }
+                            : bible.music,
+                      }))
+                    }
+                  >
+                    <SelectTrigger className="mt-2 w-full rounded-none">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="soundtrack">soundtrack</SelectItem>
+                      <SelectItem value="condition">condition</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </label>
+                <label className="text-[10px] font-bold lg:col-span-2">
+                  LRC
+                  <Textarea
+                    disabled={!editable}
+                    value={plan.bible.music.lrc}
+                    onChange={(event) =>
+                      updateBible((bible) => ({
+                        ...bible,
+                        music: bible.music
+                          ? { ...bible.music, lrc: event.target.value }
+                          : undefined,
+                      }))
+                    }
+                    className="mt-2 min-h-24 rounded-none font-mono text-[10px]"
+                  />
+                </label>
+              </div>
+            )}
+            <div>
+              <h3 className="text-[10px] font-bold tracking-[0.12em]">
+                {text.output}
+              </h3>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                {(['model', 'aspect_ratio', 'profile'] as const).map(
+                  (field) => (
+                    <label key={field} className="text-[10px] font-bold">
+                      {field}
+                      <Input
+                        disabled={!editable}
+                        value={String(plan.bible.output[field] || '')}
+                        onChange={(event) =>
+                          updateBible((bible) => ({
+                            ...bible,
+                            output: {
+                              ...bible.output,
+                              [field]: event.target.value || undefined,
+                            },
+                          }))
+                        }
+                        className="mt-2 rounded-none"
+                      />
+                    </label>
+                  ),
+                )}
+                <label className="text-[10px] font-bold">
+                  fps
+                  <Input
+                    type="number"
+                    min={8}
+                    max={60}
+                    disabled={!editable}
+                    value={plan.bible.output.fps || ''}
+                    onChange={(event) =>
+                      updateBible((bible) => ({
+                        ...bible,
+                        output: {
+                          ...bible.output,
+                          fps: event.target.value
+                            ? Number(event.target.value)
+                            : undefined,
+                        },
+                      }))
+                    }
+                    className="mt-2 rounded-none"
+                  />
+                </label>
+              </div>
+              <label className="mt-4 flex items-center gap-3 text-[10px] font-bold">
+                <Switch
+                  disabled={!editable}
+                  checked={Boolean(plan.bible.output.audio)}
+                  onCheckedChange={(audio) =>
+                    updateBible((bible) => ({
+                      ...bible,
+                      output: { ...bible.output, audio },
+                    }))
+                  }
+                />
+                audio
+              </label>
+            </div>
+            <div>
+              <h3 className="text-[10px] font-bold tracking-[0.12em]">
+                directing
+              </h3>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                {(
+                  [
+                    'shot_size',
+                    'angle',
+                    'camera',
+                    'emotion',
+                    'performance',
+                  ] as const
+                ).map((field) => (
+                  <label key={field} className="text-[10px] font-bold">
+                    {field}
+                    <Input
+                      disabled={!editable}
+                      value={plan.bible.directing?.[field] || ''}
+                      onChange={(event) =>
+                        updateBible((bible) => ({
+                          ...bible,
+                          directing: {
+                            ...bible.directing,
+                            [field]: event.target.value,
+                          },
+                        }))
+                      }
+                      className="mt-2 rounded-none"
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
+          </section>
           <section className="border border-border bg-white p-5">
             <label className="block text-[10px] font-bold tracking-[0.12em]">
               {text.project}
@@ -800,11 +1284,14 @@ export function ProductionFactory({
                             patchShot(
                               shot.id,
                               (current) => ({
-                                ...reopenFactoryShot(
-                                  current,
-                                  current.status === 'draft'
-                                    ? current.idempotencyKey
-                                    : freshIdempotencyKey(current),
+                                ...pinFactoryField(
+                                  reopenFactoryShot(
+                                    current,
+                                    current.status === 'draft'
+                                      ? current.idempotencyKey
+                                      : freshIdempotencyKey(current),
+                                  ),
+                                  'prompt',
                                 ),
                                 request: {
                                   ...current.request,
@@ -823,6 +1310,33 @@ export function ProductionFactory({
                         {requestMeta(shot.request)}
                       </div>
                     </div>
+                    <ShotSettings
+                      shot={shot}
+                      disabled={!shotEditable}
+                      labels={text}
+                      onChange={(next) =>
+                        patchShot(
+                          shot.id,
+                          () =>
+                            reopenFactoryShot(
+                              next,
+                              next.status === 'draft'
+                                ? next.idempotencyKey
+                                : freshIdempotencyKey(next),
+                            ),
+                          plan.status === 'completed' ? 'paused' : undefined,
+                        )
+                      }
+                      onRestore={(field) =>
+                        patchShot(shot.id, (current) => {
+                          const unpinned = unpinFactoryField(current, field);
+                          return reprojectShots({
+                            ...planRef.current,
+                            shots: [unpinned],
+                          }).shots[0];
+                        })
+                      }
+                    />
                     {['validating', 'submitting', 'running'].includes(
                       shot.status,
                     ) && (

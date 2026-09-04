@@ -72,6 +72,7 @@ import {
   ProductionFactory,
   type FactoryIncoming,
 } from '@/components/production-factory';
+import { bibleFromRequest } from '@/lib/production-factory';
 
 const initialPrompt =
   '電影感近景，一位穿著深色外套的女性站在潮濕的台北街口。鏡頭緩慢向前推進，霓虹燈在積水中形成珊瑚紅與青綠色倒影，微風帶動髮絲，自然環境音，細緻膠片顆粒。';
@@ -1877,6 +1878,7 @@ function Studio() {
                         setFactoryIncoming({
                           token: crypto.randomUUID(),
                           request: generationRequest,
+                          bible: bibleFromRequest(generationRequest),
                         });
                         setTab('factory');
                       }}

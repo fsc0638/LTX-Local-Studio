@@ -93,6 +93,8 @@ const runStates = new Set<FactoryRunState>([
 ]);
 const PROJECTED_FIELDS = [
   'character',
+  'mode',
+  'image_id',
   'timeline',
   'render_mode',
   'directing',
@@ -159,11 +161,52 @@ export function normalizeFactoryBible(value: unknown): FactoryBible {
     throw new Error(
       `Factory bible has unsupported fields: ${extra.join(', ')}`,
     );
+  const characterRaw = raw.character
+    ? record(raw.character, 'Bible character')
+    : undefined;
+  if (
+    characterRaw &&
+    (typeof characterRaw.name !== 'string' ||
+      typeof characterRaw.description !== 'string' ||
+      !Array.isArray(characterRaw.references))
+  ) {
+    throw new Error('Bible character is invalid');
+  }
+  const character = characterRaw
+    ? ({
+        name: characterRaw.name as string,
+        description: characterRaw.description as string,
+        references: (characterRaw.references as unknown[]).map(
+          (value, index) => {
+            const reference = record(
+              value,
+              `Bible character reference ${index}`,
+            );
+            if (
+              typeof reference.image_id !== 'string' ||
+              typeof reference.view !== 'string'
+            ) {
+              throw new Error('Bible character reference is invalid');
+            }
+            return { image_id: reference.image_id, view: reference.view };
+          },
+        ),
+      } satisfies FactoryCharacter)
+    : undefined;
+  const musicRaw = raw.music ? record(raw.music, 'Bible music') : undefined;
+  if (
+    musicRaw &&
+    (typeof musicRaw.audio_id !== 'string' ||
+      typeof musicRaw.audio_start_seconds !== 'number' ||
+      typeof musicRaw.audio_mode !== 'string' ||
+      typeof musicRaw.lrc !== 'string' ||
+      typeof musicRaw.lrc_timebase !== 'string')
+  ) {
+    throw new Error('Bible music is invalid');
+  }
   const bible = clone({
-    ...(raw.character
-      ? { character: record(raw.character, 'Bible character') }
-      : {}),
-    ...(raw.music ? { music: record(raw.music, 'Bible music') } : {}),
+    ...(character ? { character } : {}),
+    ...(musicRaw ? { music: musicRaw } : {}),
     output: raw.output ? record(raw.output, 'Bible output') : {},
     ...(raw.directing
       ? { directing: record(raw.directing, 'Bible directing') }
@@ -196,7 +239,15 @@ export function projectBible(
   const bible = normalizeFactoryBible(bibleValue);
   const request = normalizeFactoryRequest(requestValue);
   const projected: FactoryRequest = { ...request };
-  if (bible.character) projected.character = clone(bible.character);
+  if (
+    bible.character?.name.trim() &&
+    bible.character.description.trim() &&
+    bible.character.references.length
+  ) {
+    projected.character = clone(bible.character);
+    projected.mode = 'i2v';
+    projected.image_id = bible.character.references[0].image_id;
+  }
   if (bible.music) {
     projected.render_mode = 'sequence';
     projected.audio = true;
@@ -205,6 +256,50 @@ export function projectBible(
   if (bible.directing) projected.directing = clone(bible.directing);
   Object.assign(projected, clone(bible.output));
   return normalizeFactoryRequest(projected);
+}
+
+export function bibleFromRequest(requestValue: FactoryRequest): FactoryBible {
+  const request = normalizeFactoryRequest(requestValue);
+  const timeline =
+    request.timeline && typeof request.timeline === 'object'
+      ? (request.timeline as Record<string, unknown>)
+      : undefined;
+  const character =
+    request.character && typeof request.character === 'object'
+      ? (clone(request.character) as FactoryCharacter)
+      : undefined;
+  const directing =
+    request.directing && typeof request.directing === 'object'
+      ? (clone(request.directing) as Record<string, string>)
+      : undefined;
+  const music =
+    timeline && typeof timeline.audio_id === 'string'
+      ? ({
+          audio_id: timeline.audio_id,
+          audio_start_seconds: Number(timeline.audio_start_seconds || 0),
+          audio_mode:
+            typeof timeline.audio_mode === 'string'
+              ? timeline.audio_mode
+              : 'soundtrack',
+          lrc: typeof timeline.lrc === 'string' ? timeline.lrc : '',
+          lrc_timebase:
+            typeof timeline.lrc_timebase === 'string'
+              ? timeline.lrc_timebase
+              : 'output',
+        } satisfies FactoryMusic)
+      : undefined;
+  const output = Object.fromEntries(
+    ['model', 'aspect_ratio', 'fps', 'profile', 'audio']
+      .filter((field) => request[field] !== undefined)
+      .map((field) => [field, clone(request[field])]),
+  ) as FactoryOutput;
+  return normalizeFactoryBible({
+    ...(character ? { character } : {}),
+    ...(music ? { music } : {}),
+    output,
+    ...(directing ? { directing } : {}),
+    lyric_offset_seconds: -0.9,
+  });
 }
 
 export function createFactoryPlan(id: string, now = new Date()): FactoryPlan {
