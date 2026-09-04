@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   activeFactoryShot,
+  bibleFromRequest,
   clearFactoryShotOutput,
   countPinnedShots,
   createFactoryPlan,
@@ -74,6 +75,8 @@ test('Bible projects character, music, output and directing into a portable job 
     duration_seconds: 6,
   });
   assert.deepEqual(request.character, bible.character);
+  assert.equal(request.mode, 'i2v');
+  assert.equal(request.image_id, bible.character.references[0].image_id);
   assert.deepEqual(request.timeline, bible.music);
   assert.deepEqual(request.directing, bible.directing);
   assert.equal(request.render_mode, 'sequence');
@@ -170,6 +173,27 @@ test('Bible changes expose the number of shots carrying overrides', () => {
     ),
   ];
   assert.equal(countPinnedShots(plan), 2);
+});
+
+test('a complete sandbox request seeds a Bible without shot-only fields', () => {
+  const seeded = bibleFromRequest({
+    prompt: 'Shot prompt',
+    duration_seconds: 6,
+    seed: 77,
+    character: bible.character,
+    timeline: bible.music,
+    directing: bible.directing,
+    model: 'ltx23-distilled',
+    aspect_ratio: '16:9',
+    fps: 24,
+    profile: 'compat-v1',
+    audio: true,
+  });
+  assert.deepEqual(seeded.character, bible.character);
+  assert.deepEqual(seeded.music, bible.music);
+  assert.deepEqual(seeded.output, bible.output);
+  assert.equal('prompt' in seeded, false);
+  assert.equal('seed' in seeded, false);
 });
 
 test('factory queue summary and selectors keep one active GPU shot', () => {
