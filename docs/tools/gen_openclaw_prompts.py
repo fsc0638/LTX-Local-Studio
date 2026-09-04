@@ -16,15 +16,15 @@ REPO = '"/home/kwayrdc/LTX Local Studio"'
 PRE = (
 "背景任務：【工單 {id} · 執行】\n"
 "專案目錄 " + REPO + "（路徑有空格，一律加引號）。先讀 docs/OPENCLAW_WORK_ORDERS.md 的工作規則，再讀 docs/PRODUCTION_ROADMAP.md 的「{id}」節當規格。\n"
-"開始前：git fetch origin；若分支 wo/{lid} 不存在，從 origin/main 建立；存在就切過去並 rebase 到 origin/main。讀 docs/work-orders/{id}.md 的進度區（沒有就建立）。\n"
-"硬規則：只在 wo/{lid} 分支 commit 與 push，絕對不 push、merge 或 rebase 到 main（main 一推就自動部署正式站）；不重啟 ltx-web、ltx-api；不動 /opt/studio 的權重；系統層級動作（apt、systemctl、寫 /etc 或 unit 檔啟用）一律先發核准區塊等阿寶回覆，需要 sudo 的指令列給阿寶自己跑。\n"
+"開始前：在主 checkout 跑 git fetch origin，然後一律到獨立 worktree 工作：~/LTX-worktrees/wo-{lid} 不存在就 git worktree add ~/LTX-worktrees/wo-{lid} -b wo/{lid} origin/main（分支已存在就 git worktree add ~/LTX-worktrees/wo-{lid} wo/{lid}，再 rebase 到 origin/main），並 ln -s 主 checkout 的 node_modules 進 worktree。之後所有編輯、測試、commit 都在 ~/LTX-worktrees/wo-{lid} 裡做。讀 docs/work-orders/{id}.md 的進度區（沒有就建立）。\n"
+"硬規則：主 checkout " + REPO + " 永遠停在 main，絕不在裡面 checkout 其他分支或改檔（正式站與自動同步都靠它）；只在 wo/{lid} 分支 commit 與 push，絕對不 push、merge 或 rebase 到 main（main 一推就自動部署正式站）；不重啟 ltx-web、ltx-api；不動 /opt/studio 的權重；系統層級動作（apt、systemctl、寫 /etc 或 unit 檔啟用）一律先發核准區塊等阿寶回覆，需要 sudo 的指令列給阿寶自己跑。\n"
 "這一則的工作：\n{body}\n"
 "時間紀律：15 分鐘內做不完就停在乾淨的中間狀態：commit（訊息以「{id}: 」開頭）、push wo/{lid}、更新 docs/work-orders/{id}.md 的「已完成／未完成／需要阿寶做的事」，然後回報做到哪、下一步是什麼。完成時跑自檢：{tests}；沒全過不要說完成。回報格式：改了哪些檔、跑了什麼、結果、卡點、下一步。"
 )
 
 ACC = (
 "背景任務：【工單 {id} · 驗收】\n"
-"專案目錄 " + REPO + "。git fetch origin 後切到分支 wo/{lid}（不存在就回報並停止）。這是驗收不是開發：不修改程式與文件；只允許為了讓測試跑起來準備測試資料庫或暫存目錄，且做完要清掉。\n"
+"專案目錄 " + REPO + "（主 checkout，只能讀、不切分支）。git fetch origin；到 worktree ~/LTX-worktrees/wo-{lid} 驗收（沒有就 git worktree add ~/LTX-worktrees/wo-{lid} wo/{lid} 並 ln -s 主 checkout 的 node_modules；分支不存在就回報並停止）。這是驗收不是開發：不修改程式與文件；只允許為了讓測試跑起來準備測試資料庫或暫存目錄，且做完要清掉。\n"
 "依 docs/PRODUCTION_ROADMAP.md「{id}」節的驗收清單逐條執行，每條回報 PASS 或 FAIL 並附證據（指令、輸出摘要、數字、路徑）。另外必跑並附結果：{tests}。\n"
 "{extra}"
 "任何 FAIL 不要自己修：寫出重現步驟、你懷疑的檔案與行號。最後一行只能是「{id} 可合併」或「{id} 退回」。"
@@ -32,7 +32,7 @@ ACC = (
 
 CONT = (
 "背景任務：【工單 {id} · 繼續】\n"
-"專案目錄 " + REPO + "。git fetch origin，切到 wo/{lid}，讀 docs/work-orders/{id}.md 的進度區與最近三個 commit，從第一個未完成項接著做。規則、分支紀律、15 分鐘紀律與回報格式同「{id} · 執行」那一則；規格仍是 docs/PRODUCTION_ROADMAP.md「{id}」節。"
+"專案目錄 " + REPO + "（主 checkout，不切分支）。git fetch origin，到 worktree ~/LTX-worktrees/wo-{lid}（沒有就 git worktree add ~/LTX-worktrees/wo-{lid} wo/{lid} 並 ln -s 主 checkout 的 node_modules），rebase 到 origin/main，讀 docs/work-orders/{id}.md 的進度區與最近三個 commit，從第一個未完成項接著做。規則、分支紀律、15 分鐘紀律與回報格式同「{id} · 執行」那一則；規格仍是 docs/PRODUCTION_ROADMAP.md「{id}」節。"
 )
 
 JS = "node --test tests/*.test.mjs && npx --no-install tsc --noEmit -p tsconfig.json"
@@ -136,7 +136,7 @@ WO = [
 SETUP = (
 "阿寶要開一條長期工作線，請把下面寫進 USER.md（active directives）與 MEMORY.md，之後每個「工單」任務都照做：\n"
 "1. 專案：LTX Local Studio，目錄 " + REPO + "（路徑有空格，一律加引號）。規格在 docs/PRODUCTION_ROADMAP.md，工作規則在 docs/OPENCLAW_WORK_ORDERS.md。\n"
-"2. 分支紀律：每張工單在 wo/<小寫工單號> 分支工作，絕對不 push、merge、rebase 到 main — main 一推就由 ltx-git-sync 自動部署到正式站 ltx.mikamiu.studio。合併只有阿寶做。\n"
+"2. 分支紀律：主 checkout 永遠停在 main、不在裡面 checkout 其他分支或改檔；每張工單在自己的 worktree ~/LTX-worktrees/wo-<小寫工單號>（分支 wo/<小寫工單號>，ln -s 主 checkout 的 node_modules）工作；絕對不 push、merge、rebase 到 main — main 一推就由 ltx-git-sync 自動部署到正式站 ltx.mikamiu.studio。合併只有阿寶做。\n"
 "3. 服務紀律：不重啟 ltx-web、ltx-api、ltx-cloudflared；正式站 3000 與 API 8787 不可占用，dev server 只用 3001；不動 /opt/studio 的模型權重。\n"
 "4. 系統層級動作（apt、systemctl enable/start、/etc、unit 檔啟用）先發核准區塊；需要 sudo 的指令列出來給阿寶自己跑。\n"
 "5. 15 分鐘紀律：每則任務在 15 分鐘內結束於乾淨狀態 — commit、push 分支、更新 docs/work-orders/<工單號>.md 的進度區（已完成／未完成／需要阿寶做的事），回報做到哪。\n"
@@ -147,7 +147,8 @@ SETUP = (
 MERGE_NOTE = (
 "合併由你在主機上做（或請我做），不交給 OpenClaw：\n"
 "cd \"/home/kwayrdc/LTX Local Studio\" && git fetch origin && git checkout main && git merge --ff-only origin/wo/<id> && git push origin main\n"
-"push 之後 ltx-git-sync 在 5 分鐘內驗證、build、重啟對應服務。ff-only 失敗代表 main 在分支之後又動過，先 rebase 分支再合。"
+"push 之後 ltx-git-sync 在 5 分鐘內驗證、build、重啟對應服務。ff-only 失敗代表 main 在分支之後又動過，先 rebase 分支再合。\n"
+"合併後清掉 worktree：git worktree remove ~/LTX-worktrees/wo-<id> && git branch -d wo/<id>"
 )
 
 def fill(t, w):
@@ -161,12 +162,13 @@ md = ["# OpenClaw 工單提示詞與工作規則", "",
 "這份文件是 OpenClaw（LINE 上的「老皮」）執行製片平台工單時的工作規則與提示詞正本。規格本體在 `docs/PRODUCTION_ROADMAP.md`。",
 "提示詞可複製整段貼進 LINE；`背景任務：` 前綴會讓 bridge 直接放進背景（上限 15 分鐘），完成後用 `查詢 JOB-xxxx` 取結果。", "",
 "## 工作規則（每張工單都適用）", "",
-"1. 只在 `wo/<工單號小寫>` 分支工作；**絕不 push、merge、rebase 到 main**。main 一推就由 `ltx-git-sync` 自動部署正式站。合併只有人做。",
+"0. 主 checkout `/home/kwayrdc/LTX Local Studio` **永遠停在 main**；不在裡面 checkout 其他分支或改檔 — 正式站、`ltx-git-sync`、dev preview 都靠它。每張工單在自己的 worktree `~/LTX-worktrees/wo-<工單號小寫>` 工作（`git worktree add … -b wo/<id> origin/main`，`ln -s` 主 checkout 的 `node_modules`）。",
+"1. 只在 `wo/<工單號小寫>` 分支 commit 與 push；**絕不 push、merge、rebase 到 main**。main 一推就由 `ltx-git-sync` 自動部署正式站。合併只有人做。",
 "2. 不重啟 `ltx-web`、`ltx-api`、`ltx-cloudflared`；正式站 3000／API 8787 不可占用，dev server 只用 3001；不動 `/opt/studio` 權重。",
 "3. 系統層級動作（apt、`systemctl --user enable/start`、`/etc`、unit 檔啟用）先發核准區塊；需要 sudo 的指令列給人自己跑。",
 "4. 15 分鐘紀律：每則任務結束於乾淨狀態 — commit（訊息以「<工單號>: 」開頭）、push 分支、更新 `docs/work-orders/<工單號>.md` 進度區（已完成／未完成／需要人做的事）。",
 "5. 驗收是獨立的一則任務，不修改程式；每條 PASS／FAIL 附證據；最後一行「<工單號> 可合併」或「<工單號> 退回」。",
-"6. 合併：`git checkout main && git merge --ff-only origin/wo/<id> && git push origin main`；由人在主機執行。", "",
+"6. 合併：在主 checkout `git fetch origin && git merge --ff-only origin/wo/<id> && git push origin main`；由人在主機執行。之後 `git worktree remove ~/LTX-worktrees/wo-<id> && git branch -d wo/<id>`。", "",
 "## 第 0 步：開工設定（只傳一次）", "", "```text", SETUP, "```", "",
 "## 繼續模板", "", "把 `{id}` 換成工單號：", "", "```text", CONT.replace("{lid}", "<id 小寫>").replace("{id}", "<id>"), "```", ""]
 phase_names = {"A":"A 專案層與階段導覽（純前端）", "B":"B 主機端專案與音訊（PostgreSQL）", "C":"C 裁判與審片", "D":"D 多工站"}
@@ -225,6 +227,7 @@ main{{display:grid;gap:28px;min-width:0}}header.head{{border-bottom:1px solid va
 <header class="head"><div class="eyebrow" style="margin:0">ltx.mikamiu.studio · LINE → OpenClaw</div><h1>工單提示詞</h1>
 <p class="sub">每張工單三則訊息：<b>執行</b>、<b>驗收</b>、<b>繼續</b>。整段複製貼進 LINE 給老皮；<code>背景任務：</code> 前綴讓它直接進背景（上限 15 分鐘），完成後傳 <code>查詢 JOB-xxxx</code> 取結果。字數已對 LINE 上限（5000）檢查。</p></header>
 <div class="how"><b>使用順序</b><ol><li>先傳一次「開工設定」，讓老皮把規則寫進自己的 USER.md／MEMORY.md。</li><li>傳某張工單的「執行」。它 15 分鐘做不完會停在乾淨狀態並回報；再傳「繼續」直到它自檢全過。</li><li>傳「驗收」— 這是獨立任務，不改程式，逐條 PASS／FAIL，最後一行「可合併」或「退回」。退回就回到步驟 2。</li><li>「可合併」後由你在主機上 ff 合併並 push main；ltx-git-sync 會自動部署。</li></ol>
+<p><b>工作目錄</b>：老皮在 <code>~/LTX-worktrees/wo-&lt;id&gt;</code> 的獨立 worktree 裡做事；主 checkout 永遠停在 main。若發現主 checkout 不在 main，先 <code>git checkout main</code> 再繼續。</p>
 <p>老皮遇到 apt、systemctl、sudo 會先發 <code>【需要核准：OP-xxxx】</code> 區塊 — 那是它自己的規則，回「核准 OP-xxxx」或自己跑它列出的指令。</p></div>
 {cards}
 </main></div>
