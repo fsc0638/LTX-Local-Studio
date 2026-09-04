@@ -17,13 +17,40 @@
 
 瀏覽器關閉後，已經送出的單一鏡頭仍在本機 worker 繼續執行；但 V1 不會在沒有頁面的情況下自動送出下一鏡。再次開啟網站後會查詢原 job 並續跑佇列。這個限制會在 V2 移到後端排程後解除。
 
-## 工作單格式
+## 工作單格式 v2（A1）
+
+工作單 v2 在瀏覽器計畫加入專案層 `bible`。角色、音樂、輸出規格與導演預設會投影到新鏡頭的完整 `/api/v1/jobs` `request`；每鏡自行改過的頂層 request 欄位記在 `pinned`，之後更新 Bible 時不覆蓋。`draft`、`queued`、`failed` 可重新投影，`running`、`succeeded` 永遠保持原請求。
 
 ```json
 {
   "format": "ltx-production-factory",
-  "version": 1,
+  "version": 2,
   "title": "MV 01",
+  "bible": {
+    "character": {
+      "name": "PERFORMER",
+      "description": "Short silver hair, red coat",
+      "references": [
+        { "image_id": "0123456789abcdef0123456789abcdef", "view": "front" }
+      ]
+    },
+    "music": {
+      "audio_id": "abcdef0123456789abcdef0123456789",
+      "audio_start_seconds": 0,
+      "audio_mode": "soundtrack",
+      "lrc": "[00:01.00]Opening line",
+      "lrc_timebase": "music"
+    },
+    "output": {
+      "model": "ltx23-distilled",
+      "aspect_ratio": "16:9",
+      "fps": 24,
+      "profile": "compat-v1",
+      "audio": true
+    },
+    "directing": { "shot_size": "wide", "camera": "static" },
+    "lyric_offset_seconds": -0.9
+  },
   "shots": [
     {
       "title": "OPENING",
@@ -35,14 +62,22 @@
         "duration_seconds": 6,
         "fps": 24,
         "seed": 42,
-        "audio": true
-      }
+        "audio": true,
+        "character": {
+          "name": "PERFORMER",
+          "description": "Short silver hair, red coat",
+          "references": [
+            { "image_id": "0123456789abcdef0123456789abcdef", "view": "front" }
+          ]
+        }
+      },
+      "pinned": ["seed"]
     }
   ]
 }
 ```
 
-也可匯入單一標準 `/api/v1/jobs` request，或由多個 request 組成的 JSON array。執行狀態、job ID、錯誤與成品 URL 不寫入可攜工作單，避免在另一個帳號或主機錯誤重用舊任務。
+也可匯入 v1 工作單、單一標準 `/api/v1/jobs` request，或由多個 request 組成的 JSON array。v1 會遷移成空 Bible，既有 request 的全部欄位視為已釘住，因此不會被日後投影意外改寫。執行狀態、job ID、錯誤與成品 URL不寫入可攜工作單，避免在另一個帳號或主機錯誤重用舊任務。
 
 ## 後續路線
 

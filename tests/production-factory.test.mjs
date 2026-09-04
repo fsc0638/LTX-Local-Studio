@@ -3,14 +3,19 @@ import assert from 'node:assert/strict';
 import {
   activeFactoryShot,
   clearFactoryShotOutput,
+  countPinnedShots,
   createFactoryPlan,
   createFactoryShot,
   nextQueuedShot,
   parseFactoryImport,
+  pinFactoryField,
+  projectBible,
+  reprojectShots,
   reopenFactoryShot,
   restoreFactoryPlan,
   serializeFactoryPlan,
   summarizeFactory,
+  unpinFactoryField,
 } from '../lib/production-factory.ts';
 
 const ids = (...values) => {
@@ -33,10 +38,138 @@ test('factory imports standard job requests and exports only portable plan data'
   plan.shots[0].jobId = 'server-job';
   const exported = JSON.parse(serializeFactoryPlan(plan));
   assert.equal(exported.format, 'ltx-production-factory');
-  assert.equal(exported.version, 1);
+  assert.equal(exported.version, 2);
   assert.equal(exported.shots[0].request.prompt, 'Opening shot');
   assert.equal('status' in exported.shots[0], false);
   assert.equal('jobId' in exported.shots[0], false);
+});
+
+const bible = {
+  character: {
+    name: 'Mika',
+    description: 'Short silver hair and a red coat',
+    references: [{ image_id: 'a'.repeat(32), view: 'front' }],
+  },
+  music: {
+    audio_id: 'b'.repeat(32),
+    audio_start_seconds: 2.5,
+    audio_mode: 'soundtrack',
+    lrc: '[00:03.00]Hello',
+    lrc_timebase: 'music',
+  },
+  output: {
+    model: 'ltx23-distilled',
+    aspect_ratio: '16:9',
+    fps: 24,
+    profile: 'compat-v1',
+    audio: true,
+  },
+  directing: { shot_size: 'wide', camera: 'static' },
+  lyric_offset_seconds: -0.9,
+};
+
+test('Bible projects character, music, output and directing into a portable job request', () => {
+  const request = projectBible(bible, {
+    prompt: 'Performer crosses the stage',
+    duration_seconds: 6,
+  });
+  assert.deepEqual(request.character, bible.character);
+  assert.deepEqual(request.timeline, bible.music);
+  assert.deepEqual(request.directing, bible.directing);
+  assert.equal(request.render_mode, 'sequence');
+  assert.equal(request.aspect_ratio, '16:9');
+  assert.equal(request.duration_seconds, 6);
+});
+
+test('pinned request fields survive Bible reprojection and unpin restores inheritance', () => {
+  const plan = createFactoryPlan('factory');
+  plan.bible = bible;
+  let shot = createFactoryShot(
+    { prompt: 'Close-up', model: 'custom', fps: 60 },
+    'shot',
+    0,
+  );
+  shot = pinFactoryField(pinFactoryField(shot, 'model'), 'fps');
+  plan.shots = [shot];
+  let projected = reprojectShots(plan);
+  assert.equal(projected.shots[0].request.model, 'custom');
+  assert.equal(projected.shots[0].request.fps, 60);
+  projected.shots[0] = unpinFactoryField(projected.shots[0], 'fps');
+  projected = reprojectShots(projected);
+  assert.equal(projected.shots[0].request.model, 'custom');
+  assert.equal(projected.shots[0].request.fps, 24);
+});
+
+test('v1 manifests migrate with an empty Bible and every request field pinned', () => {
+  const migrated = parseFactoryImport(
+    JSON.stringify({
+      format: 'ltx-production-factory',
+      version: 1,
+      title: 'Legacy',
+      shots: [
+        { title: 'Old shot', request: { prompt: 'Old', fps: 30, seed: 8 } },
+      ],
+    }),
+    ids('factory', 'shot'),
+  );
+  assert.deepEqual(migrated.bible, {
+    output: {},
+    lyric_offset_seconds: -0.9,
+  });
+  assert.deepEqual(migrated.shots[0].pinned, ['fps', 'prompt', 'seed']);
+});
+
+test('v2 export and import preserve every request byte-for-byte', () => {
+  const plan = createFactoryPlan('factory');
+  plan.title = 'Round trip';
+  plan.bible = bible;
+  plan.shots = [
+    createFactoryShot(
+      projectBible(bible, {
+        prompt: 'Exact payload',
+        duration_seconds: 4,
+        seed: 42,
+      }),
+      'shot',
+      0,
+      'Opening',
+      ['seed'],
+    ),
+  ];
+  const before = JSON.stringify(plan.shots[0].request);
+  const imported = parseFactoryImport(
+    serializeFactoryPlan(plan),
+    ids('copy', 'copy-shot'),
+  );
+  assert.equal(JSON.stringify(imported.shots[0].request), before);
+  assert.deepEqual(imported.bible, bible);
+  assert.deepEqual(imported.shots[0].pinned, ['seed']);
+});
+
+test('running and succeeded shots are never changed by reprojection', () => {
+  const plan = createFactoryPlan('factory');
+  plan.bible = bible;
+  const running = createFactoryShot({ prompt: 'Run', fps: 12 }, 'run', 0);
+  const succeeded = createFactoryShot({ prompt: 'Done', fps: 15 }, 'done', 1);
+  running.status = 'running';
+  succeeded.status = 'succeeded';
+  plan.shots = [running, succeeded];
+  const projected = reprojectShots(plan);
+  assert.equal(projected.shots[0].request.fps, 12);
+  assert.equal(projected.shots[1].request.fps, 15);
+});
+
+test('Bible changes expose the number of shots carrying overrides', () => {
+  const plan = createFactoryPlan('factory');
+  plan.shots = [
+    pinFactoryField(createFactoryShot({ prompt: 'One' }, 'one', 0), 'fps'),
+    createFactoryShot({ prompt: 'Two' }, 'two', 1),
+    pinFactoryField(
+      createFactoryShot({ prompt: 'Three' }, 'three', 2),
+      'character',
+    ),
+  ];
+  assert.equal(countPinnedShots(plan), 2);
 });
 
 test('factory queue summary and selectors keep one active GPU shot', () => {
