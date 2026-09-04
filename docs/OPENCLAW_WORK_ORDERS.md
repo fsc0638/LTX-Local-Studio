@@ -1,5 +1,7 @@
 # OpenClaw 工單提示詞與工作規則
 
+本檔與 `OPENCLAW_WORK_ORDERS.html` 由 `docs/tools/gen_openclaw_prompts.py` 產生；要改提示詞請改產生器再重跑，不要直接編輯。
+
 這份文件是 OpenClaw（LINE 上的「老皮」）執行製片平台工單時的工作規則與提示詞正本。規格本體在 `docs/PRODUCTION_ROADMAP.md`。
 提示詞可複製整段貼進 LINE；`背景任務：` 前綴會讓 bridge 直接放進背景（上限 15 分鐘），完成後用 `查詢 JOB-xxxx` 取結果。
 
