@@ -16,6 +16,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { DeleteMediaButton } from '@/components/delete-media-button';
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
 import { Textarea } from '@/components/ui/textarea';
@@ -23,10 +24,12 @@ import { serviceFetch } from '@/lib/service-session';
 import {
   MAX_FACTORY_SHOTS,
   activeFactoryShot,
+  clearFactoryShotOutput,
   createFactoryPlan,
   createFactoryShot,
   nextQueuedShot,
   parseFactoryImport,
+  reopenFactoryShot,
   restoreFactoryPlan,
   serializeFactoryPlan,
   summarizeFactory,
@@ -79,7 +82,9 @@ const copy = {
     defaultPrompt: '電影感鏡頭，清楚描述場景、主體、動作、運鏡與光線。',
     remove: '移除鏡頭',
     retry: '修正後重試',
-    result: '成品',
+    rework: '修改／重做',
+    reworkNote: '保留目前成品作為前次版本，重新開放此鏡頭修改與生產。',
+    result: '成品／前次版本',
     download: '下載',
     noResult: '完成的鏡頭會顯示在這裡',
     workerBusy: 'GPU 正在處理其他任務，保留順位等待。',
@@ -92,6 +97,7 @@ const copy = {
     offline: '影片服務離線；計畫仍可編輯，但不能啟動生產。',
     activePause: '已停止送出新鏡頭；目前 GPU 任務仍會安全完成。',
     deleteNote: '移除只刪除製片計畫列，不會刪除已生成成品。',
+    outputDeleted: '成品已移到本機私有回收區；鏡頭設定仍保留，可修改後重做。',
   },
   en: {
     eyebrow: '02 / PRODUCTION FACTORY',
@@ -119,7 +125,10 @@ const copy = {
       'A cinematic shot describing the scene, subject, action, camera and light.',
     remove: 'Remove shot',
     retry: 'Fix and retry',
-    result: 'Output',
+    rework: 'Edit / remake',
+    reworkNote:
+      'Keep the current output as the previous take and reopen this shot for editing and production.',
+    result: 'Outputs / previous takes',
     download: 'Download',
     noResult: 'Completed shots will appear here',
     workerBusy: 'The GPU is handling another job. This shot keeps its place.',
@@ -134,6 +143,8 @@ const copy = {
     activePause:
       'New dispatches are paused; the current GPU job will finish safely.',
     deleteNote: 'Removing a row does not delete an already generated output.',
+    outputDeleted:
+      'The output was moved to private local trash. The shot settings remain available for another take.',
   },
   ja: {
     eyebrow: '02 / 制作ファクトリー',
@@ -160,7 +171,10 @@ const copy = {
     defaultPrompt: '場面、被写体、動作、カメラ、光を明確にした映画的ショット。',
     remove: 'ショットを削除',
     retry: '修正して再試行',
-    result: '成果',
+    rework: '修正／再制作',
+    reworkNote:
+      '現在の成果を前回版として残し、このショットを編集・再制作できる状態に戻します。',
+    result: '成果／前回版',
     download: 'ダウンロード',
     noResult: '完成したショットはここに表示されます',
     workerBusy: 'GPUは別のタスクを処理中です。順番を保持して待機します。',
@@ -174,6 +188,8 @@ const copy = {
       '動画サービスはオフラインです。計画編集はできますが制作は開始できません。',
     activePause: '新規送信を停止しました。現在のGPUタスクは安全に完了します。',
     deleteNote: '行を削除しても生成済み成果は削除されません。',
+    outputDeleted:
+      '成果を本機の非公開ごみ箱へ移動しました。ショット設定は残っているため、修正して再制作できます。',
   },
 } as const;
 
@@ -489,9 +505,17 @@ export function ProductionFactory({
   const summary = summarizeFactory(plan);
   const active = activeFactoryShot(plan);
   const editable = !active && plan.status !== 'running';
-  const completedShots = plan.shots.filter(
-    (shot) => shot.status === 'succeeded' && shot.outputUrl,
-  );
+  const completedShots = plan.shots.filter((shot) => shot.outputUrl);
+
+  const freshIdempotencyKey = (shot: FactoryShot) =>
+    `factory-${shot.id}-${crypto.randomUUID().slice(0, 8)}`;
+
+  const reopen = (id: string) =>
+    patchShot(
+      id,
+      (shot) => reopenFactoryShot(shot, freshIdempotencyKey(shot)),
+      'paused',
+    );
 
   const addBlank = () => {
     if (plan.shots.length >= MAX_FACTORY_SHOTS) return;
@@ -694,7 +718,7 @@ export function ProductionFactory({
           ) : (
             <div className="space-y-3">
               {plan.shots.map((shot, index) => {
-                const shotEditable = editable && shot.status !== 'succeeded';
+                const shotEditable = editable;
                 return (
                   <article
                     key={shot.id}
@@ -773,16 +797,24 @@ export function ProductionFactory({
                           maxLength={4000}
                           disabled={!shotEditable}
                           onChange={(event) =>
-                            patchShot(shot.id, (current) => ({
-                              ...current,
-                              status: 'draft',
-                              request: {
-                                ...current.request,
-                                prompt: event.target.value,
-                              },
-                              idempotencyKey: `factory-${current.id}-${crypto.randomUUID().slice(0, 8)}`,
-                              error: undefined,
-                            }))
+                            patchShot(
+                              shot.id,
+                              (current) => ({
+                                ...reopenFactoryShot(
+                                  current,
+                                  current.status === 'draft'
+                                    ? current.idempotencyKey
+                                    : freshIdempotencyKey(current),
+                                ),
+                                request: {
+                                  ...current.request,
+                                  prompt: event.target.value,
+                                },
+                              }),
+                              plan.status === 'completed'
+                                ? 'paused'
+                                : undefined,
+                            )
                           }
                           className="mt-2 min-h-24 rounded-none bg-[#fafaf8] text-xs"
                         />
@@ -814,6 +846,21 @@ export function ProductionFactory({
                           onClick={() => retry(shot.id)}
                         >
                           <RotateCcw /> {text.retry}
+                        </Button>
+                      </div>
+                    )}
+                    {shot.outputUrl && editable && (
+                      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-[#fafaf8] p-4">
+                        <p className="text-[10px] leading-5 text-muted-foreground">
+                          {text.reworkNote}
+                        </p>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="rounded-none bg-white"
+                          onClick={() => reopen(shot.id)}
+                        >
+                          <RotateCcw /> {text.rework}
                         </Button>
                       </div>
                     )}
@@ -885,14 +932,37 @@ export function ProductionFactory({
                       src={shot.outputUrl?.replace('?download=1', '')}
                       className="aspect-video w-full bg-black object-contain"
                     />
-                    <div className="mt-3 flex items-center justify-between gap-3">
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
                       <p className="truncate text-xs font-bold">{shot.title}</p>
-                      <a
-                        href={`${shot.outputUrl}${shot.outputUrl?.includes('?') ? '&' : '?'}download=1`}
-                        className="flex shrink-0 items-center gap-1 text-[10px] font-bold text-[#e85578]"
-                      >
-                        <Download className="size-3" /> {text.download}
-                      </a>
+                      <div className="flex items-center gap-2">
+                        <a
+                          href={`${shot.outputUrl}${shot.outputUrl?.includes('?') ? '&' : '?'}download=1`}
+                          className="flex shrink-0 items-center gap-1 text-[10px] font-bold text-[#e85578]"
+                        >
+                          <Download className="size-3" /> {text.download}
+                        </a>
+                        {shot.jobId && (
+                          <DeleteMediaButton
+                            locale={locale}
+                            kind="jobs"
+                            id={shot.jobId}
+                            name={shot.title}
+                            disabled={!editable}
+                            onDeleted={() => {
+                              patchShot(
+                                shot.id,
+                                (current) =>
+                                  clearFactoryShotOutput(
+                                    current,
+                                    freshIdempotencyKey(current),
+                                  ),
+                                'paused',
+                              );
+                              setNotice(text.outputDeleted);
+                            }}
+                          />
+                        )}
+                      </div>
                     </div>
                   </article>
                 ))}
