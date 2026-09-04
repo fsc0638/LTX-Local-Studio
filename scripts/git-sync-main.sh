@@ -6,6 +6,11 @@ sync_state_dir="${sync_root}/data/worker/git-sync"
 sync_python="${LTX_SYNC_PYTHON:-/usr/bin/python3}"
 sync_node="${LTX_SYNC_NODE:-/usr/bin/node}"
 sync_npm="${LTX_SYNC_NPM:-/usr/bin/npm}"
+# npm is a script that resolves `node` through PATH, and so is everything it spawns. Under systemd
+# that PATH holds only the system Node, so a build would run on a different runtime than the tests.
+# Put the chosen runtime first.
+PATH="$(dirname "${sync_node}"):${PATH}"
+export PATH
 
 mkdir -p "${sync_state_dir}"
 chmod 0700 "${sync_state_dir}"
@@ -202,6 +207,7 @@ if [[ "${sync_python_tests}" == "1" ]]; then
   PYTHONPATH=tests "${sync_python}" -m unittest discover -s tests -p 'test_*.py'
 fi
 if [[ "${sync_web}" == "1" ]]; then
+  sync_log "Building the UI with node $("${sync_node}" --version) and npm $("${sync_npm}" --version)."
   "${sync_npm}" run build:cloudflare
   printf '%s\n' "${sync_to}" >"${sync_state_dir}/restart-web"
 fi
