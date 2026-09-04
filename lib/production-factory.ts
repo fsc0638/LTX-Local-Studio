@@ -306,3 +306,35 @@ export function activeFactoryShot(plan: FactoryPlan): FactoryShot | undefined {
     ['validating', 'submitting', 'running'].includes(shot.status),
   );
 }
+
+export function reopenFactoryShot(
+  shot: FactoryShot,
+  idempotencyKey: string,
+): FactoryShot {
+  return {
+    ...shot,
+    status: 'draft',
+    idempotencyKey,
+    progress: 0,
+    message: undefined,
+    error: undefined,
+  };
+}
+
+export function clearFactoryShotOutput(
+  shot: FactoryShot,
+  idempotencyKey: string,
+): FactoryShot {
+  return {
+    ...shot,
+    status: 'draft',
+    idempotencyKey,
+    jobId: undefined,
+    statusUrl: undefined,
+    outputUrl: undefined,
+    posterUrl: undefined,
+    progress: 0,
+    message: undefined,
+    error: undefined,
+  };
+}

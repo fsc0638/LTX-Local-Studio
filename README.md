@@ -29,7 +29,7 @@ LTX Local Studio combines a multilingual browser UI, a local job API, and an LTX
 - Text-to-video prompt workflow
 - Resolution, frame rate, duration, seed, precision, and memory controls
 - Real-time job progress and persistent local output history
-- Production Factory shot queue with validation, pause/resume, retry, JSON handoff, and per-shot output review
+- Production Factory shot queue with validation, pause/resume, editable completed shots, recoverable output deletion, reruns, JSON handoff, and per-shot output review
 - MP4 preview and generated poster frames
 - Local-only model weights and outputs
 - Environment-based paths for portable GitHub use

@@ -2,10 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   activeFactoryShot,
+  clearFactoryShotOutput,
   createFactoryPlan,
   createFactoryShot,
   nextQueuedShot,
   parseFactoryImport,
+  reopenFactoryShot,
   restoreFactoryPlan,
   serializeFactoryPlan,
   summarizeFactory,
@@ -92,4 +94,39 @@ test('malformed or oversized factory plans fail before reaching the worker', () 
       ),
     /unsupported fields/,
   );
+});
+
+test('completed shots can reopen for another take while keeping the previous output', () => {
+  const shot = createFactoryShot({ prompt: 'First take' }, 'shot', 0);
+  Object.assign(shot, {
+    status: 'succeeded',
+    jobId: 'abcdef123456',
+    outputUrl: '/generated/take-one.mp4',
+    posterUrl: '/generated/take-one.jpg',
+    progress: 100,
+  });
+  const reopened = reopenFactoryShot(shot, 'factory-shot-take-two');
+  assert.equal(reopened.status, 'draft');
+  assert.equal(reopened.idempotencyKey, 'factory-shot-take-two');
+  assert.equal(reopened.outputUrl, '/generated/take-one.mp4');
+  assert.equal(reopened.jobId, 'abcdef123456');
+  assert.equal(reopened.progress, 0);
+});
+
+test('deleting a generated output keeps the shot ready for maintenance', () => {
+  const shot = createFactoryShot({ prompt: 'Try again' }, 'shot', 0);
+  Object.assign(shot, {
+    status: 'succeeded',
+    jobId: 'abcdef123456',
+    statusUrl: '/api/v1/jobs/abcdef123456',
+    outputUrl: '/generated/take.mp4',
+    posterUrl: '/generated/take.jpg',
+    progress: 100,
+  });
+  const cleared = clearFactoryShotOutput(shot, 'factory-shot-next-take');
+  assert.equal(cleared.status, 'draft');
+  assert.equal(cleared.idempotencyKey, 'factory-shot-next-take');
+  assert.equal(cleared.jobId, undefined);
+  assert.equal(cleared.outputUrl, undefined);
+  assert.equal(cleared.request.prompt, 'Try again');
 });
