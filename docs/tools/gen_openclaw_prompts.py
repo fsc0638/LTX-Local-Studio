@@ -85,11 +85,16 @@ WO = [
 " 這個索引要照寫的算 —— int(0.9n) 不等於 ceil(0.9n)，在 n=40 會差一格，同一份殘差換算法"
 " 差得到 0.1s 以上。門檻由來記在 docs/PRODUCTION_ROADMAP.md 的 B2 節，完整分布在"
 " docs/GB10_SETUP.md。\n"),
- dict(id="B3", title="自動分鏡", phase="B", size="M", tests=JS, body=
+ dict(id="B3", title="自動分鏡", phase="B", size="M", tests=JS,
+ extra="鏡數與切點以 tests/breakdown.test.mjs 的驗收案例（166.4 s、segment_seconds=10）為準，"
+"另外實跑一次真素材當佐證：ltx-audio 現在是常駐 unit，照規則 5a 先 `ss -ltn | grep :8790` 或打 /health，"
+"有在聽就直接用、不要重啟；POST /beats 拿 uploads/ 裡沖縄那首的 beats 與 sections，餵進 lib/breakdown.ts，"
+"確認鏡數落在 17–24、無一鏡超過 segment_seconds、每個切點都出現在 beats 陣列裡。\n"
+"「預覽分鏡」正常與 01 頁面外觀需要登入瀏覽器，**不是你能跑的**：那一條照 docs/work-orders/B3.md 的紀錄"
+"回報「已由阿寶於 2026-09-06 確認」，不要自己宣稱看過，也不要因為看不到就判 FAIL。\n", body=
 "1. lib/breakdown.ts（純函式）：輸入 beats／sections／lyric lines／segment_seconds／Bible directing 預設，輸出鏡頭清單與 cue；規則：段落邊界 ＞ 歌詞行起點（已扣偏移）＞ 每鏡上限；切點吸附最近拍點（±1 拍）；純器樂段產生 breathing 鏡；每鏡 cue 時間＝鏡起點、主要動作留空。\n"
 "2. components/breakdown-editor.tsx：01 分鏡頁 — 波形＋拍點網格＋段落色帶、歌詞行貼在對時位置、鏡頭清單可合併／拆分／改；「預覽分鏡」沿用既有。\n"
-"3. tests/breakdown.test.mjs：166 秒、segment_seconds=10 → 17–24 鏡、無一鏡超上限、切點全在拍點；合併兩鏡後 cue 重算。",
- extra=""),
+"3. tests/breakdown.test.mjs：166 秒、segment_seconds=10 → 17–24 鏡、無一鏡超上限、切點全在拍點；合併兩鏡後 cue 重算。"),
  dict(id="B4", title="LLM 編劇草稿", phase="B", size="S", tests=PYDB + " && " + JS, body=
 "1. local_backend.py：POST /api/v1/factory/shots/{id}/draft — 主機端呼叫 OpenAI（key 讀 /opt/studio/secrets/openai，權限 0600，瀏覽器永遠拿不到）；輸入 Bible 描述、該鏡導演參數、歌詞行、前後鏡；structured output 只允許 {prompt, primary_action}；usage 寫進 project；每專案 token 上限，超過回 429。\n"
 "2. UI：每鏡「起草」按鈕填進可編輯文字框；草稿不覆蓋用戶已改過（pinned）的提示詞；OpenAI 不可用時按鈕停用並說明。\n"

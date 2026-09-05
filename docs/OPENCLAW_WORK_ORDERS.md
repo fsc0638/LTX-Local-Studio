@@ -220,6 +220,8 @@
 背景任務：【工單 B3 · 驗收】
 專案目錄 "/home/kwayrdc/LTX Local Studio"（主 checkout，只能讀、不切分支）。git fetch origin；到 worktree ~/LTX-worktrees/wo-b3 驗收（沒有就 git worktree add ~/LTX-worktrees/wo-b3 wo/b3 並 ln -s 主 checkout 的 node_modules；分支不存在就回報並停止）。這是驗收不是開發：不修改程式與文件；只允許為了讓測試跑起來準備測試資料庫或暫存目錄，且做完要清掉。
 依 docs/PRODUCTION_ROADMAP.md「B3」節的驗收清單逐條執行，每條回報 PASS 或 FAIL 並附證據（指令、輸出摘要、數字、路徑）。另外必跑並附結果：node --test tests/*.test.mjs && npx --no-install tsc --noEmit -p tsconfig.json。
+鏡數與切點以 tests/breakdown.test.mjs 的驗收案例（166.4 s、segment_seconds=10）為準，另外實跑一次真素材當佐證：ltx-audio 現在是常駐 unit，照規則 5a 先 `ss -ltn | grep :8790` 或打 /health，有在聽就直接用、不要重啟；POST /beats 拿 uploads/ 裡沖縄那首的 beats 與 sections，餵進 lib/breakdown.ts，確認鏡數落在 17–24、無一鏡超過 segment_seconds、每個切點都出現在 beats 陣列裡。
+「預覽分鏡」正常與 01 頁面外觀需要登入瀏覽器，**不是你能跑的**：那一條照 docs/work-orders/B3.md 的紀錄回報「已由阿寶於 2026-09-06 確認」，不要自己宣稱看過，也不要因為看不到就判 FAIL。
 任何 FAIL 不要自己修：寫出重現步驟、你懷疑的檔案與行號。最後一行只能是「B3 可合併」或「B3 退回」。
 ```
 
