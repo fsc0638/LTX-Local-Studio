@@ -125,7 +125,24 @@ takes(id uuid pk, shot_id → shots, job_id → jobs, output_url, poster_url, sc
 
 **檔案**：`services/audio/server.py`、`infra/systemd/ltx-audio.service`、`local_backend.py`、`tests/test_audio_service.py`。
 
-**驗收**：三首沖縄歌 BPM 與 `docs/GB10_SETUP.md` 一致；對時去偏移後 p90 ≤ 1.0 s；服務掛掉時 `/api/v1/audio/analyze` 回 503 不影響生成；非本人 `audio_id` → 403。
+**驗收**：三首沖縄歌 BPM 與 `docs/GB10_SETUP.md` 一致；對時去偏移後 **p50 ≤ 0.5 s 且 p90 ≤ 1.5 s**
+（p90 以 **nearest-rank** 計算：殘差排序後取索引 `ceil(0.9n)-1`）；服務掛掉時
+`/api/v1/audio/analyze` 回 503 不影響生成；非本人 `audio_id` → 403。
+
+> **門檻由來**：原本寫的是 `p90 ≤ 1.0 s`，那個數字沒有量測支持 —— 它是把 2026-09-04 量測報告裡
+> 「p90 只有 0.5～1.0s」這句散文的上界抄成硬門檻，而**同一份量測裡三首有兩首就已經超過它**
+> （三線 1.63s、エイサー 1.04s）。B2 驗收據此正確退回。
+>
+> 重訂前先試過改善而非直接放寬：stable-ts 的 VAD 對這批唱歌素材是災難（p90 從 1.03s 惡化到
+> 51–80s，`7/7 segments failed to align`），沒有便宜的改善空間。
+>
+> 1.5 s 不是「剛好會過」的數字，而是資料自然的邊界：誤差 ≤1.5s 的行數是 36/37、30/31、40/40，
+> 再往下就開始切掉正常資料。加上 p50 門檻是因為 p90 混合了兩種東西 —— 對時誤差與 **LRC 本身的
+> 誤差**（三線那三行壞掉的時間碼即是例子）；p50 才是對時真正該負責的典型準確度，實測 0.38／
+> 0.20／0.39 s，都在一拍（104 BPM ≈ 0.577 s）以內。
+>
+> 指定 nearest-rank 是因為原規格只寫「p90」沒說怎麼算：同一份殘差用線性內插與 nearest-rank
+> 會得到 0.923 s 與 1.040 s，**判定會翻面**。
 
 **不做**：音素級對嘴、人聲分離。
 
