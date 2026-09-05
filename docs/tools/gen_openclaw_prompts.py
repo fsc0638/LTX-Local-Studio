@@ -154,6 +154,8 @@ SETUP = (
 "   test_mv_timeline 會 import 失敗。\n"
 "8. 本機 loopback 服務（ltx-audio 8790、ltx-judge 8791、ltx-imagegen 8792）先查再起：\n"
 "   `ss -ltn | grep :<port>` 或打 /health，有人在聽就直接用；不要重複啟動，也不要停掉別人的。\n"
+"9. 新增 systemd unit 檔要跑 `systemd-analyze --user verify <檔>`，輸出必須是空的\n"
+"   （格式錯只印警告，exit code 仍是 0）；Environment= 的值含空格一定要加引號。\n"
 "確認寫入後，回覆你記下了哪幾條。"
 )
 
@@ -182,6 +184,7 @@ md = ["# OpenClaw 工單提示詞與工作規則", "",
 "4. 15 分鐘紀律：每則任務結束於乾淨狀態 — commit（訊息以「<工單號>: 」開頭）、push 分支、更新 `docs/work-orders/<工單號>.md` 進度區（已完成／未完成／需要人做的事）。",
 "5. 驗收是獨立的一則任務，不修改程式；每條 PASS／FAIL 附證據；最後一行「<工單號> 可合併」或「<工單號> 退回」。",
 "5a. **本機服務先查再起**：工單引入的 loopback 服務（ltx-audio 8790、ltx-judge 8791、ltx-imagegen 8792）可能已由開發手動啟動。先 `ss -ltn | grep :<port>` 或打 `/health`；有人在聽就直接用，不要重複啟動，也不要停掉別人的 —— 啟停不屬於驗收動作。",
+"5c. **新增 systemd unit 要用 `systemd-analyze --user verify <檔案>` 驗，且要求輸出為空**：它對格式錯誤只印警告、exit code 仍是 0，看 exit 0 等於沒驗。最常見的是含空格的路徑 —— `Environment=X=/a/b c` 會被空白切開只吃到 `/a/b`，必須寫成 `Environment=\"X=/a/b c\"`。**裝好但沒啟動過的 unit 等於沒測過**：B2 的 ltx-audio 就是這樣把 `LTX_SITE_ROOT` 截成半截帶進 main，驗收因為測的是手動起的 process（環境變數由 shell 正確帶入）而沒抓到。",
 "5b. **Python 測試一律用 LTX venv 的 python**（`" + LTX_PYTHON + "`），不是 `python3`：系統 python 有 psycopg 但沒有 `av`，`test_quality` 與 `test_mv_timeline` 會 import 失敗（97 tests 而非 120）。`git-sync-main.sh` 本來就用這個直譯器跑 Python 測試。",
 "6. 合併：在主 checkout `git fetch origin && git merge --ff-only origin/wo/<id> && git push origin main`；由人在主機執行。之後 `git worktree remove ~/LTX-worktrees/wo-<id> && git branch -d wo/<id>`。", "",
 "## 第 0 步：開工設定（只傳一次）", "", "```text", SETUP, "```", "",

@@ -9,7 +9,10 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/home/kwayrdc/LTX Local Studio
-Environment=LTX_SITE_ROOT=/home/kwayrdc/LTX Local Studio
+# Quoted: the path has a space, and Environment= splits unquoted values on whitespace -
+# without the quotes this sets LTX_SITE_ROOT=/home/kwayrdc/LTX and drops the rest, which
+# points ALLOWED_ROOTS at a directory that does not exist and rejects every path.
+Environment="LTX_SITE_ROOT=/home/kwayrdc/LTX Local Studio"
 Environment=STUDIO_MODELS=/opt/studio/models
 # The audio venv owns librosa and stable-ts; ltx-api's interpreter has neither.
 ExecStart=/opt/studio/venvs/audio/bin/python "/home/kwayrdc/LTX Local Studio/services/audio/server.py"
