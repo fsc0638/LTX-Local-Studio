@@ -1,5 +1,6 @@
 """Machine-readable v1 contract. Built from the same limits/profiles as runtime."""
 import worker_contract as contract
+import factory_store
 import model_registry
 import mv_timeline
 import character_consistency
@@ -131,6 +132,37 @@ def openapi_document():
             "kind": {"enum": ["image", "video", "audio"]}, "content_type": {"type": "string"}, "size_bytes": {"type": "integer"}}},
         "Capabilities": {"type": "object", "required": ["contract_version", "models", "limits", "profiles"],
                          "additionalProperties": True},
+        # The v2 work order. This is the same shape the browser exports and imports, so an
+        # upstream project can build a plan offline and post it without a second format.
+        "FactoryShot": {"type": "object", "required": ["title", "request"], "properties": {
+            "id": {"type": "string", "format": "uuid", "description": "Server-assigned; omit when creating."},
+            "title": {"type": "string", "minLength": 1, "maxLength": factory_store.MAX_TITLE},
+            "request": {**ref("JobRequest"), "description": "A complete /api/v1/jobs body. Sent through the same validation as a direct submission."},
+            "pinned": {"type": "array", "items": {"type": "string"},
+                       "description": "Request fields edited by hand; reprojecting the Bible leaves them alone."},
+            "status": {"enum": list(factory_store.SHOT_STATES), "readOnly": True},
+            "idempotencyKey": {"type": "string", "readOnly": True,
+                               "description": "Unique per shot. Retrying a shot replays its job instead of spending a second GPU run."},
+            "jobId": {"type": "string", "readOnly": True},
+            "outputUrl": {"type": "string", "readOnly": True},
+            "posterUrl": {"type": "string", "readOnly": True},
+            "error": {"type": "string", "readOnly": True}}},
+        "FactoryPlan": {"type": "object", "required": ["format", "version", "id", "title", "status", "shots"], "properties": {
+            "format": {"const": factory_store.FORMAT}, "version": {"const": factory_store.VERSION},
+            "id": {"type": "string", "format": "uuid"},
+            "title": {"type": "string", "minLength": 1, "maxLength": factory_store.MAX_TITLE},
+            "bible": {"type": "object", "additionalProperties": True,
+                      "description": "Character, music, output format and directing defaults every shot inherits."},
+            "status": {"enum": list(factory_store.RUN_STATES)},
+            "createdAt": {"type": "number"}, "updatedAt": {"type": "number"},
+            "shots": {"type": "array", "maxItems": factory_store.MAX_SHOTS, "items": ref("FactoryShot")}}},
+        "FactoryTake": {"type": "object", "required": ["id", "verdict", "createdAt"], "properties": {
+            "id": {"type": "string", "format": "uuid"}, "jobId": {"type": ["string", "null"]},
+            "outputUrl": {"type": ["string", "null"]}, "posterUrl": {"type": ["string", "null"]},
+            "scores": {"type": ["object", "null"], "additionalProperties": True,
+                       "description": "Written by the consistency, style and motion judges. Null until those run."},
+            "verdict": {"enum": list(factory_store.VERDICTS)},
+            "reason": {"type": ["string", "null"]}, "createdAt": {"type": "number"}}},
     }
     # Preserve LTX's original fields and add installed adapters as strict variants.
     schemas["LtxJobRequest"] = schemas["JobRequest"]
@@ -189,6 +221,13 @@ def openapi_document():
                                            for mime in ("video/mp4", "image/png", "text/plain")}}
     artifact_download = {**download, "summary": "Download generated media", "responses": {
         **download["responses"], "200": artifact_binary, "206": artifact_binary}}
+    project_id = {"name": "id", "in": "path", "required": True, "schema": {"type": "string", "format": "uuid"}}
+    factory_body = {"required": True, "content": {"application/json": {"schema": ref("FactoryPlan")}}}
+    factory_run = operation("Queue every unfinished shot and start the line", ref("FactoryPlan"))
+    factory_run["description"] = ("The host schedules the shots: one GPU job at a time, in order, surviving a closed "
+                                  "browser and an API restart. Each shot is admitted through /api/v1/validate and "
+                                  "/api/v1/jobs exactly as a direct submission would be.")
+    factory_run["responses"]["429"] = response("factory_queue_limit: too much work already in flight for this account", ref("Error"))
     return {"openapi": "3.1.0", "info": {"title": "Local Media Worker API", "version": contract.CONTRACT_VERSION,
             "description": "Project-independent API. Browser accounts are owner-isolated; WorkerBearer is privileged host access. Cookie-authenticated mutations require X-CSRF-Token from /api/auth/session and a configured Origin. Email verification never creates a session. Unknown response fields must be ignored."},
             "servers": [{"url": "/"}], "security": [{"WorkerBearer": []}, {"BrowserSession": []}],
@@ -217,4 +256,27 @@ def openapi_document():
                 "/api/v1/assets/{id}": {"parameters": [{**job_id, "schema": schemas["Asset"]["properties"]["id"]}], "delete": deletion},
                 "/api/v1/assets/{id}/file": {"parameters": [{**job_id, "schema": schemas["Asset"]["properties"]["id"]}],
                                              "get": reference_download, "head": reference_download},
+                "/api/v1/factory/projects": {
+                    "get": operation("List this account's production projects", {"type": "object", "properties": {
+                        "projects": {"type": "array", "items": {"type": "object", "properties": {
+                            "id": {"type": "string", "format": "uuid"}, "title": {"type": "string"},
+                            "status": {"enum": list(factory_store.RUN_STATES)},
+                            "shots": {"type": "integer"}, "updatedAt": {"type": "number"}}}}}}),
+                    "post": operation("Create a project, optionally importing a v2 work order", ref("FactoryPlan"), "201",
+                                      requestBody=factory_body)},
+                "/api/v1/factory/projects/{id}": {"parameters": [project_id],
+                    "get": operation("Read the project as a v2 work order", ref("FactoryPlan")),
+                    "post": operation("Update title, Bible or run state", ref("FactoryPlan"), requestBody=factory_body),
+                    "delete": operation("Delete the project with its shots and takes", {"type": "object", "properties": {"deleted": {"const": True}}})},
+                "/api/v1/factory/projects/{id}/shots": {"parameters": [project_id],
+                    "post": operation("Replace the whole shot list", ref("FactoryPlan"), requestBody={
+                        "required": True, "content": {"application/json": {"schema": {"type": "object", "required": ["shots"],
+                        "properties": {"shots": {"type": "array", "maxItems": factory_store.MAX_SHOTS, "items": ref("FactoryShot")}}}}}})},
+                "/api/v1/factory/projects/{id}/run": {"parameters": [project_id],
+                    "post": factory_run},
+                "/api/v1/factory/projects/{id}/pause": {"parameters": [project_id],
+                    "post": operation("Stop feeding the line. A shot already on the GPU finishes; queued shots return to draft.", ref("FactoryPlan"))},
+                "/api/v1/factory/shots/{id}/takes": {"parameters": [{**project_id, "description": "Shot id"}],
+                    "get": operation("List every take this shot produced, newest first", {"type": "object", "properties": {
+                        "takes": {"type": "array", "items": ref("FactoryTake")}}})},
             }}

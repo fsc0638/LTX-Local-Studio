@@ -81,11 +81,45 @@
 
 ## 後續路線
 
-### V2：主機端耐久排程
+### V2：主機端耐久排程（已完成）
 
-- 將製片計畫與鏡頭狀態存入本機 PostgreSQL（與任務、帳號紀錄同一個資料庫；既有 SQLite 一併遷入），關閉所有瀏覽器仍可自動接續。
-- 以帳號為租戶邊界，加入每帳號佇列配額、全域公平排程與管理員暫停。
-- 保留現有 `/api/v1/jobs` 契約；Factory API 只負責編排，不直接碰模型命令或檔案路徑。
+計畫、鏡頭與 take 存在本機 PostgreSQL（與任務、帳號同一個資料庫），排程迴圈跑在 `ltx-api` 內。
+關閉所有瀏覽器不影響生產；API 重啟後從資料庫續跑。
+
+#### API
+
+全部在 `/api/v1/factory` 之下，沿用既有的 worker 憑證、Origin 與 CSRF 保護。
+
+| 方法 | 路徑 | 用途 |
+|---|---|---|
+| GET | `/projects` | 列出本帳號的專案 |
+| POST | `/projects` | 建立；body 可帶完整 v2 工作單即為匯入 |
+| GET | `/projects/{id}` | 讀成 v2 工作單（即匯出） |
+| POST | `/projects/{id}` | 改標題、Bible 或狀態 |
+| DELETE | `/projects/{id}` | 刪除，連帶鏡頭與 take |
+| POST | `/projects/{id}/shots` | 整份取代鏡頭清單 |
+| POST | `/projects/{id}/run` | 排入所有未完成鏡頭並開始 |
+| POST | `/projects/{id}/pause` | 停止供料 |
+| GET | `/shots/{id}/takes` | 該鏡的所有 take，新到舊 |
+
+機器可讀的完整定義在 `/api/v1/openapi.json`（`FactoryPlan`／`FactoryShot`／`FactoryTake`）。
+
+#### 排程行為
+
+- 一次一個 GPU 任務，依鏡頭順序。
+- 每一鏡走既有的 `/api/v1/validate` → `/api/v1/jobs` 路徑；**Factory 沒有通往 GPU 的私有捷徑**。
+- `external{project_id, asset_id, shot_id, request_id}` 由 API 填入；`asset_id` 取 Bible 的音樂
+  asset id（有的話），因此任務可回溯到歌而不只是專案。
+- **GPU 忙碌**（`worker_busy`）→ 鏡頭保留順位、下一輪重試，不算失敗。
+- **worker 拒絕請求** → 該鏡標記失敗並暫停整條線：重試不會讓它變合法，需要人處理。
+- **暫停不殺正在跑的鏡頭**；只把排隊中的退回草稿。
+- **API 重啟** → 中途狀態的鏡頭退回排隊，**冪等鍵不變**，所以真的送達 worker 的任務是重播而非重跑。
+
+#### 租戶與配額
+
+租戶邊界是帳號 `owner_id`，在每個 store 方法內強制，不靠上層過濾。service 憑證沒有帳號，
+使用哨符 `@service`（真實 user id 是 32 位十六進位，不會碰撞）。
+每帳號在途鏡頭上限 `LTX_FACTORY_QUEUE_LIMIT`（預設 100），`/run` 時超過回 429。
 
 ### V3：審片與版本管理
 
