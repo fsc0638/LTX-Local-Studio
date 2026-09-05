@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 from media_store import MediaHandlerMixin, asset_by_id, asset_path, list_assets, MAX_UPLOAD
+import psycopg
+
 import database
 from production_store import ProductionStore, file_fingerprint
 import worker_contract as worker
@@ -1182,13 +1184,13 @@ if __name__ == "__main__":
         raise SystemExit(f"Database migration failed: {exc}") from None
     try:
         AUTH = AuthStore(SITE_ROOT / "data/worker/accounts.sqlite3")
-        STORE = ProductionStore(SITE_ROOT / "data/worker/jobs.sqlite3")
+        STORE = ProductionStore()
         STORE.recover(OUTPUT_DIR)
         if LEGACY_OUTPUT_DIR != OUTPUT_DIR:
             STORE.recover(LEGACY_OUTPUT_DIR)
-    except (OSError, ValueError, sqlite3.Error):
+    except (OSError, ValueError, psycopg.Error):
         STORE = None
-        STORE_ERROR = "任務紀錄初始化失敗，請檢查磁碟與權限。"
+        STORE_ERROR = "任務紀錄初始化失敗，請檢查資料庫連線與權限。"
     if ACCESS_SETTINGS.enabled and AUTH is not None:
         threading.Thread(target=sync_pending_access, name="cloudflare-enrollment", daemon=True).start()
     if not LAUNCHER.exists():

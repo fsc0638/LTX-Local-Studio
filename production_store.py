@@ -2,11 +2,13 @@
 from contextlib import contextmanager
 import hashlib
 import json
-import os
 from pathlib import Path
 import re
-import sqlite3
 import time
+
+from psycopg.types.json import Jsonb
+
+import database
 
 
 FIELDS = ("id", "status", "progress", "phase", "created_at", "started_at", "finished_at",
@@ -40,72 +42,68 @@ def file_fingerprint(path, digest=False):
 
 
 class ProductionStore:
-    def __init__(self, path):
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        with self.connect() as db:
-            db.execute("PRAGMA journal_mode=WAL")
-            db.execute("""CREATE TABLE IF NOT EXISTS jobs (
-                id TEXT PRIMARY KEY, snapshot TEXT NOT NULL, updated_at REAL NOT NULL,
-                idempotency_key TEXT UNIQUE, request_hash TEXT)""")
-            db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_updated ON jobs(updated_at DESC)")
-            db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_owner ON jobs(json_extract(snapshot,'$.owner_id'),updated_at DESC)")
-            db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_filename ON jobs(json_extract(snapshot,'$.filename'))")
-            db.execute("PRAGMA optimize")
-            db.execute("PRAGMA user_version=1")
-        os.chmod(self.path, 0o600)
+    """Jobs in PostgreSQL. The schema is owned by db/migrations and applied once at API startup;
+    a store that created its own tables would drift from that history."""
+
+    def __init__(self, url=None):
+        self.url = url or database.database_url()
 
     @contextmanager
     def connect(self):
-        db = sqlite3.connect(self.path, timeout=10)
-        db.row_factory = sqlite3.Row
-        try:
-            with db:
-                yield db
-        finally:
-            db.close()
+        with database.connect(self.url) as db:
+            yield db
 
     def record(self, job, *, key=None, request_hash=None, only_if_missing=False):
         if not isinstance(job, dict) or not re.fullmatch(r"[a-f0-9]{12,32}", str(job.get("id", ""))):
             raise ValueError("Invalid job ID")
         snapshot = {field: job[field] for field in FIELDS if field in job}
         now = job.get("finished_at") or job.get("created_at") or time.time()
-        conflict = "DO NOTHING" if only_if_missing else "DO UPDATE SET snapshot=excluded.snapshot, updated_at=excluded.updated_at WHERE json_extract(jobs.snapshot,'$.deleted_at') IS NULL"
+        conflict = ("DO NOTHING" if only_if_missing else
+                    "DO UPDATE SET snapshot=excluded.snapshot, updated_at=excluded.updated_at "
+                    "WHERE jobs.snapshot->>'deleted_at' IS NULL")
         # Updates deliberately preserve the original idempotency key and hash.
         with self.connect() as db:
-            db.execute(f"INSERT INTO jobs(id,snapshot,updated_at,idempotency_key,request_hash) VALUES(?,?,?,?,?) ON CONFLICT(id) {conflict}",
-                       (job["id"], encode(snapshot), now, key, request_hash))
+            db.execute(
+                "INSERT INTO jobs(id,snapshot,updated_at,idempotency_key,request_hash) "
+                f"VALUES(%s,%s,%s,%s,%s) ON CONFLICT(id) {conflict}",
+                (job["id"], Jsonb(snapshot), now, key, request_hash))
 
     def get(self, job_id):
         with self.connect() as db:
-            row = db.execute("SELECT snapshot FROM jobs WHERE id=?", (job_id,)).fetchone()
-        return json.loads(row[0]) if row else None
+            row = db.execute("SELECT snapshot FROM jobs WHERE id=%s", (job_id,)).fetchone()
+        return row["snapshot"] if row else None
 
     def by_key(self, key):
         with self.connect() as db:
-            row = db.execute("SELECT snapshot,request_hash FROM jobs WHERE idempotency_key=?", (key,)).fetchone()
-        return (json.loads(row[0]), row[1]) if row else None
+            row = db.execute("SELECT snapshot,request_hash FROM jobs WHERE idempotency_key=%s", (key,)).fetchone()
+        return (row["snapshot"], row["request_hash"]) if row else None
 
     def list_jobs(self, limit=30, offset=0, owner_id=None):
         if limit < 1 or limit > 100 or offset < 0:
             raise ValueError("Invalid pagination")
         with self.connect() as db:
-            where = "WHERE json_extract(snapshot,'$.deleted_at') IS NULL"
+            where = "WHERE snapshot->>'deleted_at' IS NULL"
             if owner_id:
-                where += " AND json_extract(snapshot,'$.owner_id')=?"
+                where += " AND snapshot->>'owner_id'=%s"
             values = (owner_id,) if owner_id else ()
-            rows = db.execute(f"SELECT snapshot FROM jobs {where} ORDER BY updated_at DESC,id LIMIT ? OFFSET ?", (*values, limit, offset)).fetchall()
-            total = db.execute(f"SELECT count(*) FROM jobs {where}", values).fetchone()[0]
-        return {"jobs": [json.loads(row[0]) for row in rows], "total": total, "offset": offset, "limit": limit}
+            rows = db.execute(
+                f"SELECT snapshot FROM jobs {where} ORDER BY updated_at DESC,id LIMIT %s OFFSET %s",
+                (*values, limit, offset)).fetchall()
+            total = db.execute(f"SELECT count(*) AS total FROM jobs {where}", values).fetchone()["total"]
+        return {"jobs": [row["snapshot"] for row in rows], "total": total, "offset": offset, "limit": limit}
 
     def by_filename(self, filename):
         with self.connect() as db:
-            row = db.execute("SELECT snapshot FROM jobs WHERE json_extract(snapshot,'$.filename')=?", (filename,)).fetchone()
-        return json.loads(row[0]) if row else None
+            row = db.execute("SELECT snapshot FROM jobs WHERE snapshot->>'filename'=%s", (filename,)).fetchone()
+        return row["snapshot"] if row else None
 
     def recent_count(self, owner_id, since):
         with self.connect() as db:
-            return db.execute("SELECT count(*) FROM jobs WHERE json_extract(snapshot,'$.owner_id')=? AND json_extract(snapshot,'$.created_at')>=?", (owner_id, since)).fetchone()[0]
+            # created_at is a JSON number; ->> yields text, so cast before comparing.
+            return db.execute(
+                "SELECT count(*) AS total FROM jobs WHERE snapshot->>'owner_id'=%s "
+                "AND (snapshot->>'created_at')::double precision >= %s",
+                (owner_id, since)).fetchone()["total"]
 
     def recover(self, output_dir):
         # Import old metadata once. If an interrupted record has a completed
@@ -134,9 +132,10 @@ class ProductionStore:
             except (OSError, ValueError, TypeError):
                 continue
         with self.connect() as db:
-            rows = db.execute("SELECT id,snapshot FROM jobs WHERE json_extract(snapshot,'$.status') IN ('running','queued')").fetchall()
+            rows = db.execute("SELECT id,snapshot FROM jobs WHERE snapshot->>'status' IN ('running','queued')").fetchall()
             for row in rows:
-                snapshot = json.loads(row["snapshot"])
+                snapshot = dict(row["snapshot"])
                 snapshot.update(status="interrupted", message="Worker restarted before completion; resubmit with a NEW idempotency key.",
                                 error={"code": "worker_restarted", "retryable": True}, finished_at=time.time())
-                db.execute("UPDATE jobs SET snapshot=?,updated_at=? WHERE id=?", (encode(snapshot), time.time(), row["id"]))
+                db.execute("UPDATE jobs SET snapshot=%s,updated_at=%s WHERE id=%s",
+                           (Jsonb(snapshot), time.time(), row["id"]))
