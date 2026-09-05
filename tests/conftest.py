@@ -29,9 +29,11 @@ import database
 
 TEST_URL_VARIABLE = "LTX_TEST_DATABASE_URL"
 
-# Every table the baseline migration owns. schema_migrations is deliberately absent: wiping it
-# would make the next connection re-run the migrations.
-TABLES = ("sessions", "email_tokens", "cloudflare_enrollments", "rate_limits", "users", "jobs")
+# Every table the migrations own. schema_migrations is deliberately absent: wiping it would make
+# the next connection re-run the migrations. Anything added by a later migration belongs here too,
+# or leftovers from one test leak into the next.
+TABLES = ("takes", "shots", "projects",
+          "sessions", "email_tokens", "cloudflare_enrollments", "rate_limits", "users", "jobs")
 
 _ready = False
 
