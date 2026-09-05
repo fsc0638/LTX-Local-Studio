@@ -16,14 +16,18 @@
 5a. **本機服務先查再起**：工單引入的 loopback 服務（ltx-audio 8790、ltx-judge 8791、ltx-imagegen 8792）可能已由開發手動啟動。先 `ss -ltn | grep :<port>` 或打 `/health`；有人在聽就直接用，不要重複啟動，也不要停掉別人的 —— 啟停不屬於驗收動作。
 5c. **新增 systemd unit 要用 `systemd-analyze --user verify <檔案>` 驗，且要求輸出為空**：它對格式錯誤只印警告、exit code 仍是 0，看 exit 0 等於沒驗。最常見的是含空格的路徑 —— `Environment=X=/a/b c` 會被空白切開只吃到 `/a/b`，必須寫成 `Environment="X=/a/b c"`。**裝好但沒啟動過的 unit 等於沒測過**：B2 的 ltx-audio 就是這樣把 `LTX_SITE_ROOT` 截成半截帶進 main，驗收因為測的是手動起的 process（環境變數由 shell 正確帶入）而沒抓到。
 5b. **Python 測試一律用 LTX venv 的 python**（`/home/kwayrdc/Documents/Codex/2026-08-28/new-chat-2/work/ltx-2.3/LTX-2/.venv/bin/python`），不是 `python3`：系統 python 有 psycopg 但沒有 `av`，`test_quality` 與 `test_mv_timeline` 會 import 失敗（97 tests 而非 120）。`git-sync-main.sh` 本來就用這個直譯器跑 Python 測試。
-6. 合併：在主 checkout `git fetch origin && git merge --ff-only origin/wo/<id> && git push origin main`；由人在主機執行。之後 `git worktree remove ~/LTX-worktrees/wo-<id> && git branch -d wo/<id>`。
+6. **開發前先開分支**：新階段開發、優化、新功能、Bug 除錯，一律先建分支＋worktree，不在主 checkout 動手。工單用 `wo/<小寫工單號>`，非工單用 `fix/<slug>`、`feat/<slug>`、`perf/<slug>`；worktree 放 `~/LTX-worktrees/<分支名>`。
+7. **合併**：由人在主機執行。main 若已前進，`--ff-only` 會失敗 —— 先在分支上 `git rebase origin/main && git push --force-with-lease`，再 `git fetch origin && git merge --ff-only origin/<分支> && git push origin main`。合併前跑完整測試套件。
+8. **合併後立刻清乾淨**：`git worktree remove ~/LTX-worktrees/<分支名> && git branch -d <分支> && git push origin --delete <分支>`，並確認主 checkout 回到 main。分支殘留會讓下次 `--ff-only` 失敗。
 
 ## 第 0 步：開工設定（只傳一次）
 
 ```text
 阿寶要開一條長期工作線，請把下面寫進 USER.md（active directives）與 MEMORY.md，之後每個「工單」任務都照做：
 1. 專案：LTX Local Studio，目錄 "/home/kwayrdc/LTX Local Studio"（路徑有空格，一律加引號）。規格在 docs/PRODUCTION_ROADMAP.md，工作規則在 docs/OPENCLAW_WORK_ORDERS.md。
-2. 分支紀律：主 checkout 永遠停在 main、不在裡面 checkout 其他分支或改檔；每張工單在自己的 worktree ~/LTX-worktrees/wo-<小寫工單號>（分支 wo/<小寫工單號>，ln -s 主 checkout 的 node_modules）工作；絕對不 push、merge、rebase 到 main — main 一推就由 ltx-git-sync 自動部署到正式站 ltx.mikamiu.studio。合併只有阿寶做。
+2. 分支紀律：主 checkout 永遠停在 main、不在裡面 checkout 其他分支或改檔；絕對不 push、merge、rebase 到 main — main 一推就由 ltx-git-sync 自動部署到正式站 ltx.mikamiu.studio。合併只有阿寶做。
+   **任何改動都先開分支**（新階段、優化、新功能、Bug 除錯都算），在自己的 worktree ~/LTX-worktrees/<分支名>（ln -s 主 checkout 的 node_modules）工作：工單用 wo/<小寫工單號>，非工單用 fix/<slug>、feat/<slug>、perf/<slug>。
+   合併後該分支要清乾淨（worktree、本地分支、遠端分支）並回到 main —— 這是合併流程的一部分，不是額外工作。
 3. 服務紀律：不重啟 ltx-web、ltx-api、ltx-cloudflared；正式站 3000 與 API 8787 不可占用，dev server 只用 3001；不動 /opt/studio 的模型權重。
 4. 系統層級動作（apt、systemctl enable/start、/etc、unit 檔啟用）先發核准區塊；需要 sudo 的指令列出來給阿寶自己跑。
 5. 15 分鐘紀律：每則任務在 15 分鐘內結束於乾淨狀態 — commit、push 分支、更新 docs/work-orders/<工單號>.md 的進度區（已完成／未完成／需要阿寶做的事），回報做到哪。
