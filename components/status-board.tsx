@@ -7,6 +7,7 @@ import {
   type FactoryPlan,
 } from '@/lib/production-factory';
 import {
+  EMPTY_PLAN_SNAPSHOT,
   planProgress,
   STAGE_KEYS,
   type PlanProgress,
@@ -99,7 +100,9 @@ const copy = {
 };
 
 /** The one place a plan is reduced to what the stage machine needs. */
-export function progressOf(plan: FactoryPlan): PlanProgress {
+export function progressOf(plan: FactoryPlan | null): PlanProgress {
+  // Before the factory has hydrated there is no plan; the line is simply at its start.
+  if (!plan) return planProgress(EMPTY_PLAN_SNAPSHOT);
   const summary = summarizeFactory(plan);
   return planProgress({
     hasBible: hasFactoryBible(plan.bible),
