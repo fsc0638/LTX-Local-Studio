@@ -952,6 +952,22 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
+        if path == "/api/internal/active-jobs":
+            # For host maintenance (git-sync asks before restarting the API). Unauthenticated but
+            # loopback-only, and it discloses a single count -- never job contents or owners.
+            if self.client_address[0] not in ("127.0.0.1", "::1"):
+                self.send_json(403, {"error": "Loopback only"})
+                return
+            try:
+                if STORE is None:
+                    raise psycopg.OperationalError()
+                with STORE.connect() as db:
+                    count = db.execute("SELECT count(*) AS total FROM jobs WHERE "
+                                       "snapshot->>'status' IN ('queued','running')").fetchone()["total"]
+                self.send_json(200, {"count": count})
+            except (OSError, psycopg.Error):
+                self.send_json(503, {"error": "Job store unavailable"})
+            return
         if path.startswith("/api/auth/"):
             self.auth_get(path)
             return
