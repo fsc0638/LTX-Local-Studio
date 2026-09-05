@@ -22,6 +22,8 @@ from media_store import MediaHandlerMixin, asset_by_id, asset_path, list_assets,
 import psycopg
 
 import database
+import factory_store
+from factory_store import FactoryError, FactoryStore
 from production_store import ProductionStore, file_fingerprint
 import worker_contract as worker
 from auth_http import AuthHandlerMixin
@@ -55,6 +57,11 @@ ALLOWED_ORIGINS = {
     if origin.strip()
 }
 JOBS: dict[str, dict[str, Any]] = {}
+FACTORY: FactoryStore | None = None
+# A service credential is host-level and owns no account, but a project still needs a tenant.
+# Real user ids are 32 hex characters, so this sentinel cannot collide with one.
+SERVICE_OWNER = "@service"
+FACTORY_QUEUE_LIMIT = int(os.environ.get("LTX_FACTORY_QUEUE_LIMIT", "100"))
 LOCK = threading.Lock()
 PROGRESS_RE = re.compile(r"(?<!\d)(\d{1,3})%")
 RUNTIME: dict[str, Any] = {}
@@ -747,6 +754,9 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
         if not self.require_principal(worker_only=True):
             return
         path = urlparse(self.path).path
+        if path.startswith("/api/v1/factory/"):
+            self.worker_post(path)
+            return
         match = re.fullmatch(r"/api/(?:v1/)?(jobs|assets)/([a-f0-9]{12,32})", path)
         if not match:
             self.send_json(404, {"error": "Not found", "code": "not_found"})
@@ -812,8 +822,76 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
     def worker_authorized(self):
         return self.require_principal(worker_only=True)
 
+    def factory_owner(self):
+        return self.principal["id"] or SERVICE_OWNER
+
+    def factory_body(self, limit=256_000):
+        if self.headers.get("Content-Type", "").split(";")[0] != "application/json":
+            raise ValueError("Content-Type must be application/json")
+        length = int(self.headers.get("Content-Length", "0"))
+        if length < 1 or length > limit:
+            raise ValueError(f"Body must be 1-{limit} bytes")
+        self.connection.settimeout(15)
+        raw = json.loads(self.rfile.read(length))
+        if not isinstance(raw, dict):
+            raise ValueError("Body must be a JSON object")
+        return raw
+
+    def factory_get(self, path):
+        """Read side of the factory. Every lookup is scoped to the caller's owner id."""
+        owner = self.factory_owner()
+        if path == "/api/v1/factory/projects":
+            self.send_json(200, {"projects": FACTORY.list_projects(owner)})
+            return True
+        match = re.fullmatch(r"/api/v1/factory/projects/([0-9a-fA-F-]{36})", path)
+        if match:
+            plan = FACTORY.get_project(match.group(1), owner)
+            self.send_json(200, plan) if plan else self.send_json(404, {"error": "Project not found", "code": "project_not_found"})
+            return True
+        match = re.fullmatch(r"/api/v1/factory/shots/([0-9a-fA-F-]{36})/takes", path)
+        if match:
+            takes = FACTORY.takes(match.group(1), owner)
+            self.send_json(200, {"takes": takes}) if takes is not None else self.send_json(404, {"error": "Shot not found", "code": "shot_not_found"})
+            return True
+        return False
+
+    def factory_post(self, path):
+        """Write side. This layer only orchestrates: a shot reaches the GPU through the same
+        /api/v1 admission path as any other request, never through a private shortcut."""
+        owner = self.factory_owner()
+        if path == "/api/v1/factory/projects":
+            raw = self.factory_body()
+            plan = FACTORY.create_project(owner, raw)
+            if raw.get("shots"):
+                plan = FACTORY.replace_shots(plan["id"], owner, raw["shots"])
+            self.send_json(201, plan)
+            return True
+        match = re.fullmatch(r"/api/v1/factory/projects/([0-9a-fA-F-]{36})(/shots|/run|/pause)?", path)
+        if not match:
+            return False
+        project_id, action = match.group(1), match.group(2)
+        if action == "/shots":
+            plan = FACTORY.replace_shots(project_id, owner, self.factory_body().get("shots"))
+        elif action == "/run":
+            if FACTORY.queued_count(owner) >= FACTORY_QUEUE_LIMIT:
+                self.send_json(429, {"error": "Factory queue limit reached", "code": "factory_queue_limit"})
+                return True
+            plan = FACTORY.start(project_id, owner)
+        elif action == "/pause":
+            plan = FACTORY.pause(project_id, owner)
+        else:
+            plan = FACTORY.update_project(project_id, owner, self.factory_body())
+        self.send_json(200, plan) if plan else self.send_json(404, {"error": "Project not found", "code": "project_not_found"})
+        return True
+
     def worker_get(self, path):
         if not self.worker_authorized():
+            return
+        if path.startswith("/api/v1/factory/"):
+            if FACTORY is None:
+                self.send_json(503, {"error": "Factory store unavailable", "code": "store_unavailable"})
+            elif not self.factory_get(path):
+                self.send_json(404, {"error": "Not found"})
             return
         if path == "/api/v1/models":
             self.send_json(200, model_registry.catalog(RUNTIME))
@@ -885,6 +963,24 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
 
     def worker_post(self, path):
         if not self.worker_authorized():
+            return
+        if path.startswith("/api/v1/factory/"):
+            if FACTORY is None:
+                self.send_json(503, {"error": "Factory store unavailable", "code": "store_unavailable"})
+                return
+            try:
+                if self.command == "DELETE":
+                    match = re.fullmatch(r"/api/v1/factory/projects/([0-9a-fA-F-]{36})", path)
+                    removed = FACTORY.delete_project(match.group(1), self.factory_owner()) if match else False
+                    self.send_json(200, {"deleted": True}) if removed else self.send_json(404, {"error": "Project not found", "code": "project_not_found"})
+                elif not self.factory_post(path):
+                    self.send_json(404, {"error": "Not found"})
+            except FactoryError as exc:
+                self.send_json(400, {"error": str(exc)[:300], "code": exc.code})
+            except (ValueError, TypeError) as exc:
+                self.send_json(400, {"error": str(exc)[:300], "code": "invalid_request"})
+            except (OSError, psycopg.Error):
+                self.send_json(503, {"error": "Factory store unavailable", "code": "store_unavailable"})
             return
         if path == "/api/v1/assets":
             self.receive_asset(LTX_PYTHON)
@@ -1144,6 +1240,93 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
         print(f"[LTX API] {self.address_string()} - {format % args}")
 
 
+def factory_send(project, shot):
+    """Hand one shot to the existing admission path. Returns True when the line may continue."""
+    FACTORY.set_shot_status(shot["id"], "validating")
+    try:
+        raw = dict(shot["request"])
+        # The worker records where a job came from; upstream never supplies these itself. These
+        # must match [\w.:-]{1,120}, so they are ids -- a project title would carry spaces.
+        # asset_id names the song when the Bible has one, which is what makes a job traceable back
+        # to the music rather than only to the project.
+        music = (project.get("bible") or {}).get("music") or {}
+        raw["external"] = {"project_id": str(project["id"]),
+                           "asset_id": str(music.get("audio_id") or project["id"]),
+                           "shot_id": str(shot["id"]), "request_id": shot["idempotency_key"]}
+        key, fingerprint = worker.validate_request(raw, shot["idempotency_key"])
+        owner = None if project["owner_id"] == SERVICE_OWNER else project["owner_id"]
+        if owner:
+            from user_auth import digest
+            key = digest(f"user:{owner}:{key}")
+        payload, external, requested = worker.parse_request(raw, parse_payload)
+        with LOCK:
+            replay = replay_job(key, fingerprint)
+        FACTORY.set_shot_status(shot["id"], "submitting")
+        status, result = replay or submit_job(payload, key=key, request_hash=fingerprint,
+                                              external=external, requested=requested, owner_id=owner)
+    except (ValueError, TypeError, OverflowError) as exc:
+        # A request the worker refuses will never succeed on a retry; stop for a person.
+        FACTORY.record_take(shot["id"], status="failed", reason=str(exc)[:300], pause_project=True)
+        return False
+    if status == 409 and result.get("code") == "worker_busy":
+        # Keep the shot's place in the queue and try again on the next pass.
+        FACTORY.set_shot_status(shot["id"], "queued")
+        return False
+    if status not in (200, 202) or "id" not in result:
+        FACTORY.record_take(shot["id"], status="failed",
+                            reason=str(result.get("code") or result.get("error"))[:300], pause_project=True)
+        return False
+    FACTORY.record_take(shot["id"], job_id=result["id"], status="running")
+    return True
+
+
+def factory_collect(shot_row, take_job_id):
+    """Move a shot that was on the GPU to its final state once its job settles."""
+    job = JOBS.get(take_job_id) or (STORE.get(take_job_id) if STORE else None)
+    if not job or job["status"] in {"queued", "running"}:
+        return
+    if job["status"] == "succeeded":
+        FACTORY.record_take(shot_row["id"], job_id=take_job_id, status="succeeded",
+                            output_url=job.get("output_url"), poster_url=job.get("poster_url"))
+        return
+    # failed, cancelled or interrupted: the line stops so a person decides what to do.
+    reason = (job.get("error") or {}).get("code") or job["status"]
+    FACTORY.record_take(shot_row["id"], job_id=take_job_id, status="failed",
+                        reason=str(reason)[:300], pause_project=True)
+
+
+def factory_scheduler():
+    """One GPU job at a time, in shot order, per running project. The state lives in PostgreSQL,
+    so closing every browser changes nothing and a restart resumes from the same place."""
+    while not STOPPING:
+        try:
+            for project in FACTORY.running_projects():
+                if STOPPING:
+                    return
+                with FACTORY.connect() as db:
+                    inflight = db.execute(
+                        "SELECT s.id, t.job_id FROM shots s JOIN LATERAL "
+                        "(SELECT job_id FROM takes WHERE shot_id=s.id ORDER BY created_at DESC LIMIT 1) t ON true "
+                        "WHERE s.project_id=%s AND s.status='running'", (project["id"],)).fetchall()
+                for row in inflight:
+                    if row["job_id"]:
+                        factory_collect(row, row["job_id"])
+                if inflight:
+                    continue  # this project already owns the GPU slot
+                shot = FACTORY.next_queued_shot(project["id"])
+                if shot is None:
+                    FACTORY.finish_if_done(project["id"])
+                    continue
+                if not factory_send(project, shot):
+                    continue
+        except (OSError, ValueError, psycopg.Error) as exc:
+            print(f"Factory scheduler paused on a store error: {str(exc)[:160]}", flush=True)
+        for _ in range(4):
+            if STOPPING:
+                return
+            time.sleep(0.5)
+
+
 def sync_pending_access():
     """Retry only pre-write failures; never resubmit a completed/uncertain append."""
     while not STOPPING:
@@ -1202,12 +1385,20 @@ if __name__ == "__main__":
     try:
         AUTH = AuthStore()
         STORE = ProductionStore()
+        FACTORY = FactoryStore()
+        # Nothing can still be mid-flight in a process that just started.
+        requeued = FACTORY.recover()
+        if requeued:
+            print(f"Factory: requeued {requeued} shot(s) interrupted by the previous run", flush=True)
         STORE.recover(OUTPUT_DIR)
         if LEGACY_OUTPUT_DIR != OUTPUT_DIR:
             STORE.recover(LEGACY_OUTPUT_DIR)
     except (OSError, ValueError, psycopg.Error):
         STORE = None
+        FACTORY = None
         STORE_ERROR = "任務紀錄初始化失敗，請檢查資料庫連線與權限。"
+    if FACTORY is not None:
+        threading.Thread(target=factory_scheduler, name="factory-scheduler", daemon=True).start()
     if ACCESS_SETTINGS.enabled and AUTH is not None:
         threading.Thread(target=sync_pending_access, name="cloudflare-enrollment", daemon=True).start()
     if not LAUNCHER.exists():

@@ -81,11 +81,14 @@ def _bible(value):
 
 
 def project_json(row, shots):
-    """The v2 plan shape, camelCase, exactly as lib/production-factory.ts restores it."""
+    """The v2 plan shape, camelCase, exactly as lib/production-factory.ts restores it.
+
+    Every uuid is stringified here: psycopg returns uuid.UUID objects, which json.dumps refuses.
+    """
     return {
         "format": FORMAT,
         "version": VERSION,
-        "id": row["id"],
+        "id": str(row["id"]),
         "title": row["title"],
         "bible": row["bible"],
         "status": row["status"],
@@ -97,7 +100,7 @@ def project_json(row, shots):
 
 def shot_json(row, take=None):
     shot = {
-        "id": row["id"],
+        "id": str(row["id"]),
         "title": row["title"],
         "request": row["request"],
         "pinned": row["pinned"],
@@ -141,7 +144,7 @@ class FactoryStore:
                               "(SELECT count(*) FROM shots s WHERE s.project_id=p.id) AS shot_count "
                               "FROM projects p WHERE p.owner_id=%s ORDER BY p.updated_at DESC",
                               (owner_id,)).fetchall()
-        return [{"id": r["id"], "title": r["title"], "status": r["status"],
+        return [{"id": str(r["id"]), "title": r["title"], "status": r["status"],
                  "shots": r["shot_count"], "updatedAt": r["updated_at"]} for r in rows]
 
     def get_project(self, project_id, owner_id):
@@ -293,7 +296,7 @@ class FactoryStore:
                 return None
             rows = db.execute("SELECT * FROM takes WHERE shot_id=%s ORDER BY created_at DESC",
                               (shot_id,)).fetchall()
-        return [{"id": r["id"], "jobId": r["job_id"], "outputUrl": r["output_url"],
+        return [{"id": str(r["id"]), "jobId": r["job_id"], "outputUrl": r["output_url"],
                  "posterUrl": r["poster_url"], "scores": r["scores"], "verdict": r["verdict"],
                  "reason": r["reason"], "createdAt": r["created_at"]} for r in rows]
 
