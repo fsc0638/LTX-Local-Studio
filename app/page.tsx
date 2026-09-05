@@ -72,6 +72,14 @@ import {
   type FactoryIncoming,
 } from '@/components/production-factory';
 import { StageRail, stageCopy, type RailKey } from '@/components/stage-rail';
+import { BreakdownEditor } from '@/components/breakdown-editor';
+import {
+  breakdownCues,
+  planBreakdown,
+  type BreakdownLyric,
+  type BreakdownShot,
+} from '@/lib/breakdown';
+import { parseLrcRows } from '@/lib/lrc-editor';
 import { StatusBoard, progressOf } from '@/components/status-board';
 import type { FactoryPlan } from '@/lib/production-factory';
 import { STAGE_KEYS, UNAVAILABLE_STAGES, type StageKey } from '@/lib/stages';
@@ -178,7 +186,13 @@ const translations = {
     bibleNote: '這裡設定一次，之後每一鏡都繼承。改這裡會套用到所有還沒生產的鏡頭；你手動改過的欄位會保留。',
     breakdownEyebrow: '01 / 分鏡',
     breakdownTitle: '把歌切成鏡頭',
-    breakdownNote: '上傳音樂與歌詞，設定每一鏡的主要動作與運鏡。拍點與逐字對時的自動分鏡在 B 期接上。',
+    breakdownNote: '上傳音樂與歌詞後按「自動分鏡」，切點會跟著段落與歌詞走並吸附到拍點；再逐鏡調整。',
+    breakdownAuto: '自動分鏡',
+    breakdownBusy: '分析中…',
+    breakdownNeedsMusic: '先在下方選好音樂，才能分析拍點。',
+    breakdownUnavailable: '音訊分析服務目前不可用；分鏡可以手動做，生成不受影響。',
+    breakdownFailed: '分析失敗，請稍後再試。',
+    breakdownApplied: '分鏡已寫入下方時間軸的 cue，用既有的「預覽分鏡」檢視。',
     shootEyebrow: '03 / 拍攝',
     shootTitle: '製片工廠佇列',
     shootNote: '一次送一個 GPU 任務；失敗會暫停整條線等人處理。',
@@ -331,7 +345,13 @@ const translations = {
     bibleNote: 'Set once here and every shot inherits it. Changes apply to shots that have not run yet; fields you edited by hand keep their values.',
     breakdownEyebrow: '01 / BREAKDOWN',
     breakdownTitle: 'Cut the song into shots',
-    breakdownNote: 'Load the music and lyrics, then set each shot\u2019s main action and camera. Beat-aligned automatic breakdown arrives in phase B.',
+    breakdownNote: 'Load the music and lyrics, press Auto breakdown, and the cuts follow the sections and lyrics, snapped to the beat. Adjust shot by shot afterwards.',
+    breakdownAuto: 'Auto breakdown',
+    breakdownBusy: 'Analysing\u2026',
+    breakdownNeedsMusic: 'Choose the music below before the beats can be analysed.',
+    breakdownUnavailable: 'The audio analysis service is unavailable. Build the breakdown by hand; generation is unaffected.',
+    breakdownFailed: 'Analysis failed. Try again in a moment.',
+    breakdownApplied: 'The breakdown is written to the cues below. Use the existing preview to check it.',
     shootEyebrow: '03 / GENERATION',
     shootTitle: 'Production factory queue',
     shootNote: 'One GPU job at a time; a failure pauses the whole line for a person.',
@@ -485,7 +505,13 @@ const translations = {
     bibleNote: 'ここで一度決めれば各ショットが継承します。未生成のショットに反映され、手動で変更した項目はそのまま残ります。',
     breakdownEyebrow: '01 / 絵コンテ',
     breakdownTitle: '曲をショットに割る',
-    breakdownNote: '音楽と歌詞を読み込み、各ショットの主要アクションとカメラを設定します。拍に合わせた自動分割はフェーズBで対応します。',
+    breakdownNote: '音楽と歌詞を読み込んで「自動割り」を押すと、セクションと歌詞に沿って拍にスナップしたカットが作られます。その後ショットごとに調整できます。',
+    breakdownAuto: '自動割り',
+    breakdownBusy: '解析中…',
+    breakdownNeedsMusic: '拍を解析するには、先に下で音楽を選んでください。',
+    breakdownUnavailable: '音声解析サービスが利用できません。手動で作成できます。生成には影響しません。',
+    breakdownFailed: '解析に失敗しました。しばらくしてからお試しください。',
+    breakdownApplied: '割り結果を下の cue に書き込みました。既存の「プレビュー」で確認できます。',
     shootEyebrow: '03 / 生成',
     shootTitle: '制作工場キュー',
     shootNote: 'GPUジョブは一度に1件。失敗するとライン全体が停止し、人の判断を待ちます。',
@@ -726,6 +752,7 @@ function Studio() {
   const [tab, setTab] = useState<TabKey>('board');
   // The factory owns the plan; the page keeps a mirror so the rail and the board can read it.
   const [plan, setPlan] = useState<FactoryPlan | null>(null);
+
   const [prompt, setPrompt] = useState(initialPrompt);
   const [model, setModel] = useState('ltx23-distilled');
   const [models, setModels] = useState<InstalledModel[]>([]);
@@ -763,6 +790,84 @@ function Studio() {
   });
   const [directing, setDirecting] = useState<Directing>({});
   const [timeline, setTimeline] = useState<TimelineDraft>({ ...emptyTimeline });
+  const [breakdown, setBreakdown] = useState<{
+    shots: BreakdownShot[];
+    lyrics: BreakdownLyric[];
+    beats: number[];
+    sections: number[];
+    durationSeconds: number;
+    beatSeconds: number;
+    energy: number[];
+    energyHopSeconds: number;
+  } | null>(null);
+  const [breakdownBusy, setBreakdownBusy] = useState(false);
+  const [breakdownNotice, setBreakdownNotice] = useState<
+    'none' | 'applied' | 'unavailable' | 'failed'
+  >('none');
+
+  /**
+   * Ask the host for beats and sections, then cut the song. The cues go straight into the timeline
+   * draft: the breakdown is the thing that decides where shots begin, and the existing "preview
+   * shot plan" button below reads those cues, so there is no second preview to keep in step.
+   */
+  const runBreakdown = async () => {
+    const audioId = timeline.music?.id;
+    if (!audioId || breakdownBusy) return;
+    setBreakdownBusy(true);
+    setBreakdownNotice('none');
+    try {
+      const response = await serviceFetch(`${API_BASE}/api/v1/audio/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ audio_id: audioId }),
+      });
+      if (!response.ok) {
+        // 503 is the documented answer when the analysis service is down, and it is not an error
+        // the user has to act on: the page keeps working without it.
+        setBreakdownNotice(response.status === 503 ? 'unavailable' : 'failed');
+        return;
+      }
+      // Only the fields the breakdown reads are named; the response also carries the alignment
+      // and the cache flag, which belong to other stages.
+      const data = (await response.json()) as {
+        beats?: {
+          duration_seconds?: number;
+          beats?: number[];
+          sections?: number[];
+          energy_db?: number[];
+          energy_hop_seconds?: number;
+        };
+        lyric_offset_seconds?: number;
+      };
+      const measured = data?.beats ?? {};
+      const rows = parseLrcRows(timeline.lrc);
+      const result = planBreakdown({
+        durationSeconds: Number(measured.duration_seconds) || 0,
+        beats: Array.isArray(measured.beats) ? measured.beats : [],
+        sections: Array.isArray(measured.sections) ? measured.sections : [],
+        lyrics: rows,
+        lyricOffsetSeconds: Number(data?.lyric_offset_seconds) || 0,
+        segmentSeconds: timeline.segmentSeconds,
+        directing: plan?.bible.directing ?? {},
+      });
+      setBreakdown({
+        shots: result.shots,
+        lyrics: result.shots.flatMap((shot) => shot.lyrics),
+        beats: Array.isArray(measured.beats) ? measured.beats : [],
+        sections: Array.isArray(measured.sections) ? measured.sections : [],
+        durationSeconds: Number(measured.duration_seconds) || 0,
+        beatSeconds: result.beatSeconds,
+        energy: Array.isArray(measured.energy_db) ? measured.energy_db : [],
+        energyHopSeconds: Number(measured.energy_hop_seconds) || 0.1,
+      });
+      setTimeline((current) => ({ ...current, cues: breakdownCues(result.shots) }));
+      setBreakdownNotice('applied');
+    } catch {
+      setBreakdownNotice('failed');
+    } finally {
+      setBreakdownBusy(false);
+    }
+  };
   const [factoryIncoming, setFactoryIncoming] =
     useState<FactoryIncoming | null>(null);
   const [referenceUploading, setReferenceUploading] = useState(false);
@@ -1228,6 +1333,50 @@ function Studio() {
               title={ui.breakdownTitle}
               note={ui.breakdownNote}
             />
+            <div className="mb-6 flex flex-col gap-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={runBreakdown}
+                  disabled={!timeline.music || breakdownBusy}
+                  className="rounded-sm border border-border bg-white px-4 py-2 text-[12px] font-bold hover:bg-[#faf9f7] disabled:opacity-45"
+                >
+                  {breakdownBusy ? ui.breakdownBusy : ui.breakdownAuto}
+                </button>
+                <p className="text-[11px] text-muted-foreground">
+                  {!timeline.music
+                    ? ui.breakdownNeedsMusic
+                    : breakdownNotice === 'unavailable'
+                      ? ui.breakdownUnavailable
+                      : breakdownNotice === 'failed'
+                        ? ui.breakdownFailed
+                        : breakdownNotice === 'applied'
+                          ? ui.breakdownApplied
+                          : ''}
+                </p>
+              </div>
+
+              {breakdown ? (
+                <BreakdownEditor
+                  shots={breakdown.shots}
+                  lyrics={breakdown.lyrics}
+                  beats={breakdown.beats}
+                  sections={breakdown.sections}
+                  durationSeconds={breakdown.durationSeconds}
+                  beatSeconds={breakdown.beatSeconds}
+                  energy={breakdown.energy}
+                  energyHopSeconds={breakdown.energyHopSeconds}
+                  locale={locale}
+                  onChange={(shots) => {
+                    setBreakdown((current) => (current ? { ...current, shots } : current));
+                    // The cues are the breakdown's output, so every edit lands in the timeline
+                    // immediately rather than behind an "apply" the user could forget to press.
+                    setTimeline((current) => ({ ...current, cues: breakdownCues(shots) }));
+                  }}
+                />
+              ) : null}
+            </div>
+
             <TimelineControls
               locale={locale}
               catalog={capabilities?.directing}
