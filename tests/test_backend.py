@@ -9,11 +9,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 import local_backend as backend
+import conftest
 import media_store as media
 
 
-class BackendTests(unittest.TestCase):
+class BackendTests(conftest.DatabaseFixture, unittest.TestCase):
     def setUp(self):
+        self.start_database()
         self.temp = tempfile.TemporaryDirectory()
         root = Path(self.temp.name)
         self.output = root / "generated"

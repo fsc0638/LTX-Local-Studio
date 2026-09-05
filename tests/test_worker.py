@@ -3,7 +3,7 @@ import json
 import io
 import os
 from pathlib import Path
-import sqlite3
+import psycopg
 import threading
 import time
 from unittest.mock import patch
@@ -19,7 +19,7 @@ run_job_implementation = backend.run_job
 class WorkerTests(test_backend.BackendTests):
     def setUp(self):
         super().setUp()
-        self.store = ProductionStore(Path(self.temp.name) / "worker/jobs.sqlite3")
+        self.store = ProductionStore()
         self.worker_patches = [patch.object(backend, "STORE", self.store),
                                patch.object(backend, "STORE_ERROR", ""),
                                patch.object(contract, "api_key", return_value="a" * 48),
@@ -150,7 +150,7 @@ class WorkerTests(test_backend.BackendTests):
     def test_restart_recovers_status_and_idempotency(self):
         job = json.loads(self.call("POST", "/api/v1/jobs", self.payload())[2])
         backend.JOBS.clear()
-        recovered = ProductionStore(self.store.path)
+        recovered = ProductionStore(self.store.url)
         recovered.recover(self.output)
         with patch.object(backend, "STORE", recovered):
             self.assertEqual(json.loads(self.call("GET", job["status_url"])[2])["status"], "interrupted")
@@ -178,7 +178,7 @@ class WorkerTests(test_backend.BackendTests):
         self.assertEqual(self.call("GET", "/api/v1/jobs/../../secret/video")[0], 404)
 
     def test_store_failure_and_gpu_failure_do_not_accept(self):
-        with patch.object(self.store, "record", side_effect=sqlite3.OperationalError("disk full")):
+        with patch.object(self.store, "record", side_effect=psycopg.OperationalError("disk full")):
             self.assertEqual(self.call("POST", "/api/v1/jobs", self.payload())[0], 503)
         self.assertEqual(backend.JOBS, {})
         with patch.object(backend, "RUNTIME", {"cuda_available": False}):

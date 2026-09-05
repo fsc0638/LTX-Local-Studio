@@ -171,7 +171,7 @@ class TimelineAPITests(BackendTests):
             response = self.request("DELETE", f"/api/v1/assets/{music['id']}", headers={"Authorization": "Bearer " + "a" * 48})
             self.assertEqual(response[0], 409)
             backend.JOBS.clear()
-            store = ProductionStore(Path(self.temp.name) / "jobs.sqlite3")
+            store = ProductionStore()
             payload, _, _ = contract.parse_request(raw, backend.parse_payload)
             with patch.object(backend, "STORE", store):
                 with self.assertRaisesRegex(ValueError, "account"):
@@ -181,7 +181,7 @@ class TimelineAPITests(BackendTests):
         # TEST FIXTURE ONLY. Real process, validation and composition; no AI claim.
         source = Path(self.temp.name) / "fixture.mp4"
         create_video(source, frames=49, fps=24)
-        store = ProductionStore(Path(self.temp.name) / "jobs.sqlite3")
+        store = ProductionStore()
         raw = {"prompt": "valid", "render_mode": "sequence", "duration_seconds": 4, "segment_seconds": 2,
                "width": 256, "height": 256, "fps": 24, "audio": False}
         payload, _, _ = contract.parse_request(raw, backend.parse_payload)
@@ -200,7 +200,7 @@ class TimelineAPITests(BackendTests):
     def test_sequence_resume_reuses_valid_completed_shots(self):
         source = Path(self.temp.name) / "fixture.mp4"
         create_video(source, frames=49, fps=24)
-        store = ProductionStore(Path(self.temp.name) / "resume-jobs.sqlite3")
+        store = ProductionStore()
         raw = {"prompt": "valid", "render_mode": "sequence", "duration_seconds": 4, "segment_seconds": 2,
                "width": 256, "height": 256, "fps": 24, "audio": False}
         payload, _, _ = contract.parse_request(raw, backend.parse_payload)
