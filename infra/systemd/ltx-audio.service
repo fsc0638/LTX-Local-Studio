@@ -1,0 +1,23 @@
+# Music analysis (MA) and lyric sync (LS) for the breakdown stage. Install with:
+#   cp infra/systemd/ltx-audio.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now ltx-audio.service
+# Not enabled by the sync script: activating a unit is a system-level change.
+[Unit]
+Description=LTX Local Studio audio analysis (beats and lyric alignment)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/kwayrdc/LTX Local Studio
+Environment=LTX_SITE_ROOT=/home/kwayrdc/LTX Local Studio
+Environment=STUDIO_MODELS=/opt/studio/models
+# The audio venv owns librosa and stable-ts; ltx-api's interpreter has neither.
+ExecStart=/opt/studio/venvs/audio/bin/python "/home/kwayrdc/LTX Local Studio/services/audio/server.py"
+Restart=on-failure
+RestartSec=5
+# Loopback-only by construction, but say so here as well so a stray override is visible.
+Environment=LTX_AUDIO_HOST=127.0.0.1
+Environment=LTX_AUDIO_PORT=8790
+
+[Install]
+WantedBy=default.target
