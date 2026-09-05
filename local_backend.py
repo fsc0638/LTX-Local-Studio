@@ -1149,7 +1149,9 @@ def sync_pending_access():
     while not STOPPING:
         try:
             with AUTH.connect() as db:
-                rows = db.execute("SELECT e.user_id FROM cloudflare_enrollments e JOIN users u ON u.id=e.user_id WHERE e.state='pending' AND e.target=? AND u.disabled=0 ORDER BY e.created_at LIMIT 5",
+                rows = db.execute("SELECT e.user_id FROM cloudflare_enrollments e JOIN users u ON u.id=e.user_id "
+                                  "WHERE e.state='pending' AND e.target=%s AND u.disabled=0 "
+                                  "ORDER BY e.created_at LIMIT 5",
                                   (ACCESS_SETTINGS.target,)).fetchall()
             for row in rows:
                 if STOPPING:
