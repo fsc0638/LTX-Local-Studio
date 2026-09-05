@@ -131,7 +131,8 @@ def sync_enrollment(store, client, user_id):
     """Return a durable state. Only pending rows can ever initiate a write."""
     settings = client.settings
     with store.connect() as db:
-        row = db.execute("SELECT e.* FROM cloudflare_enrollments e JOIN users u ON u.id=e.user_id WHERE e.user_id=? AND u.disabled=0", (user_id,)).fetchone()
+        row = db.execute("SELECT e.* FROM cloudflare_enrollments e JOIN users u ON u.id=e.user_id "
+                         "WHERE e.user_id=%s AND u.disabled=0", (user_id,)).fetchone()
     if not row or row["target"] != settings.target:
         return "not_enrolled"
     if row["state"] != "pending":
@@ -140,13 +141,14 @@ def sync_enrollment(store, client, user_id):
         client.check_list()
     except AccessAPIError as exc:
         with store.connect() as db:
-            db.execute("UPDATE cloudflare_enrollments SET last_error=?,updated_at=? WHERE user_id=? AND state='pending'",
+            db.execute("UPDATE cloudflare_enrollments SET last_error=%s,updated_at=%s WHERE user_id=%s AND state='pending'",
                        (str(exc), time.time(), user_id))
         return "pending"
     # Persist intent BEFORE the remote write. Crash/timeout cannot cause a second
     # append after an administrator has revoked the first one in Cloudflare.
     with store.connect() as db:
-        claimed = db.execute("UPDATE cloudflare_enrollments SET state='adding',updated_at=? WHERE user_id=? AND state='pending' AND user_id IN (SELECT id FROM users WHERE disabled=0)",
+        claimed = db.execute("UPDATE cloudflare_enrollments SET state='adding',updated_at=%s "
+                             "WHERE user_id=%s AND state='pending' AND user_id IN (SELECT id FROM users WHERE disabled=0)",
                              (time.time(), user_id)).rowcount
     if not claimed:
         return "adding"
@@ -156,7 +158,7 @@ def sync_enrollment(store, client, user_id):
     except AccessAPIError as exc:
         state, error = "review", str(exc)
     with store.connect() as db:
-        db.execute("UPDATE cloudflare_enrollments SET state=?,last_error=?,updated_at=? WHERE user_id=? AND state='adding'",
+        db.execute("UPDATE cloudflare_enrollments SET state=%s,last_error=%s,updated_at=%s WHERE user_id=%s AND state='adding'",
                    (state, error, time.time(), user_id))
     return state
 

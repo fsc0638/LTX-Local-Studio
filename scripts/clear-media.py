@@ -5,12 +5,14 @@ import fcntl
 import json
 import os
 from pathlib import Path
-import sqlite3
 import sys
 import time
 
+import psycopg
+
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+import database
 from media_deletion import prepare_archive, regular_file
 
 
@@ -55,9 +57,7 @@ def clear(root, *, apply=False):
     if not apply:
         return result
     state = root / "data/worker"
-    database = state / "jobs.sqlite3"
-    if not regular_file(database):
-        raise ValueError("Existing jobs database required")
+    state.mkdir(parents=True, exist_ok=True, mode=0o700)
     lock_path = state / "instance.lock"
     if lock_path.exists() or lock_path.is_symlink():
         regular_file(lock_path)
@@ -66,36 +66,35 @@ def clear(root, *, apply=False):
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise ValueError("Stop the API first; its instance lock is held") from None
-        db = sqlite3.connect(f"file:{database}?mode=rw", uri=True, timeout=10)
-        try:
-            active = db.execute("SELECT count(*) FROM jobs WHERE json_extract(snapshot,'$.status') IN ('queued','running')").fetchone()[0]
+        with database.connect() as db:
+            active = db.execute("SELECT count(*) AS total FROM jobs "
+                                "WHERE snapshot->>'status' IN ('queued','running')").fetchone()["total"]
             if active:
                 raise ValueError("Active jobs remain; finish/cancel them before cleanup")
             # Re-enumerate only after excluding all service writes.
             files, counts = inventory(root)
-            pending = db.execute("SELECT count(*) FROM jobs WHERE json_extract(snapshot,'$.deleted_at') IS NULL").fetchone()[0]
+            rows = db.execute("SELECT id,snapshot,updated_at,idempotency_key,request_hash FROM jobs "
+                              "WHERE snapshot->>'deleted_at' IS NULL ORDER BY id").fetchall()
+            pending = len(rows)
             if not files and not pending:
                 return {**result, "applied": True, "jobs_hidden": 0, "archive": None}
             archive = prepare_archive(files, state / "trash", {"kind": "bulk_cleanup", "directories": counts})
-            backup_path = archive.directory / "jobs-before.sqlite3"
-            backup = sqlite3.connect(backup_path)
+            # PostgreSQL has no in-process equivalent of sqlite3's db.backup(), so the rows about
+            # to be tombstoned are written out as JSON. It is the same safety net: everything
+            # needed to restore a row, readable without a database.
+            backup_path = archive.directory / "jobs-before.json"
+            backup_path.write_text(json.dumps(rows, ensure_ascii=False, default=str, indent=1), encoding="utf-8")
             os.chmod(backup_path, 0o600)
-            try:
-                db.backup(backup)
-            finally:
-                backup.close()
             with backup_path.open("rb") as saved:
                 os.fsync(saved.fileno())
             now = time.time()
-            with db:
-                db.execute("UPDATE jobs SET snapshot=json_set(snapshot,'$.deleted_at',?),updated_at=? WHERE json_extract(snapshot,'$.deleted_at') IS NULL", (now, now))
-            # Tombstones deny downloads before any original paths are removed.
-            archive.remove_sources()
-            return {"applied": True, "directories": counts, "files": len(files),
-                    "bytes": sum(p.stat().st_size for _, p in archive.entries),
-                    "jobs_hidden": pending, "archive": str(archive.directory)}
-        finally:
-            db.close()
+            db.execute("UPDATE jobs SET snapshot=jsonb_set(snapshot,'{deleted_at}',to_jsonb(%s::double precision)),"
+                       "updated_at=%s WHERE snapshot->>'deleted_at' IS NULL", (now, now))
+        # Tombstones deny downloads before any original paths are removed.
+        archive.remove_sources()
+        return {"applied": True, "directories": counts, "files": len(files),
+                "bytes": sum(p.stat().st_size for _, p in archive.entries),
+                "jobs_hidden": pending, "archive": str(archive.directory)}
 
 
 if __name__ == "__main__":
@@ -104,6 +103,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
     try:
         print(json.dumps(clear(ROOT, apply=args.apply), ensure_ascii=False, indent=2))
-    except (OSError, ValueError, sqlite3.Error) as error:
+    except (OSError, ValueError, psycopg.Error) as error:
         print(f"Cleanup stopped: {error}", file=sys.stderr)
         sys.exit(1)

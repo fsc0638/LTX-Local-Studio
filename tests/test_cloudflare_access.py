@@ -13,6 +13,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 import cloudflare_access as access
 import local_backend as backend
 import user_auth as auth
+import conftest
 import test_backend
 from production_store import ProductionStore
 
@@ -23,10 +24,11 @@ def settings():
                                  '/unused/test-token')
 
 
-class EnrollmentTests(unittest.TestCase):
+class EnrollmentTests(conftest.DatabaseFixture, unittest.TestCase):
     def setUp(self):
+        self.start_database()
         self.temp = tempfile.TemporaryDirectory()
-        self.store = auth.AuthStore(Path(self.temp.name) / 'accounts.db')
+        self.store = auth.AuthStore()
         self.client = Mock(settings=settings())
         self.hash_patch = patch.object(auth, 'PASSWORD_N', 1024)
         self.hash_patch.start()
@@ -48,7 +50,7 @@ class EnrollmentTests(unittest.TestCase):
         self.assertEqual(access.sync_enrollment(self.store, self.client, uid), 'synced')
         self.client.append.assert_called_once()
         with self.store.connect() as db:
-            self.assertIsNone(db.execute('SELECT verified_at FROM users').fetchone()[0])
+            self.assertIsNone(db.execute('SELECT verified_at FROM users').fetchone()['verified_at'])
 
     def test_read_failure_retries_but_uncertain_write_does_not(self):
         uid, _ = self.register()
@@ -72,17 +74,17 @@ class EnrollmentTests(unittest.TestCase):
         self.client.settings = settings()
         other, _ = self.register('bob')
         with self.store.connect() as db:
-            db.execute('UPDATE users SET disabled=1 WHERE id=?', (other,))
+            db.execute('UPDATE users SET disabled=1 WHERE id=%s', (other,))
         self.assertEqual(access.sync_enrollment(self.store, self.client, other), 'not_enrolled')
         self.client.append.assert_not_called()
 
     def test_enrollment_tombstone_survives_user_deletion(self):
         uid, _ = self.register()
         with self.store.connect() as db:
-            db.execute('DELETE FROM users WHERE id=?', (uid,))
+            db.execute('DELETE FROM users WHERE id=%s', (uid,))
         self.assertIsNone(self.register())
         with self.store.connect() as db:
-            self.assertEqual(db.execute('SELECT count(*) FROM users').fetchone()[0], 0)
+            self.assertEqual(db.execute('SELECT count(*) AS total FROM users').fetchone()['total'], 0)
 
     def test_duplicate_and_concurrent_claim_only_append_once(self):
         uid, email = self.register()
@@ -178,7 +180,7 @@ class JWTTests(unittest.TestCase):
 class AccessHTTPTests(test_backend.BackendTests):
     def setUp(self):
         super().setUp()
-        self.auth = auth.AuthStore(Path(self.temp.name) / 'accounts.db')
+        self.auth = auth.AuthStore()
         self.client = Mock(settings=settings())
         self.verifier = Mock()
         self.verifier.verify.side_effect = lambda value: 'alice@example.test' if value == 'valid' else (_ for _ in ()).throw(auth.AuthError('cloudflare_identity_invalid', 401))
@@ -186,7 +188,7 @@ class AccessHTTPTests(test_backend.BackendTests):
                                patch.object(backend, 'AUTH_SETTINGS', auth.AuthSettings('http://localhost:3000', registration_enabled=True, auth_mode='internal')),
                                patch.object(backend, 'ACCESS_SETTINGS', settings()), patch.object(backend, 'ACCESS_CLIENT', self.client),
                                patch.object(backend, 'ACCESS_VERIFIER', self.verifier), patch.object(auth, 'PASSWORD_N', 1024),
-                               patch.object(backend, 'STORE', ProductionStore(Path(self.temp.name) / 'jobs.db'))]
+                               patch.object(backend, 'STORE', ProductionStore())]
         for p in self.access_patches:
             p.start()
 
