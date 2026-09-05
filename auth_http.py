@@ -2,7 +2,7 @@
 from http.cookies import SimpleCookie
 import hmac
 import json
-import sqlite3
+import psycopg
 
 from user_auth import AUTH_SLOTS, AuthError, PASSWORD_MIN_LENGTH, SESSION_SECONDS, csrf_token, normalize_email
 from cloudflare_access import local_request, sync_enrollment
@@ -73,7 +73,7 @@ class AuthHandlerMixin:
         try:
             token = self.session_cookie()
             user = self.auth_store.session(token, require_verified=self.auth_settings.verification_required) if self.auth_store else None
-        except (OSError, sqlite3.Error):
+        except (OSError, psycopg.Error):
             self.send_json(503, {"error": "Account service unavailable", "code": "auth_unavailable"})
             return False
         if not user:
@@ -115,7 +115,7 @@ class AuthHandlerMixin:
                                      "auth_mode": self.auth_settings.auth_mode,
                                      "cloudflare_logout_url": self.cloudflare_logout_url,
                                      "csrf_token": csrf_token(token) if user else None})
-            except (OSError, sqlite3.Error):
+            except (OSError, psycopg.Error):
                 self.send_json(503, {"error": "Account service unavailable", "code": "auth_unavailable"})
         else:
             self.send_json(404, {"error": "Not found"})
@@ -221,7 +221,7 @@ class AuthHandlerMixin:
             self.send_json(exc.status, {"error": exc.code, "code": exc.code})
         except (ValueError, TypeError):
             self.send_json(400, {"error": "Invalid account request", "code": "invalid_request"})
-        except (OSError, sqlite3.Error):
+        except (OSError, psycopg.Error):
             self.send_json(503, {"error": "Account service unavailable", "code": "auth_unavailable"})
         finally:
             AUTH_SLOTS.release()

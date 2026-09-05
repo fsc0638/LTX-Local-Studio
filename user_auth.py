@@ -12,11 +12,13 @@ from pathlib import Path
 import re
 import secrets
 import smtplib
-import sqlite3
+import psycopg
 import ssl
 import threading
 import time
 from urllib.parse import urlsplit
+
+import database
 
 PASSWORD_N = 2**17
 PASSWORD_MIN_LENGTH = 8
@@ -164,51 +166,29 @@ class AuthSettings:
 
 
 class AuthStore:
-    def __init__(self, path):
-        self.path = Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        with self.connect() as db:
-            db.execute("PRAGMA journal_mode=WAL")
-            db.execute("""CREATE TABLE IF NOT EXISTS users (
-                id TEXT PRIMARY KEY, name TEXT NOT NULL, username TEXT NOT NULL UNIQUE,
-                email TEXT NOT NULL UNIQUE, password_hash TEXT NOT NULL, created_at REAL NOT NULL,
-                verified_at REAL, disabled INTEGER NOT NULL DEFAULT 0)""")
-            db.execute("""CREATE TABLE IF NOT EXISTS sessions (
-                token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id), expires_at REAL NOT NULL)""")
-            db.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)")
-            db.execute("""CREATE TABLE IF NOT EXISTS email_tokens (
-                token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id),
-                kind TEXT NOT NULL, created_at REAL NOT NULL, expires_at REAL NOT NULL)""")
-            db.execute("CREATE INDEX IF NOT EXISTS idx_email_tokens_user ON email_tokens(user_id,kind)")
-            db.execute("CREATE TABLE IF NOT EXISTS rate_limits (scope TEXT PRIMARY KEY, count INTEGER NOT NULL, expires_at REAL NOT NULL)")
-            # Keep enrollment history even if an account is later removed. Never
-            # reconstruct this table from users: a dashboard removal is final.
-            db.execute("""CREATE TABLE IF NOT EXISTS cloudflare_enrollments (
-                email TEXT PRIMARY KEY, user_id TEXT NOT NULL UNIQUE, target TEXT NOT NULL,
-                state TEXT NOT NULL CHECK(state IN ('pending','adding','synced','review')),
-                last_error TEXT NOT NULL DEFAULT '', created_at REAL NOT NULL, updated_at REAL NOT NULL)""")
-        os.chmod(self.path, 0o600)
+    """Accounts in PostgreSQL. Like ProductionStore it does not create its own tables: the schema
+    lives in db/migrations and is applied once at API startup. Foreign keys are always enforced,
+    so there is no equivalent of SQLite's per-connection PRAGMA."""
+
+    def __init__(self, url=None):
+        self.url = url or database.database_url()
 
     @contextmanager
     def connect(self):
-        db = sqlite3.connect(self.path, timeout=10)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA foreign_keys=ON")
-        try:
-            with db:
-                yield db
-        finally:
-            db.close()
+        with database.connect(self.url) as db:
+            yield db
 
     def rate(self, scope, limit, window):
         scope, now = digest(scope), time.time()
         with self.connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            db.execute("DELETE FROM rate_limits WHERE expires_at < ?", (now,))
-            row = db.execute("SELECT count FROM rate_limits WHERE scope=?", (scope,)).fetchone()
-            if row and row[0] >= limit:
+            db.execute("DELETE FROM rate_limits WHERE expires_at < %s", (now,))
+            # FOR UPDATE replaces BEGIN IMMEDIATE: it serialises concurrent checks on one scope so
+            # two requests cannot both read a count below the limit and both increment it.
+            row = db.execute("SELECT count FROM rate_limits WHERE scope=%s FOR UPDATE", (scope,)).fetchone()
+            if row and row["count"] >= limit:
                 raise AuthError("rate_limited", 429)
-            db.execute("INSERT INTO rate_limits VALUES(?,1,?) ON CONFLICT(scope) DO UPDATE SET count=count+1", (scope, now + window))
+            db.execute("INSERT INTO rate_limits VALUES(%s,1,%s) ON CONFLICT(scope) "
+                       "DO UPDATE SET count=rate_limits.count+1", (scope, now + window))
 
     def register(self, raw, *, access_target=""):
         name, username = raw.get("name"), raw.get("username")
@@ -221,12 +201,12 @@ class AuthStore:
         user_id = secrets.token_hex(16)
         with self.connect() as db:
             try:
-                db.execute("INSERT INTO users(id,name,username,email,password_hash,created_at) VALUES(?,?,?,?,?,?)",
+                db.execute("INSERT INTO users(id,name,username,email,password_hash,created_at) VALUES(%s,%s,%s,%s,%s,%s)",
                            (user_id, name.strip(), username.lower(), email, encoded, time.time()))
                 if access_target:
-                    db.execute("INSERT INTO cloudflare_enrollments(email,user_id,target,state,created_at,updated_at) VALUES(?,?,?,'pending',?,?)",
+                    db.execute("INSERT INTO cloudflare_enrollments(email,user_id,target,state,created_at,updated_at) VALUES(%s,%s,%s,'pending',%s,%s)",
                                (email, user_id, access_target, time.time(), time.time()))
-            except sqlite3.IntegrityError:
+            except psycopg.errors.IntegrityError:
                 db.rollback()
                 # Neither overwrite pending passwords nor disclose which field exists.
                 return None
@@ -235,18 +215,18 @@ class AuthStore:
     def issue_email_token(self, user_id, kind):
         token, now = secrets.token_urlsafe(32), time.time()
         with self.connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            previous = db.execute("SELECT created_at FROM email_tokens WHERE user_id=? AND kind=?", (user_id, kind)).fetchone()
-            if previous and now - previous[0] < 60:
+            previous = db.execute("SELECT created_at FROM email_tokens WHERE user_id=%s AND kind=%s FOR UPDATE",
+                                  (user_id, kind)).fetchone()
+            if previous and now - previous["created_at"] < 60:
                 raise AuthError("rate_limited", 429)
-            db.execute("DELETE FROM email_tokens WHERE user_id=? AND kind=?", (user_id, kind))
-            db.execute("INSERT INTO email_tokens VALUES(?,?,?,?,?)", (digest(token), user_id, kind, now, now + TOKEN_SECONDS))
+            db.execute("DELETE FROM email_tokens WHERE user_id=%s AND kind=%s", (user_id, kind))
+            db.execute("INSERT INTO email_tokens VALUES(%s,%s,%s,%s,%s)", (digest(token), user_id, kind, now, now + TOKEN_SECONDS))
         return token
 
     def mail_target(self, email, kind):
         email = normalize_email(email)
         with self.connect() as db:
-            row = db.execute("SELECT id,email,verified_at,disabled FROM users WHERE email=?", (email,)).fetchone()
+            row = db.execute("SELECT id,email,verified_at,disabled FROM users WHERE email=%s", (email,)).fetchone()
         if not row or row["disabled"] or (kind == "verify" and row["verified_at"]) or (kind == "reset" and not row["verified_at"]):
             return None
         return row["id"], row["email"]
@@ -257,24 +237,25 @@ class AuthStore:
         encoded = password_hash(check_password(new_password)) if kind == "reset" else None
         now = time.time()
         with self.connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            row = db.execute("SELECT t.user_id FROM email_tokens t JOIN users u ON u.id=t.user_id WHERE t.token_hash=? AND t.kind=? AND t.expires_at>? AND u.disabled=0",
+            row = db.execute("SELECT t.user_id FROM email_tokens t JOIN users u ON u.id=t.user_id "
+                             "WHERE t.token_hash=%s AND t.kind=%s AND t.expires_at>%s AND u.disabled=0 "
+                             "FOR UPDATE OF t",
                              (digest(token), kind, now)).fetchone()
             if not row:
                 raise AuthError("invalid_or_expired_token")
             if kind == "verify":
-                db.execute("UPDATE users SET verified_at=? WHERE id=?", (now, row[0]))
+                db.execute("UPDATE users SET verified_at=%s WHERE id=%s", (now, row["user_id"]))
             else:
-                db.execute("UPDATE users SET password_hash=? WHERE id=?", (encoded, row[0]))
-            db.execute("DELETE FROM email_tokens WHERE user_id=?", (row[0],))
-            db.execute("DELETE FROM sessions WHERE user_id=?", (row[0],))
+                db.execute("UPDATE users SET password_hash=%s WHERE id=%s", (encoded, row["user_id"]))
+            db.execute("DELETE FROM email_tokens WHERE user_id=%s", (row["user_id"],))
+            db.execute("DELETE FROM sessions WHERE user_id=%s", (row["user_id"],))
         # Deliberately no session: verification/reset always requires a fresh login.
 
     def login(self, username, password, *, require_verified=True, access_email=None):
         if not isinstance(username, str) or not isinstance(password, str) or len(username) > 254 or len(password) > PASSWORD_MAX_LENGTH:
             raise AuthError("invalid_credentials", 401)
         with self.connect() as db:
-            row = db.execute("SELECT * FROM users WHERE username=?", (username.strip().lower(),)).fetchone()
+            row = db.execute("SELECT * FROM users WHERE username=%s", (username.strip().lower(),)).fetchone()
         # Do comparable expensive work even for nonexistent accounts.
         dummy = f"scrypt${PASSWORD_N}$8$1$" + "00" * 16 + "$" + "00" * 64
         valid = password_matches(password, row["password_hash"] if row else dummy)
@@ -289,29 +270,31 @@ class AuthStore:
             if access_email is not None:
                 # Called only with an email from a cryptographically verified
                 # Access application token, never a client-supplied email header.
-                db.execute("UPDATE users SET verified_at=COALESCE(verified_at,?) WHERE id=? AND password_hash=? AND disabled=0",
+                db.execute("UPDATE users SET verified_at=COALESCE(verified_at,%s) WHERE id=%s AND password_hash=%s AND disabled=0",
                            (now, row["id"], row["password_hash"]))
-            db.execute("DELETE FROM sessions WHERE expires_at < ?", (now,))
+            db.execute("DELETE FROM sessions WHERE expires_at < %s", (now,))
             # Recheck password/verified state while creating the session to avoid
             # granting access after a concurrent password reset or disable.
-            changed = db.execute("INSERT INTO sessions SELECT ?,id,? FROM users WHERE id=? AND password_hash=? AND (?=0 OR verified_at IS NOT NULL) AND disabled=0",
+            changed = db.execute("INSERT INTO sessions SELECT %s,id,%s FROM users "
+                                 "WHERE id=%s AND password_hash=%s AND (%s::int=0 OR verified_at IS NOT NULL) AND disabled=0",
                                  (digest(token), now + SESSION_SECONDS, row["id"], row["password_hash"], int(require_verified))).rowcount
             if not changed:
                 raise AuthError("invalid_credentials", 401)
-            row = db.execute("SELECT * FROM users WHERE id=?", (row["id"],)).fetchone()
+            row = db.execute("SELECT * FROM users WHERE id=%s", (row["id"],)).fetchone()
         return token, public_user(row)
 
     def session(self, token, *, require_verified=True):
         if not isinstance(token, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", token):
             return None
         with self.connect() as db:
-            row = db.execute("SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>? AND (?=0 OR u.verified_at IS NOT NULL) AND u.disabled=0",
+            row = db.execute("SELECT u.* FROM sessions s JOIN users u ON u.id=s.user_id "
+                             "WHERE s.token_hash=%s AND s.expires_at>%s AND (%s::int=0 OR u.verified_at IS NOT NULL) AND u.disabled=0",
                              (digest(token), time.time(), int(require_verified))).fetchone()
         return public_user(row) if row else None
 
     def logout(self, token):
         with self.connect() as db:
-            db.execute("DELETE FROM sessions WHERE token_hash=?", (digest(token),))
+            db.execute("DELETE FROM sessions WHERE token_hash=%s", (digest(token),))
 
 
 def csrf_token(session):

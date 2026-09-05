@@ -10,7 +10,6 @@ import os
 import re
 import signal
 import shutil
-import sqlite3
 import subprocess
 import threading
 import time
@@ -115,7 +114,7 @@ def record_job(job):
     try:
         STORE.record(job)
         STORE_ERROR = ""
-    except (OSError, ValueError, sqlite3.Error):
+    except (OSError, ValueError, psycopg.Error):
         # A memory-store failure must not discard a successfully generated video.
         STORE_ERROR = "任務紀錄儲存失敗，請檢查磁碟與權限。"
 
@@ -774,7 +773,7 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
                         archive.remove_sources()
                 else:
                     if STORE is None:
-                        raise sqlite3.OperationalError()
+                        raise psycopg.OperationalError()
                     job = JOBS.get(identity) or STORE.get(identity)
                     if not job or (self.principal["kind"] != "service" and job.get("owner_id") != self.principal["id"]):
                         self.send_json(404, {"error": "Job not found", "code": "job_not_found"})
@@ -807,7 +806,7 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
                         self.send_json(200, {"deleted": True, "recoverable": True, "cleanup_pending": True})
                         return
             self.send_json(200, {"deleted": True, "recoverable": True})
-        except (OSError, sqlite3.Error, ValueError):
+        except (OSError, psycopg.Error, ValueError):
             self.send_json(503, {"error": "Media deletion failed; retained files are recoverable", "code": "delete_failed"})
 
     def worker_authorized(self):
@@ -844,7 +843,7 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
         if path == "/api/v1/jobs":
             try:
                 if STORE is None:
-                    raise sqlite3.OperationalError()
+                    raise psycopg.OperationalError()
                 query = parse_qs(urlparse(self.path).query)
                 result = STORE.list_jobs(int(query.get("limit", [30])[0]), int(query.get("offset", [0])[0]), self.principal["id"])
                 with LOCK:
@@ -852,7 +851,7 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
                 self.send_json(200, result)
             except ValueError:
                 self.send_json(400, {"error": "limit must be 1–100, offset >= 0", "code": "invalid_request"})
-            except (OSError, sqlite3.Error):
+            except (OSError, psycopg.Error):
                 self.send_json(503, {"error": "Job store unavailable", "code": "store_unavailable"})
             return
         match = re.fullmatch(r"/api/v1/jobs/([a-f0-9]{12,32})(/video|/artifact)?", path)
@@ -881,7 +880,7 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
                 self.serve_media(output_location(filename), snapshot.get("content_type", "video/mp4"), filename)
             else:
                 self.send_json(200, worker.describe_job(snapshot))
-        except (OSError, sqlite3.Error):
+        except (OSError, psycopg.Error):
             self.send_json(503, {"error": "Job store unavailable", "code": "store_unavailable"})
 
     def worker_post(self, path):
@@ -901,14 +900,14 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
                         status, response = 404, {"error": "Job not found", "code": "job_not_found"}
                     elif job["status"] in {"queued", "running"}:
                         if STORE is None:
-                            raise sqlite3.OperationalError()
+                            raise psycopg.OperationalError()
                         STORE.record({**job, "cancel_requested": True})
                         job["cancel_requested"] = True
                         status, response = 202, worker.describe_job(public_job(job))
                     else:
                         status, response = 200, worker.describe_job(public_job(job))
                 self.send_json(status, response)
-            except (OSError, sqlite3.Error):
+            except (OSError, psycopg.Error):
                 self.send_json(503, {"error": "Could not persist cancellation", "code": "store_unavailable"})
             return
         if path not in {"/api/v1/jobs", "/api/v1/validate"}:
@@ -948,7 +947,7 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
             self.send_json(status, result)
         except (ValueError, TypeError, OverflowError) as exc:
             self.send_json(400, {"error": str(exc)[:300], "code": "invalid_request"})
-        except (OSError, sqlite3.Error):
+        except (OSError, psycopg.Error):
             self.send_json(503, {"error": "Could not persist job; no new generation was accepted", "code": "store_unavailable"})
 
     def do_GET(self) -> None:  # noqa: N802
@@ -985,7 +984,7 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
                 if stored and stored.get("deleted_at"):
                     self.send_json(404, {"error": "Artifact not found"})
                     return
-            except (OSError, sqlite3.Error):
+            except (OSError, psycopg.Error):
                 self.send_json(503, {"error": "Job store unavailable"})
                 return
             if self.principal["kind"] != "service":
@@ -995,7 +994,7 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
                     if not job or not self.can_access(job) or job["status"] != "succeeded":
                         self.send_json(404, {"error": "Artifact not found"})
                         return
-                except (OSError, sqlite3.Error):
+                except (OSError, psycopg.Error):
                     self.send_json(503, {"error": "Job store unavailable"})
                     return
             mime = {"mp4": "video/mp4", "jpg": "image/jpeg", "png": "image/png", "txt": "text/plain; charset=utf-8"}[media_match.group(2)]
@@ -1017,10 +1016,10 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
             if self.principal["kind"] != "service":
                 try:
                     if STORE is None:
-                        raise sqlite3.OperationalError()
+                        raise psycopg.OperationalError()
                     jobs = STORE.list_jobs(100, 0, self.principal["id"])["jobs"]
                     self.send_json(200, {"outputs": [public_job(j) for j in jobs if j["status"] == "succeeded"]})
-                except (OSError, sqlite3.Error):
+                except (OSError, psycopg.Error):
                     self.send_json(503, {"error": "Job store unavailable"})
                 return
             outputs: list[dict[str, Any]] = []
@@ -1122,7 +1121,7 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
             self.send_json(status, response)
         except (ValueError, TypeError, json.JSONDecodeError) as exc:
             self.send_json(400, {"error": str(exc)})
-        except (OSError, sqlite3.Error):
+        except (OSError, psycopg.Error):
             self.send_json(503, {"error": "任務紀錄暫時無法儲存，請稍後重試。"})
 
     def log_message(self, format: str, *args: Any) -> None:
@@ -1140,7 +1139,7 @@ def sync_pending_access():
                 if STOPPING:
                     return
                 sync_enrollment(AUTH, ACCESS_CLIENT, row["user_id"])
-        except (OSError, ValueError, sqlite3.Error):
+        except (OSError, ValueError, psycopg.Error):
             print("Cloudflare enrollment storage unavailable; no access was granted by fallback.")
         for _ in range(30):
             if STOPPING:
@@ -1183,7 +1182,7 @@ if __name__ == "__main__":
     except Exception as exc:  # noqa: BLE001 - any failure here must stop the server
         raise SystemExit(f"Database migration failed: {exc}") from None
     try:
-        AUTH = AuthStore(SITE_ROOT / "data/worker/accounts.sqlite3")
+        AUTH = AuthStore()
         STORE = ProductionStore()
         STORE.recover(OUTPUT_DIR)
         if LEGACY_OUTPUT_DIR != OUTPUT_DIR:
