@@ -91,7 +91,8 @@ def prepare_image(source, output, width, height, background_mode="source"):
 
 
 def assemble(manifest, output):
-    plan = json.loads(open(manifest, encoding="utf-8").read())
+    with open(manifest, encoding="utf-8") as source:
+        plan = json.load(source)
     fps, width, height = plan["fps"], plan["width"], plan["height"]
     total = sum(shot["keep_frames"] for shot in plan["segments"])
     if not 1 <= len(plan["segments"]) <= 120 or total / fps > 180.125:
