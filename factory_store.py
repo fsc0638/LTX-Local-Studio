@@ -7,6 +7,7 @@ It orchestrates only. Nothing here talks to a model, a file path or a shell; sen
 handing its request to the existing /api/v1 admission path, which is the sole route to the GPU.
 """
 from contextlib import contextmanager
+import datetime
 import json
 import time
 import uuid
@@ -80,6 +81,10 @@ def _bible(value):
     return value
 
 
+def _iso(epoch):
+    return datetime.datetime.fromtimestamp(epoch, datetime.UTC).isoformat().replace("+00:00", "Z")
+
+
 def project_json(row, shots):
     """The v2 plan shape, camelCase, exactly as lib/production-factory.ts restores it.
 
@@ -92,8 +97,10 @@ def project_json(row, shots):
         "title": row["title"],
         "bible": row["bible"],
         "status": row["status"],
-        "createdAt": row["created_at"],
-        "updatedAt": row["updated_at"],
+        # ISO strings, not epoch numbers: the v2 work order A1 froze uses strings, and
+        # restoreFactoryPlan drops anything else, so a number would silently lose the timestamp.
+        "createdAt": _iso(row["created_at"]),
+        "updatedAt": _iso(row["updated_at"]),
         "shots": shots,
     }
 

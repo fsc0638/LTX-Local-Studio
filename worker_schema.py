@@ -154,7 +154,8 @@ def openapi_document():
             "bible": {"type": "object", "additionalProperties": True,
                       "description": "Character, music, output format and directing defaults every shot inherits."},
             "status": {"enum": list(factory_store.RUN_STATES)},
-            "createdAt": {"type": "number"}, "updatedAt": {"type": "number"},
+            "createdAt": {"type": "string", "format": "date-time"},
+            "updatedAt": {"type": "string", "format": "date-time"},
             "shots": {"type": "array", "maxItems": factory_store.MAX_SHOTS, "items": ref("FactoryShot")}}},
         "FactoryTake": {"type": "object", "required": ["id", "verdict", "createdAt"], "properties": {
             "id": {"type": "string", "format": "uuid"}, "jobId": {"type": ["string", "null"]},

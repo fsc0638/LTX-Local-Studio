@@ -35,6 +35,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import type { Asset } from '@/components/media-library';
 import { serviceFetch } from '@/lib/service-session';
+import * as factory from '@/lib/factory-client';
 import {
   MAX_FACTORY_SHOTS,
   activeFactoryShot,
@@ -44,14 +45,12 @@ import {
   createFactoryPlan,
   createFactoryShot,
   hasFactoryBible,
-  nextQueuedShot,
   normalizeFactoryRequest,
   parseFactoryImport,
   pinFactoryField,
   projectBible,
   reprojectShots,
   reopenFactoryShot,
-  restoreFactoryPlan,
   serializeFactoryPlan,
   summarizeFactory,
   unpinFactoryField,
@@ -98,6 +97,10 @@ const copy = {
     bible: '00 / 專案 Bible',
     bibleHint: '先固定角色、音樂與輸出規格；新增鏡頭會繼承這些設定。',
     bibleRequired: '請先設定專案 Bible，再新增鏡頭。',
+    legacyFound: '這個瀏覽器還留著一份舊版計畫（{count} 鏡）。要上傳到主機嗎？上傳後即可關掉分頁繼續生產。',
+    legacyUpload: '上傳到主機',
+    legacyDiscard: '不用了',
+    legacyDone: '已上傳到主機；瀏覽器裡的舊副本已清除。',
     music: '音樂母帶',
     noMusic: '不使用音樂',
     output: '輸出規格',
@@ -153,6 +156,10 @@ const copy = {
     bibleHint:
       'Lock character, music and output defaults before adding inherited shots.',
     bibleRequired: 'Set the project Bible before adding a shot.',
+    legacyFound: 'This browser still holds an older plan ({count} shots). Upload it to the host? Once uploaded you can close the tab and it keeps running.',
+    legacyUpload: 'Upload to the host',
+    legacyDiscard: 'No thanks',
+    legacyDone: 'Uploaded. The browser copy has been cleared.',
     music: 'Music master',
     noMusic: 'No music',
     output: 'Output defaults',
@@ -213,6 +220,10 @@ const copy = {
     bible: '00 / プロジェクト Bible',
     bibleHint: '人物、音楽、出力設定を固定してから継承ショットを追加します。',
     bibleRequired: '先にプロジェクト Bible を設定してください。',
+    legacyFound: 'このブラウザに旧版の計画（{count} ショット）が残っています。ホストへアップロードしますか？アップロード後はタブを閉じても生成が続きます。',
+    legacyUpload: 'ホストへアップロード',
+    legacyDiscard: '不要',
+    legacyDone: 'アップロードしました。ブラウザ側の複製は削除済みです。',
     music: '音楽マスター',
     noMusic: '音楽なし',
     output: '出力設定',
@@ -257,7 +268,14 @@ const copy = {
   },
 } as const;
 
-const terminal = new Set(['succeeded', 'failed', 'cancelled', 'interrupted']);
+
+/** Surfaces the host's `code` when it has one; a bare "request failed" hides why. */
+function factoryMessage(error: unknown, fallback: string): string {
+  if (error instanceof factory.FactoryRequestError) {
+    return `${error.message} (${error.code})`;
+  }
+  return error instanceof Error && error.message ? error.message : fallback;
+}
 
 function errorMessage(value: WorkerJob, fallback: string): string {
   if (typeof value.error === 'string') return value.error;
@@ -429,18 +447,23 @@ export function ProductionFactory({
     createFactoryPlan('pending', new Date(0)),
   );
   const [hydrated, setHydrated] = useState(false);
-  const [storageKey, setStorageKey] = useState('');
+  // Set by every local edit and cleared once the host has the change.
+  const [dirty, setDirty] = useState(false);
+  const [legacy, setLegacy] = useState<FactoryPlan | null>(null);
+  const [legacyOwner, setLegacyOwner] = useState('');
   const [notice, setNotice] = useState('');
   const [assets, setAssets] = useState<Asset[]>([]);
   const importInput = useRef<HTMLInputElement>(null);
   const planRef = useRef(plan);
   const consumed = useRef(new Set<string>());
 
-  const mutate = (change: (current: FactoryPlan) => FactoryPlan) =>
-    setPlan((current) => ({
+  const mutate = (change: (current: FactoryPlan) => FactoryPlan) => {
+    setDirty(true);
+    return setPlan((current) => ({
       ...change(current),
       updatedAt: new Date().toISOString(),
     }));
+  };
 
   const patchShot = (
     id: string,
@@ -459,31 +482,39 @@ export function ProductionFactory({
     planRef.current = plan;
   }, [plan]);
 
+  // The plan lives on the host. This loads it; a plan left here by the pre-B1 build is offered
+  // for upload rather than pushed silently, since it may be one the user abandoned.
   useEffect(() => {
     const abort = new AbortController();
-    void serviceFetch('/api/auth/session', { signal: abort.signal })
-      .then(async (response) =>
-        response.ok
-          ? (response.json() as Promise<{ user?: { id?: string } }>)
-          : Promise.reject(),
-      )
-      .catch(() => ({}))
-      .then((session: { user?: { id?: string } }) => {
-        if (abort.signal.aborted) return;
-        const key = `ltx-production-factory-v1:${session.user?.id || 'local'}`;
-        let restored: FactoryPlan | undefined;
-        try {
-          const saved = window.localStorage.getItem(key);
-          if (saved) restored = restoreFactoryPlan(JSON.parse(saved));
-        } catch {
-          window.localStorage.removeItem(key);
+    void (async () => {
+      let userId = '';
+      try {
+        const response = await serviceFetch('/api/auth/session', { signal: abort.signal });
+        if (response.ok) {
+          const session = (await response.json()) as { user?: { id?: string } };
+          userId = session.user?.id || '';
         }
-        setStorageKey(key);
-        setPlan(restored || createFactoryPlan(crypto.randomUUID()));
-        setHydrated(true);
-      });
+      } catch {
+        // Not signed in, or the endpoint is unavailable; the factory endpoints will say so.
+      }
+      if (abort.signal.aborted) return;
+      try {
+        const projects = await factory.listProjects();
+        const loaded = projects.length
+          ? await factory.getProject(projects[0].id)
+          : await factory.createProject({ title: 'UNTITLED PRODUCTION' });
+        if (abort.signal.aborted) return;
+        setPlan(loaded);
+        setLegacy(factory.localPlan(userId));
+        setLegacyOwner(userId);
+      } catch (error) {
+        if (!abort.signal.aborted) setNotice(factoryMessage(error, text.requestFailed));
+      } finally {
+        if (!abort.signal.aborted) setHydrated(true);
+      }
+    })();
     return () => abort.abort();
-  }, []);
+  }, [text.requestFailed]);
 
   useEffect(() => {
     const abort = new AbortController();
@@ -504,14 +535,24 @@ export function ProductionFactory({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the callback is a stable page setter.
   }, [hydrated, plan]);
 
+  // Edits are optimistic locally and pushed to the host shortly after, so typing stays smooth
+  // without a request per keystroke. While the line runs the host owns the plan; pushing then
+  // would overwrite the progress it is writing.
   useEffect(() => {
-    if (!hydrated || !storageKey) return;
-    try {
-      window.localStorage.setItem(storageKey, JSON.stringify(plan));
-    } catch {
-      // The current in-memory queue stays usable when browser storage is denied.
-    }
-  }, [hydrated, plan, storageKey]);
+    if (!hydrated || !plan.id || plan.status === 'running' || !dirty) return;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          await factory.updateProject(plan.id, { title: plan.title, bible: plan.bible });
+          await factory.replaceShots(plan.id, plan.shots);
+          setDirty(false);
+        } catch (error) {
+          setNotice(factoryMessage(error, text.requestFailed));
+        }
+      })();
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [hydrated, dirty, plan, text.requestFailed]);
 
   useEffect(() => {
     if (!hydrated || !incoming || consumed.current.has(incoming.token)) return;
@@ -537,179 +578,26 @@ export function ProductionFactory({
     onIncomingConsumed();
   }, [hydrated, incoming, onIncomingConsumed]);
 
+  // The host schedules and submits; the browser only watches. Closing this tab no longer stops
+  // the line, which is the whole point of moving the queue off the client.
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || !plan.id || plan.status !== 'running') return;
     let disposed = false;
-    let pending = false;
-
-    const tick = async () => {
-      if (disposed || pending) return;
-      const current = planRef.current;
-      const active = activeFactoryShot(current);
-      if (!active && current.status !== 'running') return;
-      pending = true;
+    const poll = async () => {
       try {
-        if (active?.status === 'running' && active.statusUrl) {
-          const response = await serviceFetch(active.statusUrl);
-          const job = (await response.json()) as WorkerJob;
-          if (!response.ok)
-            throw new Error(errorMessage(job, text.requestFailed));
-          if (!terminal.has(job.status)) {
-            patchShot(active.id, (shot) => ({
-              ...shot,
-              progress: job.progress || 0,
-              message: job.message,
-            }));
-            return;
-          }
-          if (job.status === 'succeeded') {
-            const artifact = job.artifacts?.find(
-              (item) => item.kind === 'video',
-            );
-            patchShot(active.id, (shot) => ({
-              ...shot,
-              status: 'succeeded',
-              progress: 100,
-              message: job.message,
-              outputUrl: job.output_url || artifact?.url,
-              posterUrl: job.poster_url,
-              error: undefined,
-            }));
-          } else {
-            patchShot(
-              active.id,
-              (shot) => ({
-                ...shot,
-                status: 'failed',
-                progress: job.progress || shot.progress,
-                error: errorMessage(job, text.requestFailed),
-              }),
-              'paused',
-            );
-          }
-          return;
-        }
-
-        const queued = nextQueuedShot(current);
-        if (!queued) {
-          mutate((value) => ({
-            ...value,
-            status:
-              value.shots.length > 0 &&
-              value.shots.every((shot) => shot.status === 'succeeded')
-                ? 'completed'
-                : 'paused',
-          }));
-          return;
-        }
-
-        patchShot(queued.id, (shot) => ({
-          ...shot,
-          status: 'validating',
-          message: text.validating,
-          error: undefined,
-        }));
-        const validation = await serviceFetch('/api/v1/validate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(queued.request),
-        });
-        const validationBody = (await validation.json()) as WorkerJob;
-        if (!validation.ok) {
-          patchShot(
-            queued.id,
-            (shot) => ({
-              ...shot,
-              status: 'failed',
-              error: errorMessage(validationBody, text.invalid),
-              message: undefined,
-            }),
-            'paused',
-          );
-          return;
-        }
-
-        patchShot(queued.id, (shot) => ({
-          ...shot,
-          status: 'submitting',
-          message: text.submitting,
-        }));
-        const response = await serviceFetch('/api/v1/jobs', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Idempotency-Key': queued.idempotencyKey,
-          },
-          body: JSON.stringify(queued.request),
-        });
-        const job = (await response.json()) as WorkerJob & { code?: string };
-        if (response.status === 409 && job.code === 'worker_busy') {
-          patchShot(queued.id, (shot) => ({
-            ...shot,
-            status: 'queued',
-            message: text.workerBusy,
-          }));
-          return;
-        }
-        if (!response.ok) {
-          patchShot(
-            queued.id,
-            (shot) => ({
-              ...shot,
-              status: 'failed',
-              error: errorMessage(job, text.requestFailed),
-              message: undefined,
-            }),
-            'paused',
-          );
-          return;
-        }
-        patchShot(queued.id, (shot) => ({
-          ...shot,
-          status: job.status === 'succeeded' ? 'succeeded' : 'running',
-          jobId: job.id,
-          statusUrl: job.status_url || `/api/v1/jobs/${job.id}`,
-          outputUrl: job.output_url,
-          posterUrl: job.poster_url,
-          progress: job.progress || 0,
-          message: job.message,
-        }));
-      } catch (error) {
-        const activeNow = activeFactoryShot(planRef.current);
-        if (activeNow) {
-          patchShot(
-            activeNow.id,
-            (shot) => ({
-              ...shot,
-              status: shot.jobId ? 'running' : 'queued',
-              error:
-                error instanceof Error ? error.message : text.requestFailed,
-            }),
-            'paused',
-          );
-        } else {
-          mutate((value) => ({ ...value, status: 'paused' }));
-        }
-        setNotice(text.requestFailed);
-      } finally {
-        pending = false;
+        const fresh = await factory.getProject(plan.id);
+        if (!disposed) setPlan(fresh);
+      } catch {
+        // A transient read failure just means the next tick shows the change instead.
       }
     };
-
-    void tick();
-    const timer = window.setInterval(tick, 3000);
+    const timer = window.setInterval(() => void poll(), 2000);
+    void poll();
     return () => {
       disposed = true;
       window.clearInterval(timer);
     };
-  }, [
-    hydrated,
-    text.invalid,
-    text.requestFailed,
-    text.submitting,
-    text.validating,
-    text.workerBusy,
-  ]);
+  }, [hydrated, plan.id, plan.status]);
 
   const summary = summarizeFactory(plan);
   const active = activeFactoryShot(plan);
@@ -779,16 +667,24 @@ export function ProductionFactory({
     }));
   };
 
-  const start = () => {
+  const runOnHost = (action: (id: string) => Promise<FactoryPlan>) => {
     setNotice('');
-    mutate((current) => ({
-      ...current,
-      status: 'running',
-      shots: current.shots.map((shot) =>
-        shot.status === 'draft' ? { ...shot, status: 'queued' } : shot,
-      ),
-    }));
+    void (async () => {
+      try {
+        // Flush pending edits first: starting a line the host has not seen would run stale shots.
+        if (dirty) {
+          await factory.updateProject(plan.id, { title: plan.title, bible: plan.bible });
+          await factory.replaceShots(plan.id, plan.shots);
+          setDirty(false);
+        }
+        setPlan(await action(plan.id));
+      } catch (error) {
+        setNotice(factoryMessage(error, text.requestFailed));
+      }
+    })();
   };
+
+  const start = () => runOnHost(factory.runProject);
 
   const retry = (id: string) =>
     patchShot(id, (shot) => ({
@@ -889,6 +785,43 @@ export function ProductionFactory({
         >
           {text.offline}
         </p>
+      )}
+      {legacy && (
+        <div className="mb-5 flex flex-wrap items-center gap-3 border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900">
+          <p className="flex-1">
+            {text.legacyFound.replace('{count}', String(legacy.shots.length))}
+          </p>
+          <Button
+            type="button"
+            className="rounded-none"
+            onClick={() => {
+              const pending = legacy;
+              setLegacy(null);
+              void (async () => {
+                try {
+                  setPlan(await factory.uploadLocalPlan(pending));
+                  factory.forgetLocalPlan(legacyOwner);
+                  setNotice(text.legacyDone);
+                } catch (error) {
+                  setNotice(factoryMessage(error, text.requestFailed));
+                }
+              })();
+            }}
+          >
+            {text.legacyUpload}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="rounded-none bg-white"
+            onClick={() => {
+              factory.forgetLocalPlan(legacyOwner);
+              setLegacy(null);
+            }}
+          >
+            {text.legacyDiscard}
+          </Button>
+        </div>
       )}
       {notice && (
         <p className="mb-5 border border-border bg-white p-4 text-xs">
