@@ -135,6 +135,63 @@ class FactoryAPITests(test_backend.BackendTests):
         self.assertTrue(self.factory.finish_if_done(plan["id"]))
         self.assertEqual(self.factory.get_project(plan["id"], "@service")["status"], "completed")
 
+    def test_a_restart_opens_a_new_take_instead_of_replaying_the_dead_job(self):
+        """The bug B1 acceptance found: after a restart the shot kept its idempotency key, so the
+        worker replayed the interrupted job forever and the queue could never move on."""
+        plan = self.new_project(shots=[shot()])
+        started = json.loads(self.call("POST", f"/api/v1/factory/projects/{plan['id']}/run")[2])
+        shot_row = self.factory.next_queued_shot(plan["id"])
+        original_key = shot_row["idempotency_key"]
+        project = {"id": plan["id"], "owner_id": "@service", "title": "MV 01", "bible": {}}
+        with self.factory.connect() as db:
+            db.execute("INSERT INTO jobs(id,snapshot,updated_at) VALUES('abcdef123456','{}'::jsonb,1)")
+        with patch.object(backend, "submit_job", return_value=(202, {"id": "abcdef123456"})):
+            self.assertTrue(backend.factory_send(project, shot_row))
+        # The API restarts: the job is marked interrupted and the shot returns to the queue.
+        self.factory.recover()
+        interrupted = {"id": "abcdef123456", "status": "interrupted",
+                       "error": {"code": "worker_restarted", "retryable": True}}
+        with patch.object(backend, "replay_job", return_value=(200, {**interrupted, "idempotent_replay": True})):
+            requeued = self.factory.next_queued_shot(plan["id"])
+            backend.factory_send(project, requeued)
+        after = self.factory.get_project(plan["id"], "@service")
+        # It must not fail the shot and stop the line; a restart is not the shot's fault.
+        self.assertEqual(after["status"], "running")
+        self.assertEqual(after["shots"][0]["status"], "queued")
+        self.assertNotEqual(after["shots"][0]["idempotencyKey"], original_key)
+
+    def test_a_replayed_success_is_recorded_without_running_the_gpu_again(self):
+        plan = self.new_project(shots=[shot()])
+        json.loads(self.call("POST", f"/api/v1/factory/projects/{plan['id']}/run")[2])
+        shot_row = self.factory.next_queued_shot(plan["id"])
+        project = {"id": plan["id"], "owner_id": "@service", "title": "MV 01", "bible": {}}
+        with self.factory.connect() as db:
+            db.execute("INSERT INTO jobs(id,snapshot,updated_at) VALUES('abcdef123456','{}'::jsonb,1)")
+        done = {"id": "abcdef123456", "status": "succeeded", "output_url": "/generated/a.mp4",
+                "poster_url": "/generated/a.jpg", "idempotent_replay": True}
+        with patch.object(backend, "replay_job", return_value=(200, done)):
+            with patch.object(backend, "submit_job", side_effect=AssertionError("must not submit")):
+                self.assertTrue(backend.factory_send(project, shot_row))
+        after = self.factory.get_project(plan["id"], "@service")
+        self.assertEqual(after["shots"][0]["status"], "succeeded")
+        self.assertEqual(after["shots"][0]["outputUrl"], "/generated/a.mp4")
+
+    def test_a_replayed_failure_still_stops_the_line_for_a_person(self):
+        plan = self.new_project(shots=[shot()])
+        json.loads(self.call("POST", f"/api/v1/factory/projects/{plan['id']}/run")[2])
+        shot_row = self.factory.next_queued_shot(plan["id"])
+        project = {"id": plan["id"], "owner_id": "@service", "title": "MV 01", "bible": {}}
+        with self.factory.connect() as db:
+            db.execute("INSERT INTO jobs(id,snapshot,updated_at) VALUES('abcdef123456','{}'::jsonb,1)")
+        failed = {"id": "abcdef123456", "status": "failed",
+                  "error": {"code": "generation_failed"}, "idempotent_replay": True}
+        with patch.object(backend, "replay_job", return_value=(200, failed)):
+            self.assertFalse(backend.factory_send(project, shot_row))
+        after = self.factory.get_project(plan["id"], "@service")
+        self.assertEqual(after["status"], "paused")
+        self.assertEqual(after["shots"][0]["status"], "failed")
+        self.assertIn("generation_failed", after["shots"][0]["error"])
+
     def test_a_restart_resumes_from_the_database(self):
         plan = self.new_project(shots=[shot("a"), shot("b")])
         started = json.loads(self.call("POST", f"/api/v1/factory/projects/{plan['id']}/run")[2])

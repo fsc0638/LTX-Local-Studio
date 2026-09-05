@@ -294,6 +294,19 @@ class FactoryStore:
                            (now, row["project_id"]))
             return row["project_id"]
 
+    def rotate_key(self, shot_id):
+        """Give a shot a fresh idempotency key so its next run is a new take.
+
+        The worker replays a finished key rather than running it again, which is exactly what
+        should happen for a retry of the *same* attempt. A new attempt therefore needs a new key,
+        as docs/WORKER_API.md says: "新 take 使用新 key".
+        """
+        new_key = f"factory-{shot_id}-{uuid.uuid4().hex[:8]}"
+        with self.connect() as db:
+            db.execute("UPDATE shots SET idempotency_key=%s,updated_at=%s WHERE id=%s",
+                       (new_key, time.time(), shot_id))
+        return new_key
+
     def takes(self, shot_id, owner_id):
         shot_id = _identifier(shot_id, "shot id")
         with self.connect() as db:

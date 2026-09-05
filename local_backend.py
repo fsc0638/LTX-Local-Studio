@@ -1240,6 +1240,37 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
         print(f"[LTX API] {self.address_string()} - {format % args}")
 
 
+def factory_replayed(shot, job):
+    """Decide what a replayed job means for the shot, or None to carry on submitting.
+
+    An idempotency key that already produced a finished job replays that job forever. Treating
+    the replay as a fresh submission is what let a shot interrupted by a restart loop: it was
+    handed back the same dead job, marked failed, and the line stopped every time.
+    """
+    status = job.get("status")
+    if status in {"queued", "running"}:
+        # Still ours and still going: adopt it rather than starting a second run.
+        FACTORY.record_take(shot["id"], job_id=job.get("id"), status="running")
+        return True
+    if status == "succeeded":
+        # The work is already done; no GPU time is owed.
+        FACTORY.record_take(shot["id"], job_id=job.get("id"), status="succeeded",
+                            output_url=job.get("output_url"), poster_url=job.get("poster_url"))
+        return True
+    if status == "interrupted":
+        # A restart is not the shot's fault. Open a new take: the old key can only ever replay
+        # the interrupted job, so keeping it would queue this shot forever.
+        FACTORY.rotate_key(shot["id"])
+        FACTORY.set_shot_status(shot["id"], "queued")
+        return False
+    if status in {"failed", "cancelled"}:
+        reason = (job.get("error") or {}).get("code") or status
+        FACTORY.record_take(shot["id"], job_id=job.get("id"), status="failed",
+                            reason=str(reason)[:300], pause_project=True)
+        return False
+    return None
+
+
 def factory_send(project, shot):
     """Hand one shot to the existing admission path. Returns True when the line may continue."""
     FACTORY.set_shot_status(shot["id"], "validating")
@@ -1261,6 +1292,10 @@ def factory_send(project, shot):
         payload, external, requested = worker.parse_request(raw, parse_payload)
         with LOCK:
             replay = replay_job(key, fingerprint)
+        if replay and replay[0] == 200:
+            settled = factory_replayed(shot, replay[1])
+            if settled is not None:
+                return settled
         FACTORY.set_shot_status(shot["id"], "submitting")
         status, result = replay or submit_job(payload, key=key, request_hash=fingerprint,
                                               external=external, requested=requested, owner_id=owner)
