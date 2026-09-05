@@ -80,7 +80,10 @@ WO = [
 "2. local_backend.py：POST /api/v1/audio/analyze {audio_id, lyrics?, language?}，檢查 asset 所有權 → 解析路徑 → 呼叫服務 → 結果快取在 asset（同檔不重算）；回傳附 lyric_offset_seconds（Bible 預設 −0.9）與說明「常數偏移，非隨機誤差」；服務不可用回 503 不影響生成。\n"
 "3. infra/systemd/ltx-audio.service：只建立檔案；enable 需核准區塊，收到核准才 systemctl --user enable --now。\n"
 "4. tests/test_audio_service.py：用 tests/fixtures 合成音（不下載模型也能跑的部分），與一個標記為需真模型的整合測試。",
- extra="額外檢查：用 uploads/ 裡三首沖縄 wav 之一打 /beats，BPM 與 docs/GB10_SETUP.md 記錄一致（104.2 等）；curl 從非 loopback 位址打 8790 應連不上。\n"),
+ extra="額外檢查：用 uploads/ 裡三首沖縄 wav 之一打 /beats，BPM 與 docs/GB10_SETUP.md 記錄一致（104.2 等）；curl 從非 loopback 位址打 8790 應連不上。\n"
+"對時門檻是 p50 ≤ 0.5s 且 p90 ≤ 1.5s，p90 用 nearest-rank（殘差排序後取索引 ceil(0.9n)-1）——"
+" 同一份殘差用線性內插與 nearest-rank 會差到讓判定翻面，算法要照寫的來。門檻由來記在"
+" docs/PRODUCTION_ROADMAP.md 的 B2 節，完整分布在 docs/GB10_SETUP.md。\n"),
  dict(id="B3", title="自動分鏡", phase="B", size="M", tests=JS, body=
 "1. lib/breakdown.ts（純函式）：輸入 beats／sections／lyric lines／segment_seconds／Bible directing 預設，輸出鏡頭清單與 cue；規則：段落邊界 ＞ 歌詞行起點（已扣偏移）＞ 每鏡上限；切點吸附最近拍點（±1 拍）；純器樂段產生 breathing 鏡；每鏡 cue 時間＝鏡起點、主要動作留空。\n"
 "2. components/breakdown-editor.tsx：01 分鏡頁 — 波形＋拍點網格＋段落色帶、歌詞行貼在對時位置、鏡頭清單可合併／拆分／改；「預覽分鏡」沿用既有。\n"
@@ -148,6 +151,8 @@ SETUP = (
 "7. 兩種 runtime 不能混：前端測試用 nvm 的 node；Python 測試一律用 LTX venv 的 python\n"
 "   （" + LTX_PYTHON + "），不要用 python3 — 系統 python 沒有 av，test_quality 與\n"
 "   test_mv_timeline 會 import 失敗。\n"
+"8. 本機 loopback 服務（ltx-audio 8790、ltx-judge 8791、ltx-imagegen 8792）先查再起：\n"
+"   `ss -ltn | grep :<port>` 或打 /health，有人在聽就直接用；不要重複啟動，也不要停掉別人的。\n"
 "確認寫入後，回覆你記下了哪幾條。"
 )
 
@@ -175,6 +180,7 @@ md = ["# OpenClaw 工單提示詞與工作規則", "",
 "3. 系統層級動作（apt、`systemctl --user enable/start`、`/etc`、unit 檔啟用）先發核准區塊；需要 sudo 的指令列給人自己跑。",
 "4. 15 分鐘紀律：每則任務結束於乾淨狀態 — commit（訊息以「<工單號>: 」開頭）、push 分支、更新 `docs/work-orders/<工單號>.md` 進度區（已完成／未完成／需要人做的事）。",
 "5. 驗收是獨立的一則任務，不修改程式；每條 PASS／FAIL 附證據；最後一行「<工單號> 可合併」或「<工單號> 退回」。",
+"5a. **本機服務先查再起**：工單引入的 loopback 服務（ltx-audio 8790、ltx-judge 8791、ltx-imagegen 8792）可能已由開發手動啟動。先 `ss -ltn | grep :<port>` 或打 `/health`；有人在聽就直接用，不要重複啟動，也不要停掉別人的 —— 啟停不屬於驗收動作。",
 "5b. **Python 測試一律用 LTX venv 的 python**（`" + LTX_PYTHON + "`），不是 `python3`：系統 python 有 psycopg 但沒有 `av`，`test_quality` 與 `test_mv_timeline` 會 import 失敗（97 tests 而非 120）。`git-sync-main.sh` 本來就用這個直譯器跑 Python 測試。",
 "6. 合併：在主 checkout `git fetch origin && git merge --ff-only origin/wo/<id> && git push origin main`；由人在主機執行。之後 `git worktree remove ~/LTX-worktrees/wo-<id> && git branch -d wo/<id>`。", "",
 "## 第 0 步：開工設定（只傳一次）", "", "```text", SETUP, "```", "",
