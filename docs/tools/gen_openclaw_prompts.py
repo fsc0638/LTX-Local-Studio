@@ -36,7 +36,11 @@ CONT = (
 )
 
 JS = "node --test tests/*.test.mjs && npx --no-install tsc --noEmit -p tsconfig.json"
-PY = "PYTHONPATH=tests python3 -m unittest discover -s tests -p 'test_*.py'"
+# The Python suite needs the LTX venv, not /usr/bin/python3: test_quality and test_mv_timeline
+# import av (PyAV), which only that interpreter has. It is the same one git-sync uses for the
+# suite (LTX_SYNC_PYTHON) and the one .env.local names as LTX_PYTHON.
+LTX_PYTHON = "/home/kwayrdc/Documents/Codex/2026-08-28/new-chat-2/work/ltx-2.3/LTX-2/.venv/bin/python"
+PY = f"PYTHONPATH=tests {LTX_PYTHON} -m unittest discover -s tests -p 'test_*.py'"
 PYDB = "LTX_TEST_DATABASE_URL=postgresql:///ltx_studio_test?host=/var/run/postgresql " + PY
 
 WO = [
@@ -141,6 +145,9 @@ SETUP = (
 "4. 系統層級動作（apt、systemctl enable/start、/etc、unit 檔啟用）先發核准區塊；需要 sudo 的指令列出來給阿寶自己跑。\n"
 "5. 15 分鐘紀律：每則任務在 15 分鐘內結束於乾淨狀態 — commit、push 分支、更新 docs/work-orders/<工單號>.md 的進度區（已完成／未完成／需要阿寶做的事），回報做到哪。\n"
 "6. 回報格式：改了哪些檔、跑了什麼測試與結果、卡點、下一步；沒全過驗收自檢不說「完成」。\n"
+"7. 兩種 runtime 不能混：前端測試用 nvm 的 node；Python 測試一律用 LTX venv 的 python\n"
+"   （" + LTX_PYTHON + "），不要用 python3 — 系統 python 沒有 av，test_quality 與\n"
+"   test_mv_timeline 會 import 失敗。\n"
 "確認寫入後，回覆你記下了哪幾條。"
 )
 
@@ -168,6 +175,7 @@ md = ["# OpenClaw 工單提示詞與工作規則", "",
 "3. 系統層級動作（apt、`systemctl --user enable/start`、`/etc`、unit 檔啟用）先發核准區塊；需要 sudo 的指令列給人自己跑。",
 "4. 15 分鐘紀律：每則任務結束於乾淨狀態 — commit（訊息以「<工單號>: 」開頭）、push 分支、更新 `docs/work-orders/<工單號>.md` 進度區（已完成／未完成／需要人做的事）。",
 "5. 驗收是獨立的一則任務，不修改程式；每條 PASS／FAIL 附證據；最後一行「<工單號> 可合併」或「<工單號> 退回」。",
+"5b. **Python 測試一律用 LTX venv 的 python**（`" + LTX_PYTHON + "`），不是 `python3`：系統 python 有 psycopg 但沒有 `av`，`test_quality` 與 `test_mv_timeline` 會 import 失敗（97 tests 而非 120）。`git-sync-main.sh` 本來就用這個直譯器跑 Python 測試。",
 "6. 合併：在主 checkout `git fetch origin && git merge --ff-only origin/wo/<id> && git push origin main`；由人在主機執行。之後 `git worktree remove ~/LTX-worktrees/wo-<id> && git branch -d wo/<id>`。", "",
 "## 第 0 步：開工設定（只傳一次）", "", "```text", SETUP, "```", "",
 "## 繼續模板", "", "把 `{id}` 換成工單號：", "", "```text", CONT.replace("{lid}", "<id 小寫>").replace("{id}", "<id>"), "```", ""]
