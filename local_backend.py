@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 from media_store import MediaHandlerMixin, asset_by_id, asset_path, list_assets, MAX_UPLOAD
+import database
 from production_store import ProductionStore, file_fingerprint
 import worker_contract as worker
 from auth_http import AuthHandlerMixin
@@ -1173,6 +1174,12 @@ if __name__ == "__main__":
         fcntl.flock(instance_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         raise SystemExit("Another LTX API instance is active; refusing a second GPU worker.")
+    try:
+        applied = database.apply_migrations()
+        if applied:
+            print(f"Applied migrations: {', '.join(applied)}", flush=True)
+    except Exception as exc:  # noqa: BLE001 - any failure here must stop the server
+        raise SystemExit(f"Database migration failed: {exc}") from None
     try:
         AUTH = AuthStore(SITE_ROOT / "data/worker/accounts.sqlite3")
         STORE = ProductionStore(SITE_ROOT / "data/worker/jobs.sqlite3")
