@@ -307,6 +307,49 @@ class FactoryStore:
                        (new_key, time.time(), shot_id))
         return new_key
 
+    def draft_context(self, shot_id, owner_id):
+        """Everything the screenwriting draft is allowed to see, in one owner-checked read.
+
+        The neighbours matter as much as the shot: a draft written without them repeats the
+        previous shot's framing, which is exactly the thing a human would notice and rewrite.
+        """
+        with self.connect() as db:
+            row = db.execute(
+                """SELECT s.id, s.title, s.request, s.pinned, s.position, s.project_id,
+                          p.bible, p.title AS project_title, p.draft_usage
+                     FROM shots s JOIN projects p ON p.id = s.project_id
+                    WHERE s.id = %s AND p.owner_id = %s""",
+                (shot_id, owner_id)).fetchone()
+            if row is None:
+                return None
+            neighbours = db.execute(
+                """SELECT position, title, request FROM shots
+                    WHERE project_id = %s AND position IN (%s, %s)
+                    ORDER BY position""",
+                (row["project_id"], row["position"] - 1, row["position"] + 1)).fetchall()
+        before = next((n for n in neighbours if n["position"] < row["position"]), None)
+        after = next((n for n in neighbours if n["position"] > row["position"]), None)
+        return {"shot": row, "previous": before, "next": after,
+                "bible": row["bible"] or {}, "usage": row["draft_usage"] or {}}
+
+    def add_draft_usage(self, project_id, tokens):
+        """Add a call's tokens to the project's running total and return the new total.
+
+        Written with jsonb arithmetic in one statement so two drafts started at once cannot both
+        read the old total and write back the same number - the cap would then never be reached.
+        """
+        with self.connect() as db:
+            row = db.execute(
+                """UPDATE projects
+                      SET draft_usage = jsonb_build_object(
+                            'total_tokens', COALESCE((draft_usage->>'total_tokens')::bigint, 0) + %s,
+                            'calls', COALESCE((draft_usage->>'calls')::bigint, 0) + 1),
+                          updated_at = %s
+                    WHERE id = %s
+                RETURNING draft_usage""",
+                (int(tokens), time.time(), project_id)).fetchone()
+        return (row or {}).get("draft_usage") or {}
+
     def takes(self, shot_id, owner_id):
         shot_id = _identifier(shot_id, "shot id")
         with self.connect() as db:
