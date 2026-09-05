@@ -6,6 +6,9 @@ sync_state_dir="${sync_root}/data/worker/git-sync"
 sync_python="${LTX_SYNC_PYTHON:-/usr/bin/python3}"
 sync_node="${LTX_SYNC_NODE:-/usr/bin/node}"
 sync_npm="${LTX_SYNC_NPM:-/usr/bin/npm}"
+# The Python suite needs a throwaway database: since B0 the stores are PostgreSQL, and every test
+# truncates. This must never point at ltx_studio; conftest refuses a name without "test" in it.
+sync_test_database_url="${LTX_TEST_DATABASE_URL:-postgresql:///ltx_studio_test?host=/var/run/postgresql}"
 # npm is a script that resolves `node` through PATH, and so is everything it spawns. Under systemd
 # that PATH holds only the system Node, so a build would run on a different runtime than the tests.
 # Put the chosen runtime first.
@@ -213,7 +216,7 @@ if [[ "${sync_js_tests}" == "1" ]]; then
   "${sync_node}" --test tests/studio-controls.test.mjs
 fi
 if [[ "${sync_python_tests}" == "1" ]]; then
-  PYTHONPATH=tests "${sync_python}" -m unittest discover -s tests -p 'test_*.py'
+  LTX_TEST_DATABASE_URL="${sync_test_database_url}" PYTHONPATH=tests "${sync_python}" -m unittest discover -s tests -p 'test_*.py'
 fi
 if [[ "${sync_web}" == "1" ]]; then
   sync_log "Building the UI with node $("${sync_node}" --version) and npm $("${sync_npm}" --version)."
