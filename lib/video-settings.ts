@@ -4,6 +4,9 @@ export type VideoCapabilities = {
   sequence?: { supported: boolean; max_seconds: number; max_segments: number; audio_conditioning: string; precise_lip_sync: boolean };
   directing?: Record<string, Record<string, { label: Record<string, string>; prompt: string }>>;
   character_consistency?: { supported: boolean; max_references: number; views: string[]; strategy: string; visual_review_required: boolean };
+  /** Whether the host holds an OpenAI key. The key itself never reaches the browser. */
+  draft_available?: boolean;
+  draft_token_limit?: number;
 };
 
 // Keep duration when changing FPS. Invalid combinations block submission;

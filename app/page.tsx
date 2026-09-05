@@ -2183,6 +2183,7 @@ function Studio() {
             incoming={factoryIncoming}
             onIncomingConsumed={() => setFactoryIncoming(null)}
             onPlanChange={setPlan}
+            draftAvailable={capabilities?.draft_available === true}
             section={tab === 'shoot' ? 'queue' : 'bible'}
           />
         </div>
