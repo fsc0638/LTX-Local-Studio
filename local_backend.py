@@ -17,6 +17,8 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+import urllib.error
+import urllib.request
 from urllib.parse import parse_qs, urlparse
 from media_store import MediaHandlerMixin, asset_by_id, asset_path, list_assets, MAX_UPLOAD
 import psycopg
@@ -62,6 +64,12 @@ FACTORY: FactoryStore | None = None
 # Real user ids are 32 hex characters, so this sentinel cannot collide with one.
 SERVICE_OWNER = "@service"
 FACTORY_QUEUE_LIMIT = int(os.environ.get("LTX_FACTORY_QUEUE_LIMIT", "100"))
+AUDIO_SERVICE = os.environ.get("LTX_AUDIO_SERVICE", "http://127.0.0.1:8790")
+AUDIO_CACHE_DIR = SITE_ROOT / "data/worker/audio-cache"
+# Alignment against the studio's own LRC sheets sits about 0.9 s ahead of the printed times.
+# Whether that is stable-ts running early or the sheets being written late is unresolved
+# (docs/GB10_SETUP.md), so it is published as a correctable constant rather than folded in.
+LYRIC_OFFSET_SECONDS = float(os.environ.get("LTX_LYRIC_OFFSET_SECONDS", "-0.9"))
 LOCK = threading.Lock()
 PROGRESS_RE = re.compile(r"(?<!\d)(\d{1,3})%")
 RUNTIME: dict[str, Any] = {}
@@ -964,6 +972,24 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
     def worker_post(self, path):
         if not self.worker_authorized():
             return
+        if path == "/api/v1/audio/analyze":
+            try:
+                raw = self.factory_body()
+                asset = asset_by_id(str(raw.get("audio_id", "")))
+                if asset.get("kind") != "audio":
+                    raise ValueError("audio_id must name an audio asset")
+                if not self.can_access(asset):
+                    self.send_json(403, {"error": "Asset is not available to this account",
+                                         "code": "asset_forbidden"})
+                    return
+                self.send_json(200, audio_analysis(asset, raw.get("lyrics"), raw.get("language")))
+            except (ValueError, TypeError) as exc:
+                self.send_json(400, {"error": str(exc)[:300], "code": "invalid_request"})
+            except (OSError, urllib.error.URLError):
+                # Analysis is an aid, never a prerequisite: generation carries on without it.
+                self.send_json(503, {"error": "Audio analysis service is unavailable",
+                                     "code": "audio_service_unavailable"})
+            return
         if path.startswith("/api/v1/factory/"):
             if FACTORY is None:
                 self.send_json(503, {"error": "Factory store unavailable", "code": "store_unavailable"})
@@ -1238,6 +1264,50 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
 
     def log_message(self, format: str, *args: Any) -> None:
         print(f"[LTX API] {self.address_string()} - {format % args}")
+
+
+def audio_service(endpoint, payload, timeout):
+    """Call the loopback audio service. Raises OSError when it is not answering."""
+    request = urllib.request.Request(
+        f"{AUDIO_SERVICE}{endpoint}", data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.load(response)
+
+
+def audio_analysis(asset, lyrics, language):
+    """Beats always; word timings when lyrics are supplied. Cached per file and per lyric sheet.
+
+    The cache lives beside the worker state rather than next to the upload: list_assets() globs
+    uploads/*.json, so a sidecar there would be read back as a broken asset.
+    """
+    from user_auth import digest
+
+    path = asset_path(asset)
+    stat = path.stat()
+    fingerprint = digest(f"{asset['id']}:{stat.st_size}:{stat.st_mtime_ns}:"
+                         f"{language or ''}:{digest(lyrics) if lyrics else ''}")
+    cache_file = AUDIO_CACHE_DIR / f"{fingerprint}.json"
+    try:
+        if cache_file.is_file():
+            return {**json.loads(cache_file.read_text(encoding="utf-8")), "cached": True}
+    except (OSError, ValueError):
+        cache_file.unlink(missing_ok=True)
+
+    result = {"audio_id": asset["id"], "beats": audio_service("/beats", {"path": str(path)}, 300)}
+    if lyrics:
+        result["alignment"] = audio_service(
+            "/align", {"path": str(path), "lyrics": lyrics, "language": language}, 900)
+    result["lyric_offset_seconds"] = LYRIC_OFFSET_SECONDS
+    result["lyric_offset_note"] = (
+        "A constant offset measured against this studio's own LRC sheets, not random error: "
+        "subtract it before comparing, and calibrate it per source before trusting it.")
+    try:
+        AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+        cache_file.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass  # An unwritable cache costs time on the next call, nothing more.
+    return {**result, "cached": False}
 
 
 def factory_replayed(shot, job):
