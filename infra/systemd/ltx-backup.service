@@ -1,0 +1,13 @@
+# Daily pg_dump of the studio database. Install with:
+#   systemctl --user enable --now ltx-backup.timer
+# Not enabled by the sync script: activating a unit is a system-level change.
+[Unit]
+Description=Back up the LTX Local Studio PostgreSQL database
+After=postgresql.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/kwayrdc/LTX Local Studio
+# The DSN is read from the same file the API uses, so the two never drift.
+EnvironmentFile=/home/kwayrdc/LTX Local Studio/.env.local
+ExecStart=/usr/bin/bash "/home/kwayrdc/LTX Local Studio/scripts/backup-database.sh"

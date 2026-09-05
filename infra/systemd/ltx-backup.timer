@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily LTX Local Studio database backup
+
+[Timer]
+OnCalendar=daily
+# The host is not always awake at the scheduled time; run on the next boot instead of skipping.
+Persistent=true
+RandomizedDelaySec=15m
+
+[Install]
+WantedBy=timers.target

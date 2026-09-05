@@ -55,9 +55,18 @@ sync_deployed_commit() {
   printf '%s' "${sync_value}"
 }
 
+# Ask the API rather than reading its store: the jobs now live in PostgreSQL, and only the API
+# holds the DSN. A failure here must read as "busy" so a restart is deferred, never as zero.
 sync_active_jobs() {
-  /usr/bin/sqlite3 -readonly data/worker/jobs.sqlite3 \
-    "SELECT count(*) FROM jobs WHERE json_extract(snapshot,'$.status') IN ('queued','running');"
+  local sync_body sync_count
+  sync_body="$(/usr/bin/curl -sS --max-time 5 http://127.0.0.1:8787/api/internal/active-jobs || true)"
+  sync_count="$(sed -n 's/.*"count"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' <<<"${sync_body}")"
+  if [[ -z "${sync_count}" ]]; then
+    sync_log "Could not read active job count from the API; treating the worker as busy." >&2
+    printf '%s' "unknown"
+    return 0
+  fi
+  printf '%s' "${sync_count}"
 }
 
 sync_wait_active() {
