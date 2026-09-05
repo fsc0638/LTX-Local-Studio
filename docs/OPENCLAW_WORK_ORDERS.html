@@ -29,7 +29,7 @@ main{display:grid;gap:28px;min-width:0}header.head{border-bottom:1px solid var(-
 <div class="how"><b>使用順序</b><ol><li>先傳一次「開工設定」，讓老皮把規則寫進自己的 USER.md／MEMORY.md。</li><li>傳某張工單的「執行」。它 15 分鐘做不完會停在乾淨狀態並回報；再傳「繼續」直到它自檢全過。</li><li>傳「驗收」— 這是獨立任務，不改程式，逐條 PASS／FAIL，最後一行「可合併」或「退回」。退回就回到步驟 2。</li><li>「可合併」後由你在主機上 ff 合併並 push main；ltx-git-sync 會自動部署。</li></ol>
 <p><b>工作目錄</b>：老皮在 <code>~/LTX-worktrees/wo-&lt;id&gt;</code> 的獨立 worktree 裡做事；主 checkout 永遠停在 main。若發現主 checkout 不在 main，先 <code>git checkout main</code> 再繼續。</p>
 <p>老皮遇到 apt、systemctl、sudo 會先發 <code>【需要核准：OP-xxxx】</code> 區塊 — 那是它自己的規則，回「核准 OP-xxxx」或自己跑它列出的指令。</p></div>
-<article class="card" id="setup"><div class="card-h"><span class="n">setup</span><h3>開工設定</h3><span class="sub">只傳一次；讓老皮把規則寫進自己的記憶</span></div><div class="blk"><div class="blk-h"><span class="lbl">LINE 訊息</span><span class="cnt">1179 字</span><button type="button" class="copy" data-copy>複製</button></div><pre>阿寶要開一條長期工作線，請把下面寫進 USER.md（active directives）與 MEMORY.md，之後每個「工單」任務都照做：
+<article class="card" id="setup"><div class="card-h"><span class="n">setup</span><h3>開工設定</h3><span class="sub">只傳一次；讓老皮把規則寫進自己的記憶</span></div><div class="blk"><div class="blk-h"><span class="lbl">LINE 訊息</span><span class="cnt">1300 字</span><button type="button" class="copy" data-copy>複製</button></div><pre>阿寶要開一條長期工作線，請把下面寫進 USER.md（active directives）與 MEMORY.md，之後每個「工單」任務都照做：
 1. 專案：LTX Local Studio，目錄 &quot;/home/kwayrdc/LTX Local Studio&quot;（路徑有空格，一律加引號）。規格在 docs/PRODUCTION_ROADMAP.md，工作規則在 docs/OPENCLAW_WORK_ORDERS.md。
 2. 分支紀律：主 checkout 永遠停在 main、不在裡面 checkout 其他分支或改檔；每張工單在自己的 worktree ~/LTX-worktrees/wo-&lt;小寫工單號&gt;（分支 wo/&lt;小寫工單號&gt;，ln -s 主 checkout 的 node_modules）工作；絕對不 push、merge、rebase 到 main — main 一推就由 ltx-git-sync 自動部署到正式站 ltx.mikamiu.studio。合併只有阿寶做。
 3. 服務紀律：不重啟 ltx-web、ltx-api、ltx-cloudflared；正式站 3000 與 API 8787 不可占用，dev server 只用 3001；不動 /opt/studio 的模型權重。
@@ -41,6 +41,8 @@ main{display:grid;gap:28px;min-width:0}header.head{border-bottom:1px solid var(-
    test_mv_timeline 會 import 失敗。
 8. 本機 loopback 服務（ltx-audio 8790、ltx-judge 8791、ltx-imagegen 8792）先查再起：
    `ss -ltn | grep :&lt;port&gt;` 或打 /health，有人在聽就直接用；不要重複啟動，也不要停掉別人的。
+9. 新增 systemd unit 檔要跑 `systemd-analyze --user verify &lt;檔&gt;`，輸出必須是空的
+   （格式錯只印警告，exit code 仍是 0）；Environment= 的值含空格一定要加引號。
 確認寫入後，回覆你記下了哪幾條。</pre></div></article><h2 class="ph" id="pA">A 專案層與階段導覽（純前端）</h2><article class="card" id="A1"><div class="card-h"><span class="n">A1</span><h3>Bible 與繼承</h3><span class="sub">M · 分支 wo/a1</span></div><div class="blk"><div class="blk-h"><span class="lbl">執行</span><span class="cnt">1789 字</span><button type="button" class="copy" data-copy>複製</button></div><pre>背景任務：【工單 A1 · 執行】
 專案目錄 &quot;/home/kwayrdc/LTX Local Studio&quot;（路徑有空格，一律加引號）。先讀 docs/OPENCLAW_WORK_ORDERS.md 的工作規則，再讀 docs/PRODUCTION_ROADMAP.md 的「A1」節當規格。
 開始前：在主 checkout 跑 git fetch origin，然後一律到獨立 worktree 工作：~/LTX-worktrees/wo-a1 不存在就 git worktree add ~/LTX-worktrees/wo-a1 -b wo/a1 origin/main（分支已存在就 git worktree add ~/LTX-worktrees/wo-a1 wo/a1，再 rebase 到 origin/main），並 ln -s 主 checkout 的 node_modules 進 worktree。之後所有編輯、測試、commit 都在 ~/LTX-worktrees/wo-a1 裡做。讀 docs/work-orders/A1.md 的進度區（沒有就建立）。
