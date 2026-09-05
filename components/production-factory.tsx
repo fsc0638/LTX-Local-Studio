@@ -406,12 +406,24 @@ export function ProductionFactory({
   online,
   incoming,
   onIncomingConsumed,
+  onPlanChange,
+  section = 'all',
 }: {
   locale: Locale;
   online: boolean;
   incoming: FactoryIncoming | null;
   onIncomingConsumed: () => void;
+  /** Lets the page derive stage status and the board from the same plan this component owns. */
+  onPlanChange?: (plan: FactoryPlan) => void;
+  /**
+   * Which half of the factory to show. Stage 00 (Bible) and stage 03 (queue) render the *same*
+   * mounted instance with different values, so the plan stays one piece of state; mounting the
+   * component twice would give each stage its own plan.
+   */
+  section?: 'all' | 'bible' | 'queue';
 }) {
+  const showBible = section !== 'queue';
+  const showQueue = section !== 'bible';
   const text = copy[locale];
   const [plan, setPlan] = useState<FactoryPlan>(() =>
     createFactoryPlan('pending', new Date(0)),
@@ -485,6 +497,12 @@ export function ProductionFactory({
       .catch(() => undefined);
     return () => abort.abort();
   }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    onPlanChange?.(plan);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the callback is a stable page setter.
+  }, [hydrated, plan]);
 
   useEffect(() => {
     if (!hydrated || !storageKey) return;
@@ -825,6 +843,7 @@ export function ProductionFactory({
 
   return (
     <section>
+      {section === 'all' && (
       <div className="mb-8 flex flex-col justify-between gap-5 border-b border-border pb-6 lg:flex-row lg:items-end">
         <div className="max-w-3xl">
           <p className="mb-2 text-[10px] font-bold tracking-[0.18em] text-[#e85578]">
@@ -842,7 +861,9 @@ export function ProductionFactory({
           {plan.status.toUpperCase()}
         </div>
       </div>
+      )}
 
+      {showQueue && (
       <div className="mb-6 grid gap-px bg-border sm:grid-cols-5">
         {[
           [text.total, summary.total],
@@ -859,6 +880,7 @@ export function ProductionFactory({
           </div>
         ))}
       </div>
+      )}
 
       {!online && (
         <p
@@ -874,8 +896,11 @@ export function ProductionFactory({
         </p>
       )}
 
-      <div className="grid gap-6 xl:grid-cols-[1.45fr_.75fr]">
+      <div
+        className={`grid gap-6 ${showQueue ? 'xl:grid-cols-[1.45fr_.75fr]' : ''}`}
+      >
         <div className="space-y-5">
+          {showBible && (
           <section className="space-y-5 border border-border bg-white p-5">
             <div>
               <h2 className="text-xs font-extrabold tracking-[0.13em]">
@@ -1141,6 +1166,9 @@ export function ProductionFactory({
               </div>
             </div>
           </section>
+          )}
+          {showQueue && (
+          <>
           <section className="border border-border bg-white p-5">
             <label className="block text-[10px] font-bold tracking-[0.12em]">
               {text.project}
@@ -1383,8 +1411,11 @@ export function ProductionFactory({
               })}
             </div>
           )}
+          </>
+          )}
         </div>
 
+        {showQueue && (
         <aside className="space-y-5 self-start xl:sticky xl:top-28">
           <section className="border border-border bg-[#171918] p-5 text-white">
             <div className="flex items-center gap-2 text-xs font-extrabold tracking-[0.14em]">
@@ -1484,6 +1515,7 @@ export function ProductionFactory({
             )}
           </section>
         </aside>
+        )}
       </div>
     </section>
   );

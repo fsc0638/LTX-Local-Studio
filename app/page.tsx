@@ -38,7 +38,6 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { MediaLibrary, fileCopy, type Asset } from '@/components/media-library';
 import { AccountGate, AccountMenu } from '@/components/account-gate';
@@ -72,6 +71,10 @@ import {
   ProductionFactory,
   type FactoryIncoming,
 } from '@/components/production-factory';
+import { StageRail, stageCopy, type RailKey } from '@/components/stage-rail';
+import { StatusBoard, progressOf } from '@/components/status-board';
+import { restoreFactoryPlan, type FactoryPlan } from '@/lib/production-factory';
+import { STAGE_KEYS, UNAVAILABLE_STAGES, type StageKey } from '@/lib/stages';
 import { bibleFromRequest } from '@/lib/production-factory';
 
 const initialPrompt =
@@ -155,7 +158,7 @@ function outputFromJob(job: ApiJob): OutputItem {
   };
 }
 
-type TabKey = 'create' | 'factory' | 'assets' | 'outputs' | 'environment';
+type TabKey = RailKey;
 type Locale = 'zh-TW' | 'en' | 'ja';
 // Browser traffic stays same-origin. Only the server knows the worker address.
 const API_BASE = '';
@@ -165,11 +168,29 @@ const translations = {
   'zh-TW': {
     topStrip: '本機生成 · 檔案保留在此裝置 · NVIDIA GB10',
     console: 'GB10 控制台',
-    createTab: '生成',
-    factoryTab: '製片工廠',
-    assetsTab: '素材',
+    createTab: '沙盒',
+    factoryTab: '拍攝',
+    assetsTab: '素材庫',
     outputsTab: '產出',
-    environmentTab: '環境',
+    environmentTab: '工站',
+    bibleEyebrow: '00 / 企劃 BIBLE',
+    bibleTitle: '固定角色、音樂與輸出規格',
+    bibleNote: '這裡設定一次，之後每一鏡都繼承。改這裡會套用到所有還沒生產的鏡頭；你手動改過的欄位會保留。',
+    breakdownEyebrow: '01 / 分鏡',
+    breakdownTitle: '把歌切成鏡頭',
+    breakdownNote: '上傳音樂與歌詞，設定每一鏡的主要動作與運鏡。拍點與逐字對時的自動分鏡在 B 期接上。',
+    shootEyebrow: '03 / 拍攝',
+    shootTitle: '製片工廠佇列',
+    shootNote: '一次送一個 GPU 任務；失敗會暫停整條線等人處理。',
+    assemblyEyebrow: '06 / 組片交付',
+    assemblyTitle: '產出與組片',
+    assemblyNote: '已完成的鏡頭與歷史產出。跨 take 選片與 EDL 匯出在 D 期接上。',
+    unavailableTitle: '這個階段本期未啟用',
+    unavailableNote: '模型都已安裝，但還沒接上介面。實作進度見 docs/PRODUCTION_ROADMAP.md。',
+    unavailableKeyframes: '需要把 Qwen-Image-Edit 註冊成 adapter，並接上一致性裁判（D 期）。',
+    unavailableReview: '需要裁判服務與 take 概念（C 期）。',
+    unavailablePost: '需要後製 adapter：補幀、放大、清理（D 期）。',
+    backToBoard: '回狀態板',
     ready: '已就緒',
     connecting: '連線中',
     generating: '生成中',
@@ -300,11 +321,29 @@ const translations = {
   en: {
     topStrip: 'Local generation · Files stay on this device · NVIDIA GB10',
     console: 'GB10 Console',
-    createTab: 'CREATE',
-    factoryTab: 'FACTORY',
-    assetsTab: 'ASSETS',
+    createTab: 'SANDBOX',
+    factoryTab: 'GENERATION',
+    assetsTab: 'MEDIA',
     outputsTab: 'OUTPUTS',
-    environmentTab: 'ENVIRONMENT',
+    environmentTab: 'WORKSTATION',
+    bibleEyebrow: '00 / PROJECT BIBLE',
+    bibleTitle: 'Fix the character, music and output format',
+    bibleNote: 'Set once here and every shot inherits it. Changes apply to shots that have not run yet; fields you edited by hand keep their values.',
+    breakdownEyebrow: '01 / BREAKDOWN',
+    breakdownTitle: 'Cut the song into shots',
+    breakdownNote: 'Load the music and lyrics, then set each shot\u2019s main action and camera. Beat-aligned automatic breakdown arrives in phase B.',
+    shootEyebrow: '03 / GENERATION',
+    shootTitle: 'Production factory queue',
+    shootNote: 'One GPU job at a time; a failure pauses the whole line for a person.',
+    assemblyEyebrow: '06 / ASSEMBLY',
+    assemblyTitle: 'Outputs and assembly',
+    assemblyNote: 'Finished shots and past outputs. Take selection and EDL export arrive in phase D.',
+    unavailableTitle: 'This stage is not enabled yet',
+    unavailableNote: 'The models are installed; nothing is wired to the interface yet. See docs/PRODUCTION_ROADMAP.md.',
+    unavailableKeyframes: 'Needs Qwen-Image-Edit registered as an adapter and the consistency judge (phase D).',
+    unavailableReview: 'Needs the judge service and the take model (phase C).',
+    unavailablePost: 'Needs the post adapters: interpolation, upscaling, cleanup (phase D).',
+    backToBoard: 'Back to the board',
     ready: 'READY',
     connecting: 'CONNECTING',
     generating: 'GENERATING',
@@ -436,11 +475,29 @@ const translations = {
   ja: {
     topStrip: 'ローカル生成 · ファイルはこのデバイスに保存 · NVIDIA GB10',
     console: 'GB10 コンソール',
-    createTab: '生成',
-    factoryTab: '制作工場',
-    assetsTab: '素材',
+    createTab: 'サンドボックス',
+    factoryTab: '生成',
+    assetsTab: '素材ライブラリ',
     outputsTab: '出力',
-    environmentTab: '環境',
+    environmentTab: 'ワークステーション',
+    bibleEyebrow: '00 / 企画 BIBLE',
+    bibleTitle: '人物・音楽・出力設定を固定する',
+    bibleNote: 'ここで一度決めれば各ショットが継承します。未生成のショットに反映され、手動で変更した項目はそのまま残ります。',
+    breakdownEyebrow: '01 / 絵コンテ',
+    breakdownTitle: '曲をショットに割る',
+    breakdownNote: '音楽と歌詞を読み込み、各ショットの主要アクションとカメラを設定します。拍に合わせた自動分割はフェーズBで対応します。',
+    shootEyebrow: '03 / 生成',
+    shootTitle: '制作工場キュー',
+    shootNote: 'GPUジョブは一度に1件。失敗するとライン全体が停止し、人の判断を待ちます。',
+    assemblyEyebrow: '06 / 編集・納品',
+    assemblyTitle: '出力と編集',
+    assemblyNote: '完了したショットと過去の出力。テイク選択とEDL書き出しはフェーズDで対応します。',
+    unavailableTitle: 'この段階は今期未対応です',
+    unavailableNote: 'モデルは導入済みですが、まだ画面につながっていません。docs/PRODUCTION_ROADMAP.md を参照してください。',
+    unavailableKeyframes: 'Qwen-Image-Edit のアダプター登録と一貫性判定が必要です（フェーズD）。',
+    unavailableReview: '判定サービスとテイク概念が必要です（フェーズC）。',
+    unavailablePost: '仕上げアダプター（補間・拡大・除去）が必要です（フェーズD）。',
+    backToBoard: 'ボードに戻る',
     ready: '準備完了',
     connecting: '接続中',
     generating: '生成中',
@@ -666,7 +723,9 @@ export default function Home() {
 
 function Studio() {
   const [locale, setLocale] = useState<Locale>('zh-TW');
-  const [tab, setTab] = useState<TabKey>('create');
+  const [tab, setTab] = useState<TabKey>('board');
+  // The factory owns the plan; the page keeps a mirror so the rail and the board can read it.
+  const [plan, setPlan] = useState<FactoryPlan | null>(null);
   const [prompt, setPrompt] = useState(initialPrompt);
   const [model, setModel] = useState('ltx23-distilled');
   const [models, setModels] = useState<InstalledModel[]>([]);
@@ -756,7 +815,7 @@ function Studio() {
     setReference(asset);
     setMode('i2v');
     setAspectRatio(asset.suggested_aspect_ratio || 'source');
-    setTab('create');
+    setTab('sandbox');
   };
   const uploadReference = async (file?: File) => {
     if (!file) return;
@@ -1057,13 +1116,11 @@ function Studio() {
     }
   };
 
-  const navItems: [TabKey, string][] = [
-    ['create', ui.createTab],
-    ['factory', ui.factoryTab],
-    ['assets', ui.assetsTab],
-    ['outputs', ui.outputsTab],
-    ['environment', ui.environmentTab],
-  ];
+  const emptyPlan = restoreFactoryPlan(null);
+  const stageProgress = progressOf(plan || emptyPlan);
+  const stageNames = stageCopy[locale].stages;
+  const stageIndexOf = (key: TabKey) =>
+    String(STAGE_KEYS.indexOf(key as StageKey)).padStart(2, '0');
 
   return (
     <main className="min-h-screen bg-background text-foreground">
@@ -1074,7 +1131,7 @@ function Studio() {
       <header className="sticky top-0 z-30 border-b border-border bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-[1560px] items-center justify-between gap-5 px-5 py-4 lg:px-10 lg:py-5">
           <button
-            onClick={() => setTab('create')}
+            onClick={() => setTab('sandbox')}
             className="flex items-center gap-3 text-left"
           >
             <span className="grid size-10 place-items-center rounded-full bg-foreground text-background">
@@ -1089,26 +1146,6 @@ function Studio() {
               </p>
             </div>
           </button>
-          <Tabs
-            value={tab}
-            onValueChange={(value) => setTab(value as TabKey)}
-            className="hidden lg:block"
-          >
-            <TabsList
-              variant="line"
-              className="h-auto gap-8 bg-transparent p-0"
-            >
-              {navItems.map(([value, label]) => (
-                <TabsTrigger
-                  key={value}
-                  value={value}
-                  className="h-12 rounded-none px-1 text-[11px] font-bold tracking-[0.2em] data-[state=active]:after:bg-[#ff6f91]"
-                >
-                  {label}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
           <div className="flex items-center gap-4">
             <Select
               value={locale}
@@ -1135,23 +1172,75 @@ function Studio() {
             </div>
           </div>
         </div>
-        <nav className="overflow-x-auto border-t border-border lg:hidden">
-          <div className="flex min-w-max px-5">
-            {navItems.map(([value, label]) => (
-              <button
-                key={value}
-                onClick={() => setTab(value)}
-                className={`relative px-4 py-3 text-[10px] font-bold tracking-[0.18em] ${tab === value ? 'text-foreground after:absolute after:inset-x-4 after:bottom-0 after:h-0.5 after:bg-[#ff6f91]' : 'text-muted-foreground'}`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        </nav>
       </header>
 
-      <div className="mx-auto max-w-[1560px] px-5 py-8 lg:px-10 lg:py-10">
-        {tab === 'create' && (
+      <div className="mx-auto grid max-w-[1560px] gap-6 px-5 py-6 lg:grid-cols-[210px_minmax(0,1fr)] lg:gap-10 lg:px-10 lg:py-10">
+        <div className="-mx-5 lg:mx-0">
+          <StageRail
+            active={tab}
+            statuses={stageProgress.statuses}
+            locale={locale}
+            onSelect={setTab}
+          />
+        </div>
+
+        <div className="min-w-0">
+        {tab === 'board' && (
+          <StatusBoard
+            plans={plan ? [plan] : []}
+            locale={locale}
+            onOpenStage={setTab}
+          />
+        )}
+
+        {UNAVAILABLE_STAGES.includes(tab as StageKey) && (
+          <section>
+            <SectionTitle
+              eyebrow={`${stageIndexOf(tab)} / ${stageNames[tab as StageKey]}`}
+              title={ui.unavailableTitle}
+              note={ui.unavailableNote}
+            />
+            <div className="grid min-h-64 place-items-center border border-dashed border-border bg-[#fafaf8] p-8 text-center">
+              <div className="max-w-md space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  {tab === 'keyframes'
+                    ? ui.unavailableKeyframes
+                    : tab === 'review'
+                      ? ui.unavailableReview
+                      : ui.unavailablePost}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="rounded-none"
+                  onClick={() => setTab('board')}
+                >
+                  {ui.backToBoard}
+                </Button>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {tab === 'breakdown' && (
+          <section>
+            <SectionTitle
+              eyebrow={ui.breakdownEyebrow}
+              title={ui.breakdownTitle}
+              note={ui.breakdownNote}
+            />
+            <TimelineControls
+              locale={locale}
+              catalog={capabilities?.directing}
+              value={timeline}
+              onChange={setTimeline}
+              request={generationRequest}
+              onDuration={(value) => setSeconds(String(value))}
+            />
+          </section>
+        )}
+
+        {tab === 'sandbox' && (
           <section className="mb-6 flex flex-wrap items-center gap-4 border border-border bg-white p-5">
             <label className="min-w-64 text-xs font-bold">
               {ui.model}
@@ -1187,7 +1276,7 @@ function Studio() {
             </p>
           </section>
         )}
-        {tab === 'create' &&
+        {tab === 'sandbox' &&
           model !== 'ltx23-distilled' &&
           models.find((item) => item.id === model) && (
             <ModelComposer
@@ -1196,7 +1285,7 @@ function Studio() {
               locale={locale}
             />
           )}
-        {tab === 'create' && model === 'ltx23-distilled' && (
+        {tab === 'sandbox' && model === 'ltx23-distilled' && (
           <section>
             <SectionTitle
               eyebrow={ui.createEyebrow}
@@ -1634,7 +1723,7 @@ function Studio() {
                           {ui.chooseAsset}
                         </p>
                         <button
-                          onClick={() => setTab('assets')}
+                          onClick={() => setTab('bible')}
                           className="mt-2 text-[10px] font-bold text-[#e85578] underline underline-offset-4"
                         >
                           {ui.openAssetLibrary}
@@ -1880,7 +1969,7 @@ function Studio() {
                           request: generationRequest,
                           bible: bibleFromRequest(generationRequest),
                         });
-                        setTab('factory');
+                        setTab('shoot');
                       }}
                       className="h-12 w-full rounded-none text-[11px] font-bold tracking-[0.12em]"
                     >
@@ -1933,16 +2022,24 @@ function Studio() {
           </section>
         )}
 
-        <div hidden={tab !== 'factory'}>
+        {/* One mounted factory serves stage 00 and stage 03; two mounts would mean two plans. */}
+        <div hidden={tab !== 'bible' && tab !== 'shoot'}>
+          <SectionTitle
+            eyebrow={tab === 'shoot' ? ui.shootEyebrow : ui.bibleEyebrow}
+            title={tab === 'shoot' ? ui.shootTitle : ui.bibleTitle}
+            note={tab === 'shoot' ? ui.shootNote : ui.bibleNote}
+          />
           <ProductionFactory
             locale={locale}
             online={backendOnline}
             incoming={factoryIncoming}
             onIncomingConsumed={() => setFactoryIncoming(null)}
+            onPlanChange={setPlan}
+            section={tab === 'shoot' ? 'queue' : 'bible'}
           />
         </div>
 
-        {tab === 'assets' && (
+        {tab === 'bible' && (
           <section>
             <SectionTitle
               eyebrow={ui.assetsEyebrow}
@@ -2099,7 +2196,7 @@ function Studio() {
           </section>
         )}
 
-        {tab === 'outputs' && (
+        {tab === 'assembly' && (
           <section>
             <SectionTitle
               eyebrow={ui.outputsEyebrow}
@@ -2153,7 +2250,7 @@ function Studio() {
                       <Button
                         onClick={() => {
                           setSelectedOutput(item);
-                          setTab('create');
+                          setTab('sandbox');
                         }}
                         variant="outline"
                         className="rounded-none text-[10px] font-bold tracking-[0.1em]"
@@ -2210,7 +2307,7 @@ function Studio() {
           </section>
         )}
 
-        {tab === 'environment' && (
+        {tab === 'workstation' && (
           <section>
             <SectionTitle
               eyebrow={ui.envEyebrow}
@@ -2350,6 +2447,7 @@ function Studio() {
             </div>
           </section>
         )}
+        </div>
       </div>
 
       <footer className="mt-10 border-t border-border bg-[#f7f7f4]">
