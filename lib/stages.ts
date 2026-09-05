@@ -10,6 +10,15 @@ export type PlanSnapshot = {
   failed: number;
 };
 
+/** What the line looks like before a plan exists at all. */
+export const EMPTY_PLAN_SNAPSHOT: PlanSnapshot = {
+  hasBible: false,
+  status: 'draft',
+  total: 0,
+  completed: 0,
+  failed: 0,
+};
+
 export type StageKey =
   | 'bible'
   | 'breakdown'

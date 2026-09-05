@@ -73,7 +73,7 @@ import {
 } from '@/components/production-factory';
 import { StageRail, stageCopy, type RailKey } from '@/components/stage-rail';
 import { StatusBoard, progressOf } from '@/components/status-board';
-import { restoreFactoryPlan, type FactoryPlan } from '@/lib/production-factory';
+import type { FactoryPlan } from '@/lib/production-factory';
 import { STAGE_KEYS, UNAVAILABLE_STAGES, type StageKey } from '@/lib/stages';
 import { bibleFromRequest } from '@/lib/production-factory';
 
@@ -1116,8 +1116,7 @@ function Studio() {
     }
   };
 
-  const emptyPlan = restoreFactoryPlan(null);
-  const stageProgress = progressOf(plan || emptyPlan);
+  const stageProgress = progressOf(plan);
   const stageNames = stageCopy[locale].stages;
   const stageIndexOf = (key: TabKey) =>
     String(STAGE_KEYS.indexOf(key as StageKey)).padStart(2, '0');

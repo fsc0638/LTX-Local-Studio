@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  EMPTY_PLAN_SNAPSHOT,
   planProgress,
   STAGE_KEYS,
   UNAVAILABLE_STAGES,
@@ -79,4 +80,11 @@ test('every stage key gets a status and the order is stable', () => {
     'post',
     'assembly',
   ]);
+});
+
+test('the line has a valid state before any plan exists', () => {
+  const progress = planProgress(EMPTY_PLAN_SNAPSHOT);
+  assert.equal(progress.current, 'bible');
+  assert.equal(progress.statuses.bible, 'active');
+  assert.equal(progress.owner, 'user');
 });
