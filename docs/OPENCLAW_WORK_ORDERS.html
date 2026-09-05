@@ -29,9 +29,11 @@ main{display:grid;gap:28px;min-width:0}header.head{border-bottom:1px solid var(-
 <div class="how"><b>使用順序</b><ol><li>先傳一次「開工設定」，讓老皮把規則寫進自己的 USER.md／MEMORY.md。</li><li>傳某張工單的「執行」。它 15 分鐘做不完會停在乾淨狀態並回報；再傳「繼續」直到它自檢全過。</li><li>傳「驗收」— 這是獨立任務，不改程式，逐條 PASS／FAIL，最後一行「可合併」或「退回」。退回就回到步驟 2。</li><li>「可合併」後由你在主機上 ff 合併並 push main；ltx-git-sync 會自動部署。</li></ol>
 <p><b>工作目錄</b>：老皮在 <code>~/LTX-worktrees/wo-&lt;id&gt;</code> 的獨立 worktree 裡做事；主 checkout 永遠停在 main。若發現主 checkout 不在 main，先 <code>git checkout main</code> 再繼續。</p>
 <p>老皮遇到 apt、systemctl、sudo 會先發 <code>【需要核准：OP-xxxx】</code> 區塊 — 那是它自己的規則，回「核准 OP-xxxx」或自己跑它列出的指令。</p></div>
-<article class="card" id="setup"><div class="card-h"><span class="n">setup</span><h3>開工設定</h3><span class="sub">只傳一次；讓老皮把規則寫進自己的記憶</span></div><div class="blk"><div class="blk-h"><span class="lbl">LINE 訊息</span><span class="cnt">1300 字</span><button type="button" class="copy" data-copy>複製</button></div><pre>阿寶要開一條長期工作線，請把下面寫進 USER.md（active directives）與 MEMORY.md，之後每個「工單」任務都照做：
+<article class="card" id="setup"><div class="card-h"><span class="n">setup</span><h3>開工設定</h3><span class="sub">只傳一次；讓老皮把規則寫進自己的記憶</span></div><div class="blk"><div class="blk-h"><span class="lbl">LINE 訊息</span><span class="cnt">1435 字</span><button type="button" class="copy" data-copy>複製</button></div><pre>阿寶要開一條長期工作線，請把下面寫進 USER.md（active directives）與 MEMORY.md，之後每個「工單」任務都照做：
 1. 專案：LTX Local Studio，目錄 &quot;/home/kwayrdc/LTX Local Studio&quot;（路徑有空格，一律加引號）。規格在 docs/PRODUCTION_ROADMAP.md，工作規則在 docs/OPENCLAW_WORK_ORDERS.md。
-2. 分支紀律：主 checkout 永遠停在 main、不在裡面 checkout 其他分支或改檔；每張工單在自己的 worktree ~/LTX-worktrees/wo-&lt;小寫工單號&gt;（分支 wo/&lt;小寫工單號&gt;，ln -s 主 checkout 的 node_modules）工作；絕對不 push、merge、rebase 到 main — main 一推就由 ltx-git-sync 自動部署到正式站 ltx.mikamiu.studio。合併只有阿寶做。
+2. 分支紀律：主 checkout 永遠停在 main、不在裡面 checkout 其他分支或改檔；絕對不 push、merge、rebase 到 main — main 一推就由 ltx-git-sync 自動部署到正式站 ltx.mikamiu.studio。合併只有阿寶做。
+   **任何改動都先開分支**（新階段、優化、新功能、Bug 除錯都算），在自己的 worktree ~/LTX-worktrees/&lt;分支名&gt;（ln -s 主 checkout 的 node_modules）工作：工單用 wo/&lt;小寫工單號&gt;，非工單用 fix/&lt;slug&gt;、feat/&lt;slug&gt;、perf/&lt;slug&gt;。
+   合併後該分支要清乾淨（worktree、本地分支、遠端分支）並回到 main —— 這是合併流程的一部分，不是額外工作。
 3. 服務紀律：不重啟 ltx-web、ltx-api、ltx-cloudflared；正式站 3000 與 API 8787 不可占用，dev server 只用 3001；不動 /opt/studio 的模型權重。
 4. 系統層級動作（apt、systemctl enable/start、/etc、unit 檔啟用）先發核准區塊；需要 sudo 的指令列出來給阿寶自己跑。
 5. 15 分鐘紀律：每則任務在 15 分鐘內結束於乾淨狀態 — commit、push 分支、更新 docs/work-orders/&lt;工單號&gt;.md 的進度區（已完成／未完成／需要阿寶做的事），回報做到哪。
