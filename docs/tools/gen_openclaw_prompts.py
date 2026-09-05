@@ -81,9 +81,10 @@ WO = [
 "3. infra/systemd/ltx-audio.service：只建立檔案；enable 需核准區塊，收到核准才 systemctl --user enable --now。\n"
 "4. tests/test_audio_service.py：用 tests/fixtures 合成音（不下載模型也能跑的部分），與一個標記為需真模型的整合測試。",
  extra="額外檢查：用 uploads/ 裡三首沖縄 wav 之一打 /beats，BPM 與 docs/GB10_SETUP.md 記錄一致（104.2 等）；curl 從非 loopback 位址打 8790 應連不上。\n"
-"對時門檻是 p50 ≤ 0.5s 且 p90 ≤ 1.5s，p90 用 nearest-rank（殘差排序後取索引 ceil(0.9n)-1）——"
-" 同一份殘差用線性內插與 nearest-rank 會差到讓判定翻面，算法要照寫的來。門檻由來記在"
-" docs/PRODUCTION_ROADMAP.md 的 B2 節，完整分布在 docs/GB10_SETUP.md。\n"),
+"對時門檻是 p50 ≤ 0.5s 且 p90 ≤ 1.5s，p90 用 nearest-rank：殘差排序後取索引 ceil(0.9n)-1。"
+" 這個索引要照寫的算 —— int(0.9n) 不等於 ceil(0.9n)，在 n=40 會差一格，同一份殘差換算法"
+" 差得到 0.1s 以上。門檻由來記在 docs/PRODUCTION_ROADMAP.md 的 B2 節，完整分布在"
+" docs/GB10_SETUP.md。\n"),
  dict(id="B3", title="自動分鏡", phase="B", size="M", tests=JS, body=
 "1. lib/breakdown.ts（純函式）：輸入 beats／sections／lyric lines／segment_seconds／Bible directing 預設，輸出鏡頭清單與 cue；規則：段落邊界 ＞ 歌詞行起點（已扣偏移）＞ 每鏡上限；切點吸附最近拍點（±1 拍）；純器樂段產生 breathing 鏡；每鏡 cue 時間＝鏡起點、主要動作留空。\n"
 "2. components/breakdown-editor.tsx：01 分鏡頁 — 波形＋拍點網格＋段落色帶、歌詞行貼在對時位置、鏡頭清單可合併／拆分／改；「預覽分鏡」沿用既有。\n"

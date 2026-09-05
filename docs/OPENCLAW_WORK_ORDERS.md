@@ -187,7 +187,7 @@
 專案目錄 "/home/kwayrdc/LTX Local Studio"（主 checkout，只能讀、不切分支）。git fetch origin；到 worktree ~/LTX-worktrees/wo-b2 驗收（沒有就 git worktree add ~/LTX-worktrees/wo-b2 wo/b2 並 ln -s 主 checkout 的 node_modules；分支不存在就回報並停止）。這是驗收不是開發：不修改程式與文件；只允許為了讓測試跑起來準備測試資料庫或暫存目錄，且做完要清掉。
 依 docs/PRODUCTION_ROADMAP.md「B2」節的驗收清單逐條執行，每條回報 PASS 或 FAIL 並附證據（指令、輸出摘要、數字、路徑）。另外必跑並附結果：LTX_TEST_DATABASE_URL=postgresql:///ltx_studio_test?host=/var/run/postgresql PYTHONPATH=tests /home/kwayrdc/Documents/Codex/2026-08-28/new-chat-2/work/ltx-2.3/LTX-2/.venv/bin/python -m unittest discover -s tests -p 'test_*.py'。
 額外檢查：用 uploads/ 裡三首沖縄 wav 之一打 /beats，BPM 與 docs/GB10_SETUP.md 記錄一致（104.2 等）；curl 從非 loopback 位址打 8790 應連不上。
-對時門檻是 p50 ≤ 0.5s 且 p90 ≤ 1.5s，p90 用 nearest-rank（殘差排序後取索引 ceil(0.9n)-1）—— 同一份殘差用線性內插與 nearest-rank 會差到讓判定翻面，算法要照寫的來。門檻由來記在 docs/PRODUCTION_ROADMAP.md 的 B2 節，完整分布在 docs/GB10_SETUP.md。
+對時門檻是 p50 ≤ 0.5s 且 p90 ≤ 1.5s，p90 用 nearest-rank：殘差排序後取索引 ceil(0.9n)-1。 這個索引要照寫的算 —— int(0.9n) 不等於 ceil(0.9n)，在 n=40 會差一格，同一份殘差換算法 差得到 0.1s 以上。門檻由來記在 docs/PRODUCTION_ROADMAP.md 的 B2 節，完整分布在 docs/GB10_SETUP.md。
 任何 FAIL 不要自己修：寫出重現步驟、你懷疑的檔案與行號。最後一行只能是「B2 可合併」或「B2 退回」。
 ```
 
