@@ -1345,9 +1345,11 @@ export function ProductionFactory({
                       </div>
                     </div>
                     <div className="grid gap-4 p-4 lg:grid-cols-[1fr_auto]">
-                      <label className="text-[10px] font-bold">
-                        <span className="flex flex-wrap items-center gap-2">
-                          {text.prompt}
+                      <div>
+                        {/* The button sits beside the label, not inside it: clicking a <label>
+                            activates the control it names, which would fight the button. */}
+                        <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold">
+                          <label htmlFor={`prompt-${shot.id}`}>{text.prompt}</label>
                           <Button
                             type="button"
                             variant="outline"
@@ -1365,8 +1367,9 @@ export function ProductionFactory({
                             {draftNotice[shot.id] ||
                               (draftAvailable ? '' : text.draftUnavailable)}
                           </span>
-                        </span>
+                        </div>
                         <Textarea
+                          id={`prompt-${shot.id}`}
                           value={shot.request.prompt}
                           maxLength={4000}
                           disabled={!shotEditable}
@@ -1395,7 +1398,7 @@ export function ProductionFactory({
                           }
                           className="mt-2 min-h-24 rounded-none bg-[#fafaf8] text-xs"
                         />
-                      </label>
+                      </div>
                       <div className="min-w-44 text-[10px] leading-5 text-muted-foreground lg:text-right">
                         {requestMeta(shot.request)}
                       </div>
