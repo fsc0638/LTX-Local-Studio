@@ -119,6 +119,15 @@ const copy = {
     queueEmpty: '先從「生成」頁把設定加入製片工廠，或新增空白鏡頭。',
     shot: '鏡頭',
     prompt: '鏡頭提示詞',
+    draft: '起草',
+    drafting: '起草中…',
+    draftUnavailable: '主機未設定 OpenAI，無法起草。',
+    draftFailed: '起草失敗，請稍後再試。',
+    draftBudget: '本專案的起草額度已用完。',
+    draftSuggestion: '草稿（不會覆蓋你改過的提示詞）',
+    draftApply: '採用',
+    draftDismiss: '不用',
+    primaryAction: '主要動作',
     defaultPrompt: '電影感鏡頭，清楚描述場景、主體、動作、運鏡與光線。',
     remove: '移除鏡頭',
     retry: '修正後重試',
@@ -179,6 +188,15 @@ const copy = {
       'Add the current setup from Create, or start with a blank shot.',
     shot: 'Shot',
     prompt: 'Shot prompt',
+    draft: 'Draft',
+    drafting: 'Drafting\u2026',
+    draftUnavailable: 'This host has no OpenAI key, so drafting is off.',
+    draftFailed: 'Drafting failed. Try again in a moment.',
+    draftBudget: 'This project has spent its drafting budget.',
+    draftSuggestion: 'Draft (your own prompt is left alone)',
+    draftApply: 'Use it',
+    draftDismiss: 'Discard',
+    primaryAction: 'Primary action',
     defaultPrompt:
       'A cinematic shot describing the scene, subject, action, camera and light.',
     remove: 'Remove shot',
@@ -243,6 +261,15 @@ const copy = {
       '「生成」から現在の設定を追加するか、空のショットを作成してください。',
     shot: 'ショット',
     prompt: 'ショットプロンプト',
+    draft: '下書き',
+    drafting: '作成中…',
+    draftUnavailable: 'ホストに OpenAI キーがないため下書きは使えません。',
+    draftFailed: '下書きに失敗しました。しばらくしてからお試しください。',
+    draftBudget: 'このプロジェクトの下書き上限に達しました。',
+    draftSuggestion: '下書き（編集済みのプロンプトは上書きしません）',
+    draftApply: '採用',
+    draftDismiss: '破棄',
+    primaryAction: '主なアクション',
     defaultPrompt: '場面、被写体、動作、カメラ、光を明確にした映画的ショット。',
     remove: 'ショットを削除',
     retry: '修正して再試行',
@@ -426,9 +453,12 @@ export function ProductionFactory({
   onIncomingConsumed,
   onPlanChange,
   section = 'all',
+  draftAvailable = false,
 }: {
   locale: Locale;
   online: boolean;
+  /** Whether the host has an OpenAI key. False disables the draft button and says why. */
+  draftAvailable?: boolean;
   incoming: FactoryIncoming | null;
   onIncomingConsumed: () => void;
   /** Lets the page derive stage status and the board from the same plan this component owns. */
@@ -453,6 +483,13 @@ export function ProductionFactory({
   const [legacyOwner, setLegacyOwner] = useState('');
   const [notice, setNotice] = useState('');
   const [assets, setAssets] = useState<Asset[]>([]);
+  // Drafts the user has not accepted yet, kept per shot. A draft only lands here when the prompt
+  // is pinned - that is, when the user has already written something the draft must not replace.
+  const [drafts, setDrafts] = useState<
+    Record<string, { prompt: string; primary_action: string }>
+  >({});
+  const [drafting, setDrafting] = useState('');
+  const [draftNotice, setDraftNotice] = useState<Record<string, string>>({});
   const importInput = useRef<HTMLInputElement>(null);
   const planRef = useRef(plan);
   const consumed = useRef(new Set<string>());
@@ -477,6 +514,79 @@ export function ProductionFactory({
         shot.id === id ? change(shot) : shot,
       ),
     }));
+
+  /**
+   * Ask the host to draft this shot. The key stays there; this only ever sees two strings.
+   *
+   * A prompt the user has pinned - by writing it themselves, or by accepting an earlier draft -
+   * is never replaced. The draft is offered beside it instead, and applying it takes a click.
+   */
+  const draftShot = async (shot: FactoryShot) => {
+    if (!draftAvailable || drafting) return;
+    setDrafting(shot.id);
+    setDraftNotice((current) => ({ ...current, [shot.id]: '' }));
+    try {
+      const response = await serviceFetch(`/api/v1/factory/shots/${shot.id}/draft`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      if (!response.ok) {
+        setDraftNotice((current) => ({
+          ...current,
+          [shot.id]: response.status === 429 ? text.draftBudget
+            : response.status === 503 ? text.draftUnavailable
+              : text.draftFailed,
+        }));
+        return;
+      }
+      const draft = (await response.json()) as { prompt?: string; primary_action?: string };
+      const written = { prompt: String(draft.prompt ?? ''),
+                        primary_action: String(draft.primary_action ?? '') };
+      if (!written.prompt) {
+        setDraftNotice((current) => ({ ...current, [shot.id]: text.draftFailed }));
+        return;
+      }
+      if (shot.pinned.includes('prompt')) {
+        setDrafts((current) => ({ ...current, [shot.id]: written }));
+        return;
+      }
+      applyDraft(shot.id, written);
+    } catch {
+      setDraftNotice((current) => ({ ...current, [shot.id]: text.draftFailed }));
+    } finally {
+      setDrafting('');
+    }
+  };
+
+  /**
+   * Write a draft into the shot and pin the prompt. Pinning is what makes it a decision: an
+   * unpinned prompt is reprojected away the next time the Bible changes.
+   */
+  const applyDraft = (
+    id: string,
+    draft: { prompt: string; primary_action: string },
+  ) => {
+    patchShot(id, (current) => ({
+      ...pinFactoryField(
+        reopenFactoryShot(
+          current,
+          current.status === 'draft' ? current.idempotencyKey : freshIdempotencyKey(current),
+        ),
+        'prompt',
+      ),
+      request: {
+        ...current.request,
+        prompt: draft.prompt,
+        primary_action: draft.primary_action,
+      },
+    }));
+    setDrafts((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+  };
 
   useEffect(() => {
     planRef.current = plan;
@@ -1236,7 +1346,26 @@ export function ProductionFactory({
                     </div>
                     <div className="grid gap-4 p-4 lg:grid-cols-[1fr_auto]">
                       <label className="text-[10px] font-bold">
-                        {text.prompt}
+                        <span className="flex flex-wrap items-center gap-2">
+                          {text.prompt}
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={
+                              !shotEditable || !draftAvailable || drafting === shot.id
+                            }
+                            title={draftAvailable ? undefined : text.draftUnavailable}
+                            onClick={() => void draftShot(shot)}
+                            className="h-6 rounded-none px-2 text-[10px]"
+                          >
+                            {drafting === shot.id ? text.drafting : text.draft}
+                          </Button>
+                          <span className="font-normal text-muted-foreground">
+                            {draftNotice[shot.id] ||
+                              (draftAvailable ? '' : text.draftUnavailable)}
+                          </span>
+                        </span>
                         <Textarea
                           value={shot.request.prompt}
                           maxLength={4000}
@@ -1270,6 +1399,45 @@ export function ProductionFactory({
                       <div className="min-w-44 text-[10px] leading-5 text-muted-foreground lg:text-right">
                         {requestMeta(shot.request)}
                       </div>
+                      {drafts[shot.id] ? (
+                        <div className="border border-dashed border-border bg-[#fafaf8] p-3 lg:col-span-2">
+                          <p className="text-[10px] font-bold">{text.draftSuggestion}</p>
+                          <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed">
+                            {drafts[shot.id].prompt}
+                          </p>
+                          {drafts[shot.id].primary_action ? (
+                            <p className="mt-2 text-[11px] text-muted-foreground">
+                              {text.primaryAction}: {drafts[shot.id].primary_action}
+                            </p>
+                          ) : null}
+                          <div className="mt-3 flex gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              disabled={!shotEditable}
+                              onClick={() => applyDraft(shot.id, drafts[shot.id])}
+                              className="h-7 rounded-none px-3 text-[10px]"
+                            >
+                              {text.draftApply}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() =>
+                                setDrafts((current) => {
+                                  const next = { ...current };
+                                  delete next[shot.id];
+                                  return next;
+                                })
+                              }
+                              className="h-7 rounded-none px-3 text-[10px]"
+                            >
+                              {text.draftDismiss}
+                            </Button>
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                     <ShotSettings
                       shot={shot}
