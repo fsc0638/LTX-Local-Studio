@@ -193,3 +193,23 @@ test('impossible inputs are rejected rather than guessed at', () => {
   assert.throws(() => planBreakdown(song({ segmentSeconds: 1 })), /segmentSeconds/);
   assert.throws(() => planBreakdown(song({ segmentSeconds: 25 })), /segmentSeconds/);
 });
+
+test('shot ids are stable across replanning and survive an edit', () => {
+  const first = planBreakdown(song()).shots;
+  const again = planBreakdown(song()).shots;
+  assert.deepEqual(
+    first.map((shot) => shot.id),
+    again.map((shot) => shot.id),
+  );
+  assert.equal(new Set(first.map((shot) => shot.id)).size, first.length);
+
+  // A merge shifts every index below the join, so the ids are what a list can be keyed by.
+  const merged = mergeBreakdownShots(first, 1, []);
+  assert.equal(merged[1].id, first[1].id);
+  assert.equal(merged[2].id, first[3].id);
+
+  const split = splitBreakdownShot(first, 3, (first[3].start + first[3].end) / 2, beats, [], BEAT);
+  assert.equal(split[3].id, first[3].id);
+  assert.notEqual(split[4].id, split[3].id);
+  assert.equal(new Set(split.map((shot) => shot.id)).size, split.length);
+});

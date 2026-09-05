@@ -24,6 +24,12 @@ export type BreakdownCue = {
 export type BreakdownShotKind = 'lyric' | 'breathing';
 
 export type BreakdownShot = {
+  /**
+   * Stable across re-planning and across edits, derived from the start time rather than a
+   * counter: after a merge every index below the join shifts, and a list keyed by index would
+   * have React reuse the wrong row. Starts are unique within a breakdown, so this is too.
+   */
+  id: string;
   index: number;
   start: number;
   end: number;
@@ -72,6 +78,9 @@ export type Breakdown = {
 };
 
 const EPSILON = 1e-6;
+
+/** Millisecond precision is enough to separate two cuts and keeps the id readable. */
+const shotId = (start: number) => `shot-${start.toFixed(3)}`;
 
 /** Median gap between beats. Median rather than mean so one dropped beat does not skew the grid. */
 export function beatInterval(beats: number[], durationSeconds: number): number {
@@ -247,6 +256,7 @@ export function planBreakdown(input: BreakdownInput): Breakdown {
       (line) => line.time >= start - EPSILON && line.time < end - EPSILON,
     );
     return {
+      id: shotId(start),
       index,
       start,
       end,
@@ -318,6 +328,7 @@ export function splitBreakdownShot(
   const head: BreakdownShot = { ...shot, end: at, endedBy: 'limit' };
   const tail: BreakdownShot = {
     ...shot,
+    id: shotId(at),
     start: at,
     cue: { ...shot.cue, time: at, action: '' },
   };
