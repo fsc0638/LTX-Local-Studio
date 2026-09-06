@@ -9,6 +9,7 @@ import {
 import {
   EMPTY_PLAN_SNAPSHOT,
   planProgress,
+  type PlanSnapshot,
   STAGE_KEYS,
   type PlanProgress,
   type StageKey,
@@ -43,6 +44,8 @@ const copy = {
     nextFix: '修正失敗的鏡頭後重試',
     nextReview: '審片：採用或退回每一鏡的 take',
     nextAssemble: '組片並下載',
+    nextKeyframes: '產生關鍵格（可略過，直接拍攝）',
+    nextKeyframesReview: '關鍵格：看紅黃燈的鏡，核准或重生',
     nextUnavailable: '此階段本期未啟用',
   },
   en: {
@@ -70,6 +73,8 @@ const copy = {
     nextRun: 'Start generating',
     nextWait: 'Wait for the host to finish',
     nextFix: 'Fix the failed shots, then retry',
+    nextKeyframes: 'Generate keyframes (optional; you can shoot without them)',
+    nextKeyframesReview: 'Keyframes: approve or regenerate the red and yellow shots',
     nextReview: 'Review: accept or send back each shot\u2019s take',
     nextAssemble: 'Assemble and download',
     nextUnavailable: 'Not enabled this phase',
@@ -99,6 +104,8 @@ const copy = {
     nextRun: '生成を開始',
     nextWait: 'ホストの生成完了を待つ',
     nextFix: '失敗したショットを修正して再試行',
+    nextKeyframes: 'キーフレームを生成（省略して撮影も可）',
+    nextKeyframesReview: 'キーフレーム：赤・黄のショットを承認または再生成',
     nextReview: 'レビュー：各ショットのテイクを採用または差し戻し',
     nextAssemble: '編集して書き出す',
     nextUnavailable: '今期は未対応',
@@ -106,9 +113,13 @@ const copy = {
 };
 
 /** The one place a plan is reduced to what the stage machine needs. */
-export function progressOf(plan: FactoryPlan | null): PlanProgress {
+/**
+ * `extras` carries facts the plan itself does not hold - the keyframes page learns how many
+ * candidates wait on a person from its own listing and reports it here.
+ */
+export function progressOf(plan: FactoryPlan | null, extras: Partial<PlanSnapshot> = {}): PlanProgress {
   // Before the factory has hydrated there is no plan; the line is simply at its start.
-  if (!plan) return planProgress(EMPTY_PLAN_SNAPSHOT);
+  if (!plan) return planProgress({ ...EMPTY_PLAN_SNAPSHOT, ...extras });
   const summary = summarizeFactory(plan);
   return planProgress({
     hasBible: hasFactoryBible(plan.bible),
@@ -122,6 +133,10 @@ export function progressOf(plan: FactoryPlan | null): PlanProgress {
       (shot) => shot.status === 'succeeded' && !shot.acceptedTakeId,
     ).length,
     accepted: plan.shots.filter((shot) => Boolean(shot.acceptedTakeId)).length,
+    // A shot whose picture came from an approved keyframe says so in its request.
+    keyframed: plan.shots.filter((shot) => Boolean(shot.request.keyframe_id)).length,
+    keyframesAttention: 0,
+    ...extras,
   });
 }
 
