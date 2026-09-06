@@ -830,6 +830,9 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
                     STORE.record(tombstone)
                     job.update(deleted_at=tombstone["deleted_at"])
                     JOBS[identity] = job
+                    if FACTORY is not None:
+                        # The take that produced this output loses it; its shot and siblings do not.
+                        FACTORY.mark_take_deleted(identity)
                     try:
                         archive.remove_sources()
                     except (OSError, ValueError):
@@ -891,6 +894,18 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
         match = re.fullmatch(r"/api/v1/factory/shots/([0-9a-fA-F-]{36})/draft", path)
         if match:
             self.factory_draft(match.group(1), owner)
+            return True
+        match = re.fullmatch(r"/api/v1/factory/takes/([0-9a-fA-F-]{36})/(accept|reject)", path)
+        if match:
+            take_id, verdict = match.groups()
+            if verdict == "accept":
+                project_id = FACTORY.accept_take(take_id, owner)
+            else:
+                project_id = FACTORY.reject_take(take_id, owner, self.factory_body().get("reason"))
+            if project_id is None:
+                self.send_json(404, {"error": "Take not found", "code": "take_not_found"})
+            else:
+                self.send_json(200, FACTORY.get_project(project_id, owner))
             return True
         match = re.fullmatch(r"/api/v1/factory/projects/([0-9a-fA-F-]{36})(/shots|/run|/pause)?", path)
         if not match:
