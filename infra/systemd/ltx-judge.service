@@ -1,0 +1,31 @@
+# Consistency (CJ), style (SJ) and motion (MQ) scoring for the review stage. Install with:
+#   cp infra/systemd/ltx-judge.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now ltx-judge.service
+# Not enabled by the sync script: activating a unit is a system-level change.
+#
+# Verify before trusting it - systemd-analyze reports a bad line but still exits 0:
+#   systemd-analyze --user verify infra/systemd/ltx-judge.service   # must print nothing
+[Unit]
+Description=LTX Local Studio judge scoring (consistency, style, motion)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/kwayrdc/LTX Local Studio
+# Quoted: Environment= splits an unquoted value on whitespace, and this path has a space in it.
+# Unquoted, LTX_SITE_ROOT became /home/kwayrdc/LTX and ltx-audio accepted no paths at all.
+Environment="LTX_SITE_ROOT=/home/kwayrdc/LTX Local Studio"
+# Where the DINOv2, CLIP, facenet and RAFT weights already live; without these the first request
+# would try to download several gigabytes.
+Environment=HF_HOME=/opt/studio/models/hf
+Environment=TORCH_HOME=/opt/studio/models/torch
+# The vision venv owns facenet, DINOv2, CLIP and RAFT; ltx-api's interpreter has none of them.
+ExecStart=/opt/studio/venvs/vision/bin/python "/home/kwayrdc/LTX Local Studio/services/judge/server.py"
+Restart=on-failure
+RestartSec=5
+# Loopback-only by construction, but say so here as well so a stray override is visible.
+Environment=LTX_JUDGE_HOST=127.0.0.1
+Environment=LTX_JUDGE_PORT=8791
+
+[Install]
+WantedBy=default.target
