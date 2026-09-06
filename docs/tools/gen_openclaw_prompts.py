@@ -132,7 +132,7 @@ WO = [
 "1. 04 審片頁：每鏡 take 並排；三條分數 vs Bible 門檻線（C4 前顯示「未校準」用暫定值並標示）；VLM 一句話（主機端 gpt-5.6 呼叫，走 B4 同一 key 與 usage 記帳）＋「我不同意」；接受／退回（必填原因）；紅燈下按接受 → overridden 並記錄誰、何時。\n"
 "2. 抽屜：逐幀 CJ 曲線、相鄰鏡嚴格模式（fpr 1% 門檻）、本鏡門檻覆寫。\n"
 "3. 否決＝take 不自動成為 accepted_take_id、不進 06；不阻止用戶接受。裁判服務關閉時頁面仍可用，分數欄顯示未判分。",
- extra="額外檢查：用兩個不同角色的參照各生成一個 take，換臉的那個是否紅燈且未自動進組片。\n"),
+ extra="測試：`node --test tests/review.test.mjs tests/stages.test.mjs` 與 LTX venv 跑 tests/test_factory_review.py（全 mock，不打 OpenAI）。「換臉 take CJ 低於門檻、紅燈、不自動進組片、仍可接受並留 overridden」對應 test_factory_review.py 的 RED fixture 那幾條，看 verdict=overridden 且 overriddenBy／overriddenAt 有值、acceptedTakeId 只在人按了才出現。\n**未判分不是紅燈**是刻意設計：裁判掛掉、沒參照圖、靜態圖都回 unscored，採用時記 accepted 不記 overridden。看到這樣不要判 FAIL。\n**`overridden` 的意思在 C3 改了**：C2 曾拿它標「被另一個 take 取代」，現在依規格專指「紅燈下人仍接受」；被取代的 take 回 pending。C2 的測試已同步改，不是回歸。\n04 頁面外觀需要登入瀏覽器，且正式站 API（main）沒有 C3 路由——dev UI 指向它會顯示「讀不到 take 清單」，那是正確行為。這一條照 docs/work-orders/C3.md 的紀錄回報：若寫著已由阿寶確認就照抄，否則回報「需要阿寶在瀏覽器確認」，**不要判 FAIL、不要自己起第二支 API**。\n多驗一條：`hostVersion`——退回後 03 頁面應重載到含「避免：…」的 prompt（見 production-factory.tsx 的 hostVersion effect）。\n額外檢查：用兩個不同角色的參照各生成一個 take，換臉的那個是否紅燈且未自動進組片。\n"),
  dict(id="C4", title="門檻校準", phase="C", size="S", tests=JS, body=
 "1. 檢查 calibration/ 是否存在且 ≥2 個角色資料夾、每個 ≥10 張；不足就列出缺什麼並停下回報，不要自己找圖湊數。\n"
 "2. 足夠時：/opt/studio/venvs/vision/bin/python infra/gb10/tools/calibrate_embeddings.py --root calibration --out calibration_report.json；把 fpr 5% 門檻寫進 Bible 預設、fpr 1% 當相鄰鏡嚴格值；UI 加「匯入校準報告」讀 JSON 進 bible.thresholds；C3 門檻線不再標「未校準」；無臉圖列出並在 UI 標示。",
