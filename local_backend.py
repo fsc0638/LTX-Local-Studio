@@ -73,6 +73,7 @@ JUDGE_TIMEOUT = int(os.environ.get("LTX_JUDGE_TIMEOUT", "900"))
 # D1: the imagegen service and the lease that keeps it and LTX off the GPU at the same time.
 IMAGEGEN_SERVICE = os.environ.get("LTX_IMAGEGEN_SERVICE", "http://127.0.0.1:8792")
 import gpu_lease  # noqa: E402 - grouped with the settings it reads
+import review_rules  # noqa: E402 - lights for keyframes; the judge's thresholds live there
 
 
 def ltx_job_active():
