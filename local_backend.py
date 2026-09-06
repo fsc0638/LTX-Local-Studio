@@ -1407,7 +1407,7 @@ def openai_draft(key, context):
         raise ValueError("draft must be a JSON object")
     tokens = int((payload.get("usage") or {}).get("total_tokens") or 0)
     # Only the two fields the schema allows survive, whatever else came back.
-    return {"prompt": str(draft.get("prompt", "")), 
+    return {"prompt": str(draft.get("prompt", "")),
             "primary_action": str(draft.get("primary_action", ""))}, tokens
 
 
