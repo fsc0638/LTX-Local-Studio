@@ -136,7 +136,7 @@ WO = [
  dict(id="C4", title="門檻校準", phase="C", size="S", tests=JS, body=
 "1. 檢查 calibration/ 是否存在且 ≥2 個角色資料夾、每個 ≥10 張；不足就列出缺什麼並停下回報，不要自己找圖湊數。\n"
 "2. 足夠時：/opt/studio/venvs/vision/bin/python infra/gb10/tools/calibrate_embeddings.py --root calibration --out calibration_report.json；把 fpr 5% 門檻寫進 Bible 預設、fpr 1% 當相鄰鏡嚴格值；UI 加「匯入校準報告」讀 JSON 進 bible.thresholds；C3 門檻線不再標「未校準」；無臉圖列出並在 UI 標示。",
- extra="素材放在**主 checkout** 的 calibration/（已 gitignore，不會進版控），worktree 用絕對路徑「/home/kwayrdc/LTX Local Studio/calibration」讀。沒有素材就停下回報，**不要自己生圖或抓圖湊數**。\n報告對 Bible 的對應（見 docs/work-orders/C4.md 的表）：`fpr_05.threshold` → 預設，`fpr_01.threshold` → `thresholds.strict.*`，同時寫 `calibrated: true` 與 `eer`／`tpr`。metric 對欄位：face_facenet → `cj`、clip_vit_l14 → `sj`、**dinov2_large → 新欄位 `cj_dino`**：CJ 有臉走 facenet、無臉退 DINOv2，兩者尺度不同不能共用一條線，review_rules.py 與 lib/review.ts 要依 method_per_frame 選線（C1 時兩條路共用 0.80 是暫定）。驗收不只看 banner 消失，要看 `cj_dino` 存在且無臉幀用的是它。\n「無臉圖列出並在 UI 標示」：來源是報告的 no-face 清單，不是 UI 自己猜。\n校準腳本用 vision venv 跑：/opt/studio/venvs/vision/bin/python，設 HF_HOME=/opt/studio/models/hf TORCH_HOME=/opt/studio/models/torch 免下載。\n"),
+ extra="**架構先建、素材後補（規則 9）**：calibration/ 目前不存在，這不擋工單。要做完的是結構——Bible 的 `thresholds` 欄位（含 `cj_dino`、`strict.*`、`calibrated`、`report` 摘要）、「匯入校準報告」UI（讀腳本輸出的 JSON，解析 `metrics[].thresholds.fpr_05/fpr_01`；`face_facenet` 只有 note 時只寫 `cj_dino` 並說明臉部仍未校準）、review_rules.py 與 lib/review.ts 依 `method_per_frame` 選 `cj` 或 `cj_dino`、無臉圖（`missing_faces`）在 UI 列出。用一份**手寫的 fixture 報告**（形狀見 docs/work-orders/C4.md）驗匯入與分線；真素材的校準跑分寫進「待素材測試」。\n素材到了才做的：主 checkout 的 calibration/（已 gitignore）放 ≥2 角色、每個 ≥10 張，用 vision venv 跑 infra/gb10/tools/calibrate_embeddings.py（HF_HOME=/opt/studio/models/hf TORCH_HOME=/opt/studio/models/torch），匯入後 04 的「未校準」banner 才會消失。**驗收時這一條回報「待素材」，不判 FAIL；不要自己生圖或抓圖湊數。**\n"),
  dict(id="D1", title="imagegen adapter 與 GPU 租約", phase="D", size="L", tests=PYDB, body=
 "1. local_adapters/imagegen.py：Qwen-Image-Edit-2509、Z-Image-Turbo 註冊成 media_type image 的 adapter；參數 steps（預設 8）、seed、references（1–3 個 image_id）、lightning、size，經 model_registry.py 檢查；不接受路徑。\n"
 "2. services/imagegen/server.py：跑在 /opt/studio/venvs/imagegen，只 bind 127.0.0.1:8792；模型常駐、閒置 N 分鐘釋放；infra/systemd/ltx-imagegen.service 只建檔，enable 需核准。\n"
@@ -180,6 +180,8 @@ SETUP = (
 "   `ss -ltn | grep :<port>` 或打 /health，有人在聽就直接用；不要重複啟動，也不要停掉別人的。\n"
 "9. 新增 systemd unit 檔要跑 `systemd-analyze --user verify <檔>`，輸出必須是空的\n"
 "   （格式錯只印警告，exit code 仍是 0）；Environment= 的值含空格一定要加引號。\n"
+"10. 架構先建、素材後補：需要真素材才能跑的那一步不停工單，結構做完用 mock 驗，真素材那步寫進工單檔的\n"
+"    「待素材測試」清單；驗收時那些條目回報「待素材」不判 FAIL；絕不自己生圖或抓圖湊數。\n"
 "確認寫入後，回覆你記下了哪幾條。"
 )
 
@@ -212,6 +214,7 @@ md = ["# OpenClaw 工單提示詞與工作規則", "",
 "5b. **Python 測試一律用 LTX venv 的 python**（`" + LTX_PYTHON + "`），不是 `python3`：系統 python 有 psycopg 但沒有 `av`，`test_quality` 與 `test_mv_timeline` 會 import 失敗（97 tests 而非 120）。`git-sync-main.sh` 本來就用這個直譯器跑 Python 測試。",
 "6. **開發前先開分支**：新階段開發、優化、新功能、Bug 除錯，一律先建分支＋worktree，不在主 checkout 動手。工單用 `wo/<小寫工單號>`，非工單用 `fix/<slug>`、`feat/<slug>`、`perf/<slug>`；worktree 放 `~/LTX-worktrees/<分支名>`。",
 "7. **合併**：由人在主機執行。main 若已前進，`--ff-only` 會失敗 —— 先在分支上 `git rebase origin/main && git push --force-with-lease`，再 `git fetch origin && git merge --ff-only origin/<分支> && git push origin main`。合併前跑完整測試套件。",
+"9. **架構先建、素材後補**（阿寶 2026-09-06）：工單裡需要真素材（校準照片、真實拍攝、真模型跑分）才能做的那一步，**不停工單**——把結構（UI、規則、匯入路徑、欄位、mock 測試）做完並驗證，真素材那一步寫進 `docs/work-orders/<id>.md` 的「待素材測試」清單（需要什麼、怎麼跑、預期看什麼）。**不要自己生圖或抓圖湊數。**驗收時素材相關條目回報「待素材」，不判 FAIL；結構部分照常 PASS／FAIL。合併不等素材；「未校準」之類的誠實標示留在 UI 上直到素材到位。",
 "8. **合併後立刻清乾淨**：`git worktree remove ~/LTX-worktrees/<分支名> && git branch -d <分支> && git push origin --delete <分支>`，並確認主 checkout 回到 main。分支殘留會讓下次 `--ff-only` 失敗。", "",
 "## 第 0 步：開工設定（只傳一次）", "", "```text", SETUP, "```", "",
 "## 繼續模板", "", "把 `{id}` 換成工單號：", "", "```text", CONT.replace("{lid}", "<id 小寫>").replace("{id}", "<id>"), "```", ""]

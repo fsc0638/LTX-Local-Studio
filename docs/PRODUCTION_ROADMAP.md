@@ -12,6 +12,10 @@ OpenClaw／LINE 的執行規則見 `docs/OPENCLAW_WORK_ORDERS.md`。
 4. agent 服務只聽 127.0.0.1，永不接受 client 給的路徑、URL 或 shell；檔案由 `ltx-api` 依 asset id 與所有權解析。OpenAI key 只在主機端 `/opt/studio/secrets/openai`。
 5. 裁判否決＝「不自動流到下一階段」，不阻止用戶接受。
 
+## 建置原則：架構先建、素材後補（2026-09-06）
+
+校準照片、真實拍攝素材短期內不會有。每張工單裡**需要真素材才能做的那一步不擋工單**：結構（UI、規則、匯入路徑、欄位、mock 測試）先做完並驗證，真素材那一步記在 `docs/work-orders/<id>.md` 的「待素材測試」清單，架構完善後再逐項補跑。驗收時素材相關條目回報「待素材」而非 FAIL；不以生成或抓取的圖片湊數。「未校準」之類的誠實標示留在 UI 上，直到素材到位。
+
 ## 依賴
 
 A1 → A2；A1 → B1；B0 → B1；B1 → B2、B3、B4、C1、D1、D4；B2 → B3；C1 → C3、D2；C2 → C3、D5；D1 → D2。
