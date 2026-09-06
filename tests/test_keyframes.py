@@ -22,6 +22,7 @@ import review_rules
 import test_accounts
 import test_backend
 from factory_store import FactoryStore
+from test_worker import run_job_implementation
 
 SERVER = Path(__file__).resolve().parents[1] / "services/imagegen/server.py"
 GREEN = {"media": {"kind": "image"}, "consistency": {"median": 0.91, "per_frame": [0.91], "method_per_frame": ["face_facenet"]},
@@ -77,6 +78,19 @@ class KeyframeTests(unittest.TestCase):
         factory_patch = patch.object(backend, "FACTORY", self.factory)
         factory_patch.start()
         self.addCleanup(factory_patch.stop)
+        # The fixture stubs the background job thread (see test_worker), so a submitted job would
+        # stay queued forever. Admit through the real submit_job, then run the job synchronously -
+        # the same order the thread would have used, minus the thread.
+        real_submit = backend.submit_job
+
+        def submit_and_run(payload, **kwargs):
+            status, result = real_submit(payload, **kwargs)
+            if status == 202 and "id" in result:
+                run_job_implementation(result["id"], payload)
+            return status, result
+        submit_patch = patch.object(backend, "submit_job", submit_and_run)
+        submit_patch.start()
+        self.addCleanup(submit_patch.stop)
         self.cookie, self.csrf = self.account()
         self.owner = json.loads(self.call("GET", "/api/auth/session", cookie=self.cookie)[2])["user"]["id"]
         self.judge_script = []
