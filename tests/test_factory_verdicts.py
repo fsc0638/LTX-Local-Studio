@@ -103,7 +103,7 @@ class VerdictTests(test_factory_api.FactoryAPITests):
         self.assertEqual(json.loads(body)["shots"][0]["acceptedTakeId"], take["id"])
         self.assertEqual(self.factory.takes(shot["id"], "@service")[0]["verdict"], "accepted")
 
-    def test_accepting_a_second_take_overrides_the_first_and_only_one_is_accepted(self):
+    def test_accepting_a_second_take_returns_the_first_to_pending_and_only_one_is_accepted(self):
         plan, shot, first = self.shot_with_take()
         self.accept(first["id"])
         job = finished_job()
@@ -113,7 +113,9 @@ class VerdictTests(test_factory_api.FactoryAPITests):
         after = json.loads(self.accept(second["id"])[2])["shots"][0]
         self.assertEqual(after["acceptedTakeId"], second["id"])
         by_id = {t["id"]: t["verdict"] for t in self.factory.takes(shot["id"], "@service")}
-        self.assertEqual(by_id[first["id"]], "overridden")
+        # 'overridden' is reserved for a person overruling a red light (C3); a superseded take is
+        # simply no longer chosen, so it goes back to pending.
+        self.assertEqual(by_id[first["id"]], "pending")
         self.assertEqual(by_id[second["id"]], "accepted")
         self.assertEqual(list(by_id.values()).count("accepted"), 1)
 
