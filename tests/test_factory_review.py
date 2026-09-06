@@ -26,6 +26,8 @@ GREEN = {"media": {"kind": "video", "frozen_ratio": 0.1, "black_ratio": 0.0},
          "consistency": {"median": 0.91, "per_frame": [0.90, 0.92], "method_per_frame": ["face_facenet"] * 2},
          "style": {"median": 0.90}, "motion": {"median": 1.2}}
 UNSCORED = {"status": "unscored", "reason": "judge_unavailable"}
+DINO = {**RED, "consistency": {"median": 0.70, "per_frame": [0.68, 0.72],
+                              "method_per_frame": ["dinov2_large"] * 2}}
 
 
 def finished_job():
@@ -62,6 +64,19 @@ class RuleTests(unittest.TestCase):
         self.assertEqual(review_rules.lights(UNSCORED, t), {"cj": "unscored", "sj": "unscored", "mq": "unscored"})
         self.assertEqual(review_rules.lights(None, t)["cj"], "unscored")
         self.assertFalse(review_rules.is_red(UNSCORED, t), "no score is not a red light")
+
+    def test_a_dino_scored_take_is_judged_against_cj_dino(self):
+        t = review_rules.resolve_thresholds({"thresholds": {"cj": 0.80, "cj_dino": 0.65}})
+        self.assertEqual(review_rules.consistency_method(DINO), "dinov2_large")
+        self.assertEqual(review_rules.consistency_method(RED), "face_facenet")
+        self.assertEqual(review_rules.consistency_line(DINO, t), 0.65)
+        self.assertEqual(review_rules.lights(DINO, t)["cj"], "green")
+        low = {**DINO, "consistency": {**DINO["consistency"], "median": 0.60}}
+        self.assertEqual(review_rules.lights(low, t)["cj"], "red")
+        face_same_median = {**RED, "consistency": {**RED["consistency"], "median": 0.70}}
+        self.assertEqual(review_rules.lights(face_same_median, t)["cj"], "red",
+                         "the same median is red on the face line: the lines differ")
+        self.assertEqual(review_rules.resolve_thresholds({})["cj_dino"], 0.80)
 
     def test_a_still_has_no_motion_score(self):
         still = {**GREEN, "media": {"kind": "image"}, "motion": None}

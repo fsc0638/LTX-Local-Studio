@@ -27,6 +27,8 @@ export type FactoryBible = {
   output: FactoryOutput;
   directing?: Record<string, string>;
   lyric_offset_seconds: number;
+  /** Judge thresholds (C3/C4). Absent means the placeholder defaults; see lib/review.ts. */
+  thresholds?: import('./calibration').BibleThresholds;
 };
 
 export type FactoryRunState = 'draft' | 'running' | 'paused' | 'completed';
@@ -157,6 +159,7 @@ export function normalizeFactoryBible(value: unknown): FactoryBible {
         'output',
         'directing',
         'lyric_offset_seconds',
+        'thresholds',
       ].includes(key),
   );
   if (extra.length)
@@ -212,6 +215,9 @@ export function normalizeFactoryBible(value: unknown): FactoryBible {
     output: raw.output ? record(raw.output, 'Bible output') : {},
     ...(raw.directing
       ? { directing: record(raw.directing, 'Bible directing') }
+      : {}),
+    ...(raw.thresholds
+      ? { thresholds: record(raw.thresholds, 'Bible thresholds') }
       : {}),
     lyric_offset_seconds:
       typeof raw.lyric_offset_seconds === 'number' &&

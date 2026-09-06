@@ -13,15 +13,19 @@ import {
 import type { FactoryPlan, FactoryShot } from '@/lib/production-factory';
 import {
   LIGHT_KEYS,
+  LINE_KEYS,
   consistencyCurve,
+  consistencyLine,
   isRed,
   lights,
   resolveThresholds,
   takeScores,
   type Light,
   type LightKey,
+  type LineKey,
   type Thresholds,
 } from '@/lib/review';
+import type { BibleThresholds } from '@/lib/calibration';
 import {
   Sheet,
   SheetContent,
@@ -40,7 +44,7 @@ export const reviewCopy = {
     uncalibrated: '門檻未校準：目前是暫定值（C4 校準後會由 Bible 覆蓋）。',
     strict: '相鄰鏡嚴格模式（fpr 1%）',
     strictNote: '用較嚴的門檻看相鄰鏡是否連戲；採用時也以嚴格門檻判定是否記為推翻。',
-    judges: { cj: '一致性', sj: '風格', mq: '動態' },
+    judges: { cj: '一致性', cj_dino: '整體（無臉）', sj: '風格', mq: '動態' },
     light: { red: '紅燈', green: '綠燈', unscored: '未判分' },
     unscoredNote: '裁判沒有給出這一項——服務未執行、沒有參照圖，或這是靜態圖。不是紅燈。',
     verdict: { pending: '待審', accepted: '已採用', rejected: '已退回', overridden: '推翻裁判採用' },
@@ -68,6 +72,7 @@ export const reviewCopy = {
     save: '儲存門檻',
     saved: '已儲存',
     reasonLabel: '退回原因',
+    faceLineUncalibrated: '臉部線仍為暫定值：校準報告裡臉太少。',
     takeN: 'Take {n}',
   },
   en: {
@@ -77,7 +82,7 @@ export const reviewCopy = {
     uncalibrated: 'Thresholds are uncalibrated placeholders (C4 writes measured values into the Bible).',
     strict: 'Strict mode for adjacent shots (fpr 1%)',
     strictNote: 'Judge with the stricter lines; accepting under them is what gets recorded as an override.',
-    judges: { cj: 'Consistency', sj: 'Style', mq: 'Motion' },
+    judges: { cj: 'Consistency', cj_dino: 'Whole (no face)', sj: 'Style', mq: 'Motion' },
     light: { red: 'Red', green: 'Green', unscored: 'Unscored' },
     unscoredNote: 'The judge gave nothing here - service down, no reference images, or a still. Not a red light.',
     verdict: { pending: 'Pending', accepted: 'Accepted', rejected: 'Sent back', overridden: 'Accepted over a red light' },
@@ -105,6 +110,7 @@ export const reviewCopy = {
     save: 'Save thresholds',
     saved: 'Saved',
     reasonLabel: 'Reason',
+    faceLineUncalibrated: 'The face line is still a placeholder: too few faces in the calibration report.',
     takeN: 'Take {n}',
   },
   ja: {
@@ -114,7 +120,7 @@ export const reviewCopy = {
     uncalibrated: 'しきい値は未校正の暫定値です（C4 で計測値が Bible に入ります）。',
     strict: '隣接ショットの厳格モード（fpr 1%）',
     strictNote: '厳しいしきい値で判定します。この下で採用すると「覆し」として記録されます。',
-    judges: { cj: '一貫性', sj: 'スタイル', mq: '動き' },
+    judges: { cj: '一貫性', cj_dino: '全体（顔なし）', sj: 'スタイル', mq: '動き' },
     light: { red: '赤', green: '緑', unscored: '未判定' },
     unscoredNote: '判定なし：サービス停止、参照画像なし、または静止画。赤ではありません。',
     verdict: { pending: '未審査', accepted: '採用', rejected: '差し戻し', overridden: '赤を覆して採用' },
@@ -142,6 +148,7 @@ export const reviewCopy = {
     save: 'しきい値を保存',
     saved: '保存しました',
     reasonLabel: '理由',
+    faceLineUncalibrated: '顔のラインは暫定のまま：校正レポートに顔が少なすぎました。',
     takeN: 'テイク {n}',
   },
 } as const;
@@ -195,12 +202,16 @@ function ScoreBar({
   );
 }
 
-function Curve({ take, threshold, text }: {
+function Curve({ take, thresholds, text }: {
   take: FactoryTake;
-  threshold: number;
+  thresholds: Thresholds;
   text: ReviewText;
 }) {
   const points = consistencyCurve(take.scores);
+  // Each second is judged against the line of the path that scored it: a frame with no face
+  // was scored by DINOv2 and belongs to the dino line, whatever its neighbours did.
+  const lineFor = (method: string) => (method === 'dinov2_large' ? thresholds.cj_dino : thresholds.cj);
+  const threshold = consistencyLine(take.scores, thresholds);
   if (!points.length) return <p className="text-[11px] text-muted-foreground">{text.noCurve}</p>;
   const width = 320;
   const height = 90;
@@ -214,7 +225,7 @@ function Curve({ take, threshold, text }: {
         <line x1={0} x2={width} y1={y(threshold)} y2={y(threshold)} stroke="#111" strokeDasharray="3 3" strokeWidth={1} />
         <path d={path} fill="none" stroke="#e85578" strokeWidth={1.5} />
         {points.map((p, i) => (
-          <circle key={p.second} cx={i * step} cy={y(p.value)} r={2} fill={p.value < threshold ? '#e85578' : '#2f9e6d'}>
+          <circle key={p.second} cx={i * step} cy={y(p.value)} r={2} fill={p.value < lineFor(p.method) ? '#e85578' : '#2f9e6d'}>
             <title>{`${p.second}s · ${p.value.toFixed(3)} · ${text.method[p.method as keyof typeof text.method] ?? p.method}`}</title>
           </circle>
         ))}
@@ -320,7 +331,7 @@ export function ReviewBoard({
       setBusy('');
     }
   };
-  const saveThresholds = async (shot: FactoryShot, values: Partial<Record<LightKey, number>>) => {
+  const saveThresholds = async (shot: FactoryShot, values: Partial<Record<LineKey, number>>) => {
     const cleaned = Object.fromEntries(
       Object.entries(values).filter(([, v]) => typeof v === 'number' && Number.isFinite(v)),
     );
@@ -363,8 +374,11 @@ export function ReviewBoard({
                 {shot.acceptedTakeId ? (
                   <span className="rounded-sm bg-[#e6f6ee] px-1.5 py-0.5 text-[10px] font-bold text-[#1f6b48]">{text.accepted}</span>
                 ) : null}
+                {thresholds.calibrated && (plan.bible.thresholds as BibleThresholds | undefined)?.report?.lines.cj === false ? (
+                  <span className="text-[10px] text-[#7a5a00]">{text.faceLineUncalibrated}</span>
+                ) : null}
                 <span className="ml-auto font-mono text-[10px] tabular-nums text-muted-foreground">
-                  cj {thresholds.cj} · sj {thresholds.sj} · mq {thresholds.mq}
+                  cj {thresholds.cj} · dino {thresholds.cj_dino} · sj {thresholds.sj} · mq {thresholds.mq}
                 </span>
               </div>
               {list.length === 0 ? (
@@ -416,7 +430,13 @@ export function ReviewBoard({
                         ) : null}
                         <div className="flex flex-col gap-1">
                           {LIGHT_KEYS.map((key) => (
-                            <ScoreBar key={key} label={text.judges[key]} value={values[key]} threshold={thresholds[key]} light={takeLights[key]} />
+                            <ScoreBar
+                              key={key}
+                              label={text.judges[key]}
+                              value={values[key]}
+                              threshold={key === 'cj' ? consistencyLine(take.scores, thresholds) : thresholds[key]}
+                              light={takeLights[key]}
+                            />
                           ))}
                         </div>
                         {Object.values(takeLights).includes('unscored') ? (
@@ -550,12 +570,13 @@ function ThresholdDrawer({
   strict: boolean;
   text: ReviewText;
   notice: string;
-  onSave: (values: Partial<Record<LightKey, number>>) => void;
+  onSave: (values: Partial<Record<LineKey, number>>) => void;
 }) {
   const thresholds: Thresholds = resolveThresholds(bible, shot.request, strict);
-  const own = ((shot.request as Record<string, unknown>).thresholds ?? {}) as Partial<Record<LightKey, number>>;
-  const [draft, setDraft] = useState<Record<LightKey, string>>({
+  const own = ((shot.request as Record<string, unknown>).thresholds ?? {}) as Partial<Record<LineKey, number>>;
+  const [draft, setDraft] = useState<Record<LineKey, string>>({
     cj: own.cj !== undefined ? String(own.cj) : '',
+    cj_dino: own.cj_dino !== undefined ? String(own.cj_dino) : '',
     sj: own.sj !== undefined ? String(own.sj) : '',
     mq: own.mq !== undefined ? String(own.mq) : '',
   });
@@ -566,12 +587,12 @@ function ThresholdDrawer({
         <SheetDescription>{shot.title}</SheetDescription>
       </SheetHeader>
       <div className="flex flex-col gap-5 py-4">
-        <Curve take={take} threshold={thresholds.cj} text={text} />
+        <Curve take={take} thresholds={thresholds} text={text} />
         <div>
           <p className="text-[11px] font-bold">{text.overrideTitle}</p>
           <p className="mt-1 text-[10px] text-muted-foreground">{text.overrideNote}</p>
           <div className="mt-3 flex flex-col gap-2">
-            {LIGHT_KEYS.map((key) => (
+            {LINE_KEYS.map((key) => (
               <label key={key} className="grid grid-cols-[80px_1fr_60px] items-center gap-2 text-[11px]">
                 <span className="font-bold">{text.judges[key]}</span>
                 <input
@@ -594,8 +615,8 @@ function ThresholdDrawer({
               onClick={() =>
                 onSave(
                   Object.fromEntries(
-                    LIGHT_KEYS.map((key) => [key, draft[key] === '' ? undefined : Number(draft[key])]),
-                  ) as Partial<Record<LightKey, number>>,
+                    LINE_KEYS.map((key) => [key, draft[key] === '' ? undefined : Number(draft[key])]),
+                  ) as Partial<Record<LineKey, number>>,
                 )
               }
               className="rounded-sm bg-foreground px-3 py-1.5 text-[11px] font-bold text-white"

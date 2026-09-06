@@ -9,15 +9,18 @@ lib/review.ts is the same rule for the browser. Keep the two in step; the tests 
 the same fixture numbers so drift shows up as a failing test rather than a disagreement on screen.
 """
 
-DEFAULT_THRESHOLDS = {"cj": 0.80, "sj": 0.85, "mq": 0.50}
+# cj and cj_dino are separate lines: facenet and DINOv2 similarities are on different scales, and
+# the consistency judge uses whichever path found the frame's face - or did not.
+DEFAULT_THRESHOLDS = {"cj": 0.80, "cj_dino": 0.80, "sj": 0.85, "mq": 0.50}
 # The stricter set for adjacent shots (C4's fpr 1%). Uncalibrated placeholder: a little above the
 # default, enough to make the mode visible without pretending to a measurement.
-DEFAULT_STRICT = {"cj": 0.85, "sj": 0.90, "mq": 0.50}
+DEFAULT_STRICT = {"cj": 0.85, "cj_dino": 0.85, "sj": 0.90, "mq": 0.50}
+LINE_KEYS = ("cj", "cj_dino", "sj", "mq")
 
 
 def _numbers(raw):
     out = {}
-    for key in ("cj", "sj", "mq"):
+    for key in LINE_KEYS:
         value = (raw or {}).get(key) if isinstance(raw, dict) else None
         if isinstance(value, (int, float)) and 0 <= value <= 1:
             out[key] = float(value)
@@ -32,6 +35,22 @@ def resolve_thresholds(bible, request=None, strict=False):
     base.update(_numbers((request or {}).get("thresholds")))
     calibrated = bool(bible_thresholds.get("calibrated"))
     return {**base, "calibrated": calibrated, "strict": strict}
+
+
+def consistency_method(scores):
+    """Which consistency path scored most frames, or None when there is no per-frame record."""
+    if not isinstance(scores, dict):
+        return None
+    methods = (scores.get("consistency") or {}).get("method_per_frame") or []
+    if not methods:
+        return None
+    faces = sum(1 for m in methods if m == "face_facenet")
+    return "face_facenet" if faces * 2 >= len(methods) else "dinov2_large"
+
+
+def consistency_line(scores, thresholds):
+    """The consistency line in force: cj when faces were found, cj_dino when not."""
+    return thresholds["cj_dino"] if consistency_method(scores) == "dinov2_large" else thresholds["cj"]
 
 
 def take_scores(scores):
@@ -60,10 +79,11 @@ def lights(scores, thresholds):
     result = {}
     for key in ("cj", "sj", "mq"):
         value = values[key]
+        line = consistency_line(scores, thresholds) if key == "cj" else thresholds[key]
         if value is None:
             result[key] = "unscored"
         else:
-            result[key] = "red" if value < thresholds[key] else "green"
+            result[key] = "red" if value < line else "green"
     return result
 
 

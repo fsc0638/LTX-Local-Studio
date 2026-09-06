@@ -60,6 +60,8 @@ import {
   type FactoryShot,
   type FactoryShotState,
 } from '@/lib/production-factory';
+import { parseCalibrationReport, thresholdsFromReport, type BibleThresholds } from '@/lib/calibration';
+import { resolveThresholds } from '@/lib/review';
 
 type Locale = 'zh-TW' | 'en' | 'ja';
 export type FactoryIncoming = {
@@ -95,6 +97,15 @@ const copy = {
     failed: '需處理',
     addBlank: '新增鏡頭',
     bible: '00 / 專案 Bible',
+    calibrationTitle: '裁判門檻',
+    calibrationImport: '匯入校準報告',
+    calibrationUncalibrated: '未校準：目前是暫定值。跑 infra/gb10/tools/calibrate_embeddings.py 得到報告後在此匯入。',
+    calibrationCalibrated: '已校準（{images} 張、{characters} 個角色，{when}）',
+    calibrationFaceLineMissing: '臉部線仍為暫定值：報告裡臉太少，只校準了整體（DINOv2）與風格。',
+    calibrationMissingFaces: '無臉圖 {n} 張（只能靠整體相似度）',
+    calibrationSkipped: '未寫入：{line}——{reason}',
+    calibrationBad: '不是校準報告：{reason}',
+    calibrationLines: 'cj {cj} · dino {cj_dino} · sj {sj}（嚴格 {scj} · {sdino} · {ssj}）',
     bibleHint: '先固定角色、音樂與輸出規格；新增鏡頭會繼承這些設定。',
     bibleRequired: '請先設定專案 Bible，再新增鏡頭。',
     legacyFound: '這個瀏覽器還留著一份舊版計畫（{count} 鏡）。要上傳到主機嗎？上傳後即可關掉分頁繼續生產。',
@@ -162,6 +173,15 @@ const copy = {
     failed: 'Needs action',
     addBlank: 'Add shot',
     bible: '00 / PROJECT BIBLE',
+    calibrationTitle: 'Judge thresholds',
+    calibrationImport: 'Import calibration report',
+    calibrationUncalibrated: 'Uncalibrated: placeholders in force. Run infra/gb10/tools/calibrate_embeddings.py and import its report here.',
+    calibrationCalibrated: 'Calibrated ({images} images, {characters} characters, {when})',
+    calibrationFaceLineMissing: 'The face line is still a placeholder: too few faces in the report, so only the whole-image (DINOv2) and style lines were measured.',
+    calibrationMissingFaces: '{n} images without a face (whole-image similarity only)',
+    calibrationSkipped: 'Not written: {line} - {reason}',
+    calibrationBad: 'Not a calibration report: {reason}',
+    calibrationLines: 'cj {cj} · dino {cj_dino} · sj {sj} (strict {scj} · {sdino} · {ssj})',
     bibleHint:
       'Lock character, music and output defaults before adding inherited shots.',
     bibleRequired: 'Set the project Bible before adding a shot.',
@@ -236,6 +256,15 @@ const copy = {
     failed: '要対応',
     addBlank: 'ショットを追加',
     bible: '00 / プロジェクト Bible',
+    calibrationTitle: '判定しきい値',
+    calibrationImport: '校正レポートを取り込む',
+    calibrationUncalibrated: '未校正：暫定値です。infra/gb10/tools/calibrate_embeddings.py のレポートをここで取り込んでください。',
+    calibrationCalibrated: '校正済み（{images} 枚、{characters} キャラクター、{when}）',
+    calibrationFaceLineMissing: '顔のラインは暫定のまま：レポートに顔が少なく、全体（DINOv2）とスタイルのみ校正されました。',
+    calibrationMissingFaces: '顔なし画像 {n} 枚（全体類似度のみ）',
+    calibrationSkipped: '未反映：{line}——{reason}',
+    calibrationBad: '校正レポートではありません：{reason}',
+    calibrationLines: 'cj {cj} · dino {cj_dino} · sj {sj}（厳格 {scj} · {sdino} · {ssj}）',
     bibleHint: '人物、音楽、出力設定を固定してから継承ショットを追加します。',
     bibleRequired: '先にプロジェクト Bible を設定してください。',
     legacyFound: 'このブラウザに旧版の計画（{count} ショット）が残っています。ホストへアップロードしますか？アップロード後はタブを閉じても生成が続きます。',
@@ -334,6 +363,100 @@ function requestMeta(request: FactoryRequest): string {
   ]
     .filter(Boolean)
     .join(' · ');
+}
+
+const fillText = (template: string, values: Record<string, string | number>) =>
+  template.replace(/\{(\w+)\}/g, (match, key: string) =>
+    key in values ? String(values[key]) : match,
+  );
+
+/**
+ * The judge thresholds behind stage 04, and the one way they stop being placeholders: importing
+ * the report calibrate_embeddings.py writes. Nothing here measures anything; it reads a file the
+ * script produced from real pictures, and says plainly which lines the report could not set.
+ */
+function CalibrationPanel({
+  bible,
+  disabled,
+  text,
+  onImport,
+}: {
+  bible: FactoryBible;
+  disabled: boolean;
+  text: (typeof copy)[keyof typeof copy];
+  onImport: (thresholds: BibleThresholds) => void;
+}) {
+  const [notice, setNotice] = useState('');
+  const thresholds = (bible.thresholds ?? {}) as BibleThresholds;
+  const report = thresholds.report;
+  const lines = resolveThresholds(bible as unknown as Record<string, unknown>);
+  const strict = resolveThresholds(bible as unknown as Record<string, unknown>, undefined, true);
+  const read = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      const parsed = parseCalibrationReport(JSON.parse(await file.text()));
+      const result = thresholdsFromReport(parsed, thresholds);
+      onImport(result.thresholds);
+      setNotice(
+        result.skipped
+          .map((item) => fillText(text.calibrationSkipped, { line: item.line, reason: item.reason }))
+          .join(' · '),
+      );
+    } catch (error) {
+      setNotice(fillText(text.calibrationBad, { reason: error instanceof Error ? error.message : String(error) }));
+    }
+  };
+  return (
+    <div className="border border-border bg-[#fafaf8] p-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <p className="text-[10px] font-bold tracking-[0.12em]">{text.calibrationTitle}</p>
+        <label className={`rounded-none border border-border bg-white px-3 py-1 text-[10px] font-bold ${disabled ? 'opacity-40' : 'cursor-pointer hover:bg-[#f3f0ec]'}`}>
+          {text.calibrationImport}
+          <input
+            type="file"
+            accept="application/json,.json"
+            disabled={disabled}
+            className="sr-only"
+            onChange={(event) => {
+              void read(event.target.files?.[0]);
+              event.target.value = '';
+            }}
+          />
+        </label>
+      </div>
+      <p className={`mt-2 text-[10px] leading-5 ${thresholds.calibrated ? 'text-[#1f6b48]' : 'text-[#7a5a00]'}`}>
+        {thresholds.calibrated && report
+          ? fillText(text.calibrationCalibrated, {
+              images: report.images,
+              characters: report.characters.length,
+              when: new Date(report.imported_at).toLocaleDateString(),
+            })
+          : text.calibrationUncalibrated}
+      </p>
+      <p className="font-mono text-[10px] tabular-nums text-muted-foreground">
+        {fillText(text.calibrationLines, {
+          cj: lines.cj, cj_dino: lines.cj_dino, sj: lines.sj,
+          scj: strict.cj, sdino: strict.cj_dino, ssj: strict.sj,
+        })}
+      </p>
+      {thresholds.calibrated && report && !report.lines.cj ? (
+        <p className="mt-1 text-[10px] text-[#7a5a00]">{text.calibrationFaceLineMissing}</p>
+      ) : null}
+      {report?.missing_faces.length ? (
+        <details className="mt-1 text-[10px] text-muted-foreground">
+          <summary className="cursor-pointer">
+            {fillText(text.calibrationMissingFaces, { n: report.missing_faces.length })}
+          </summary>
+          <ul className="mt-1 list-disc pl-4">
+            {report.missing_faces.map((path) => (
+              <li key={path} className="font-mono">{path.split('/').pop()}</li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+      {notice ? <p className="mt-1 text-[10px] text-[#a8365a]">{notice}</p> : null}
+    </div>
+  );
 }
 
 function ShotSettings({
@@ -979,6 +1102,12 @@ export function ProductionFactory({
                 {text.bibleHint}
               </p>
             </div>
+            <CalibrationPanel
+              bible={plan.bible}
+              disabled={!editable}
+              text={text}
+              onImport={(thresholds) => updateBible((bible) => ({ ...bible, thresholds }))}
+            />
             <fieldset disabled={!editable}>
               <CharacterLock
                 locale={locale}
