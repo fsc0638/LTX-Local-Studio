@@ -74,6 +74,7 @@ import {
 import { StageRail, stageCopy, type RailKey } from '@/components/stage-rail';
 import { BreakdownEditor } from '@/components/breakdown-editor';
 import { ReviewBoard } from '@/components/review-board';
+import { KeyframesBoard } from '@/components/keyframes-board';
 import {
   breakdownCues,
   planBreakdown,
@@ -203,6 +204,8 @@ const translations = {
     unavailableTitle: '這個階段本期未啟用',
     unavailableNote: '模型都已安裝，但還沒接上介面。實作進度見 docs/PRODUCTION_ROADMAP.md。',
     unavailableKeyframes: '需要把 Qwen-Image-Edit 註冊成 adapter，並接上一致性裁判（D 期）。',
+    keyframesTitle: '每鏡先定一張關鍵格',
+    keyframesNote: '整批生成，每鏡依運鏡角度選參照、經一致性裁判亮燈；紅燈自動換 seed 重生一次再請你決定。核准的圖成為該鏡的起始畫面。',
     unavailableReview: '需要裁判服務與 take 概念（C 期）。',
     reviewTitle: '審每一鏡的 take',
     reviewNote: '三個裁判只亮燈、不否決：紅燈下你仍可採用，但會記錄是誰、何時推翻。門檻在校準前是暫定值。',
@@ -364,6 +367,8 @@ const translations = {
     unavailableTitle: 'This stage is not enabled yet',
     unavailableNote: 'The models are installed; nothing is wired to the interface yet. See docs/PRODUCTION_ROADMAP.md.',
     unavailableKeyframes: 'Needs Qwen-Image-Edit registered as an adapter and the consistency judge (phase D).',
+    keyframesTitle: 'A keyframe for every shot',
+    keyframesNote: 'Generated as one batch: each shot picks a reference by its camera angle and is lit by the consistency judge; red is regenerated once with a new seed, then it is your call. An approved keyframe becomes the shot\u2019s starting frame.',
     unavailableReview: 'Needs the judge service and the take model (phase C).',
     reviewTitle: 'Review each shot\u2019s takes',
     reviewNote: 'The three judges light up; they do not veto. You can accept under a red light, and who did so and when is recorded. Thresholds are placeholders until calibrated.',
@@ -526,6 +531,8 @@ const translations = {
     unavailableTitle: 'この段階は今期未対応です',
     unavailableNote: 'モデルは導入済みですが、まだ画面につながっていません。docs/PRODUCTION_ROADMAP.md を参照してください。',
     unavailableKeyframes: 'Qwen-Image-Edit のアダプター登録と一貫性判定が必要です（フェーズD）。',
+    keyframesTitle: '各ショットのキーフレーム',
+    keyframesNote: '一括生成：各ショットはカメラアングルで参照を選び、一貫性判定でランプが点きます。赤は seed を変えて1回再生成し、その後はあなたの判断です。承認した画像がそのショットの開始フレームになります。',
     unavailableReview: '判定サービスとテイク概念が必要です（フェーズC）。',
     reviewTitle: '各ショットのテイクをレビュー',
     reviewNote: '3つの判定はランプを点けるだけで拒否はしません。赤でも採用できますが、誰がいつ覆したかは記録されます。しきい値は校正前は暫定値です。',
@@ -761,6 +768,8 @@ function Studio() {
   const [plan, setPlan] = useState<FactoryPlan | null>(null);
   // Counts host-side plan changes made outside the factory component (review verdicts).
   const [hostVersion, setHostVersion] = useState(0);
+  // Reported by the keyframes page: candidates waiting on a person, for the stage rail.
+  const [keyframesAttention, setKeyframesAttention] = useState(0);
 
   const [prompt, setPrompt] = useState(initialPrompt);
   const [model, setModel] = useState('ltx23-distilled');
@@ -1230,7 +1239,7 @@ function Studio() {
     }
   };
 
-  const stageProgress = progressOf(plan);
+  const stageProgress = progressOf(plan, { keyframesAttention });
   const stageNames = stageCopy[locale].stages;
   const stageIndexOf = (key: TabKey) =>
     String(STAGE_KEYS.indexOf(key as StageKey)).padStart(2, '0');
@@ -1304,6 +1313,25 @@ function Studio() {
             locale={locale}
             onOpenStage={setTab}
           />
+        )}
+
+        {tab === 'keyframes' && (
+          <section>
+            <SectionTitle
+              eyebrow={`${stageIndexOf('keyframes')} / ${stageNames.keyframes}`}
+              title={ui.keyframesTitle}
+              note={ui.keyframesNote}
+            />
+            <KeyframesBoard
+              plan={plan}
+              locale={locale}
+              onPlanChange={(next) => {
+                setPlan(next);
+                setHostVersion((version) => version + 1);
+              }}
+              onAttention={setKeyframesAttention}
+            />
+          </section>
         )}
 
         {tab === 'review' && (

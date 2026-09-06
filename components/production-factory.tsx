@@ -130,6 +130,7 @@ const copy = {
     queueEmpty: '先從「生成」頁把設定加入製片工廠，或新增空白鏡頭。',
     shot: '鏡頭',
     prompt: '鏡頭提示詞',
+    fromKeyframe: '來自關鍵格',
     draft: '起草',
     drafting: '起草中…',
     draftUnavailable: '主機未設定 OpenAI，無法起草。',
@@ -208,6 +209,7 @@ const copy = {
       'Add the current setup from Create, or start with a blank shot.',
     shot: 'Shot',
     prompt: 'Shot prompt',
+    fromKeyframe: 'From keyframe',
     draft: 'Draft',
     drafting: 'Drafting\u2026',
     draftUnavailable: 'This host has no OpenAI key, so drafting is off.',
@@ -290,6 +292,7 @@ const copy = {
       '「生成」から現在の設定を追加するか、空のショットを作成してください。',
     shot: 'ショット',
     prompt: 'ショットプロンプト',
+    fromKeyframe: 'キーフレーム由来',
     draft: '下書き',
     drafting: '作成中…',
     draftUnavailable: 'ホストに OpenAI キーがないため下書きは使えません。',
@@ -1456,6 +1459,11 @@ export function ProductionFactory({
                       >
                         {shot.status.toUpperCase()}
                       </span>
+                      {shot.request.keyframe_id ? (
+                        <span className="rounded-sm bg-[#e6f6ee] px-1.5 py-0.5 text-[9px] font-bold text-[#1f6b48]">
+                          {text.fromKeyframe}
+                        </span>
+                      ) : null}
                       <div className="flex gap-1">
                         <Button
                           type="button"
