@@ -247,6 +247,10 @@
 背景任務：【工單 B4 · 驗收】
 專案目錄 "/home/kwayrdc/LTX Local Studio"（主 checkout，只能讀、不切分支）。git fetch origin；到 worktree ~/LTX-worktrees/wo-b4 驗收（沒有就 git worktree add ~/LTX-worktrees/wo-b4 wo/b4 並 ln -s 主 checkout 的 node_modules；分支不存在就回報並停止）。這是驗收不是開發：不修改程式與文件；只允許為了讓測試跑起來準備測試資料庫或暫存目錄，且做完要清掉。
 依 docs/PRODUCTION_ROADMAP.md「B4」節的驗收清單逐條執行，每條回報 PASS 或 FAIL 並附證據（指令、輸出摘要、數字、路徑）。另外必跑並附結果：LTX_TEST_DATABASE_URL=postgresql:///ltx_studio_test?host=/var/run/postgresql PYTHONPATH=tests /home/kwayrdc/Documents/Codex/2026-08-28/new-chat-2/work/ltx-2.3/LTX-2/.venv/bin/python -m unittest discover -s tests -p 'test_*.py' && node --test tests/*.test.mjs && npx --no-install tsc --noEmit -p tsconfig.json。
+**不要打真的 OpenAI**：驗收跑 tests/test_factory_draft.py 就好，那裡全是 mock。真呼叫要花錢，而且驗收不該花錢。
+「按鈕停用並說明」這條要小心誤判：正式站的 ltx-api 跑在 main 上，沒有 /draft 也不回 draft_available，所以把 dev UI 指向它時**按鈕本來就該是灰的** —— 那是正確行為，不是 FAIL。
+真 OpenAI 的端到端與瀏覽器流程已用隔離實例（8788、ltx_studio_test 資料庫）驗過，照 docs/work-orders/B4.md 的紀錄回報「已由阿寶於 2026-09-06 確認」，不要自己宣稱點過，也不要為了驗它去起第二支 API 或重啟服務。
+可機驗的另外兩條：db/migrations/0003_draft_usage.sql 存在且用 ADD COLUMN IF NOT EXISTS（可重跑）；grep 確認 local_backend.py 不會把 key 寫進回應或 log。
 任何 FAIL 不要自己修：寫出重現步驟、你懷疑的檔案與行號。最後一行只能是「B4 可合併」或「B4 退回」。
 ```
 

@@ -99,7 +99,15 @@ WO = [
 "1. local_backend.py：POST /api/v1/factory/shots/{id}/draft — 主機端呼叫 OpenAI（key 讀 /opt/studio/secrets/openai，權限 0600，瀏覽器永遠拿不到）；輸入 Bible 描述、該鏡導演參數、歌詞行、前後鏡；structured output 只允許 {prompt, primary_action}；usage 寫進 project；每專案 token 上限，超過回 429。\n"
 "2. UI：每鏡「起草」按鈕填進可編輯文字框；草稿不覆蓋用戶已改過（pinned）的提示詞；OpenAI 不可用時按鈕停用並說明。\n"
 "3. 測試用 mock，不打真 API。",
- extra=""),
+ extra="**不要打真的 OpenAI**：驗收跑 tests/test_factory_draft.py 就好，那裡全是 mock。真呼叫要花錢，"
+"而且驗收不該花錢。\n"
+"「按鈕停用並說明」這條要小心誤判：正式站的 ltx-api 跑在 main 上，沒有 /draft 也不回 draft_available，"
+"所以把 dev UI 指向它時**按鈕本來就該是灰的** —— 那是正確行為，不是 FAIL。\n"
+"真 OpenAI 的端到端與瀏覽器流程已用隔離實例（8788、ltx_studio_test 資料庫）驗過，"
+"照 docs/work-orders/B4.md 的紀錄回報「已由阿寶於 2026-09-06 確認」，不要自己宣稱點過，"
+"也不要為了驗它去起第二支 API 或重啟服務。\n"
+"可機驗的另外兩條：db/migrations/0003_draft_usage.sql 存在且用 ADD COLUMN IF NOT EXISTS（可重跑）；"
+"grep 確認 local_backend.py 不會把 key 寫進回應或 log。\n"),
  dict(id="C1", title="裁判服務 CJ／SJ／MQ", phase="C", size="M", tests=PYDB, body=
 "1. services/judge/server.py：跑在 /opt/studio/venvs/vision；只 bind 127.0.0.1:8791；POST /score {media_path, references[paths], style_anchor_path?}：抽幀每秒 1 幀；CJ 有臉用 facenet 對參照表取最大相似度、無臉退 DINOv2，回每幀與中位數；SJ 用 CLIP 對風格錨中位數；MQ 用 RAFT 光流幅度統計＋黑幀／靜止比例。只回數字，不判通過。path 必須在 uploads/、outputs/ 或 data/ 之下。\n"
 "2. local_backend.py：job succeeded 後自動送判，結果寫進 take.scores（B1 的 takes 表）；判分失敗只標「未判分」不影響 job 狀態。\n"
