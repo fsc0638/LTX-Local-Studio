@@ -28,6 +28,8 @@ export type FactoryTake = {
   verdict: 'pending' | 'accepted' | 'rejected' | 'overridden';
   reason: string | null;
   createdAt: number;
+  /** Set when the recycle bin took this take's output. The row stays as history. */
+  deletedAt: number | null;
 };
 
 export class FactoryRequestError extends Error {
@@ -122,6 +124,19 @@ export async function replaceShots(
       }),
     ),
   );
+}
+
+/** Make this take the shot's accepted one; a previously accepted take becomes overridden. */
+export async function acceptTake(takeId: string): Promise<FactoryPlan> {
+  return plan(await call(`/takes/${takeId}/accept`, { method: 'POST' }));
+}
+
+/**
+ * Send a take back. The reason is required and is carried into the next take's prompt as an
+ * "避免：" line; the server keeps earlier lines, so repeated rejections accumulate.
+ */
+export async function rejectTake(takeId: string, reason: string): Promise<FactoryPlan> {
+  return plan(await call(`/takes/${takeId}/reject`, json({ reason })));
 }
 
 export async function runProject(id: string): Promise<FactoryPlan> {

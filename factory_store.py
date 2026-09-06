@@ -114,6 +114,7 @@ def shot_json(row, take=None):
         "status": row["status"],
         "idempotencyKey": row["idempotency_key"],
         "progress": 100 if row["status"] == "succeeded" else 0,
+        "acceptedTakeId": str(row["accepted_take_id"]) if row.get("accepted_take_id") else None,
     }
     if take:
         shot["jobId"] = take["job_id"]
@@ -166,7 +167,7 @@ class FactoryStore:
             # The newest take per shot carries the output the UI shows.
             takes = db.execute(
                 "SELECT DISTINCT ON (shot_id) * FROM takes WHERE shot_id = ANY(%s) "
-                "ORDER BY shot_id, created_at DESC",
+                "AND deleted_at IS NULL ORDER BY shot_id, created_at DESC",
                 ([s["id"] for s in shots],)).fetchall() if shots else []
         latest = {t["shot_id"]: t for t in takes}
         return project_json(row, [shot_json(s, latest.get(s["id"])) for s in shots])
@@ -218,18 +219,34 @@ class FactoryStore:
                              Jsonb(_request(raw.get("request"))), Jsonb(_pinned(raw.get("pinned"))),
                              raw.get("status") if raw.get("status") in SHOT_STATES else "draft",
                              raw.get("idempotencyKey") or f"factory-{shot_id}", now, now))
+        ids = [item[0] for item in prepared]
+        if len(set(ids)) != len(ids):
+            raise FactoryError("invalid_shots", "A shot id appears twice")
         with self.connect() as db:
             owned = db.execute("SELECT 1 FROM projects WHERE id=%s AND owner_id=%s",
                                (project_id, owner_id)).fetchone()
             if not owned:
                 return None
-            # Replace inside one transaction: a half-written list would leave gaps in position.
-            db.execute("DELETE FROM shots WHERE project_id=%s", (project_id,))
+            # An id that already belongs to another project is refused, not adopted: the upsert
+            # below would otherwise move that shot - and its takes - across projects.
+            foreign = db.execute("SELECT 1 FROM shots WHERE id = ANY(%s) AND project_id <> %s",
+                                 (ids, project_id)).fetchone() if ids else None
+            if foreign:
+                raise FactoryError("invalid_shots", "A shot id belongs to another project")
+            # Update in place and delete only what the client dropped. Takes cascade from shots,
+            # so a delete-and-reinsert here silently threw away every take on every edit; the
+            # verdicts and accepted takes of C2 have to outlive a reorder.
+            db.execute("DELETE FROM shots WHERE project_id=%s AND NOT (id = ANY(%s))",
+                       (project_id, ids or ["00000000-0000-0000-0000-000000000000"]))
             if prepared:
                 with db.cursor() as cursor:
                     cursor.executemany(
                         "INSERT INTO shots(id,project_id,position,title,request,pinned,status,"
-                        "idempotency_key,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        "idempotency_key,created_at,updated_at) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                        "ON CONFLICT (id) DO UPDATE SET position=excluded.position, "
+                        "title=excluded.title, request=excluded.request, pinned=excluded.pinned, "
+                        "status=excluded.status, idempotency_key=excluded.idempotency_key, "
+                        "updated_at=excluded.updated_at",
                         prepared)
             db.execute("UPDATE projects SET updated_at=%s WHERE id=%s", (now, project_id))
         return self.get_project(project_id, owner_id)
@@ -386,7 +403,97 @@ class FactoryStore:
                               (shot_id,)).fetchall()
         return [{"id": str(r["id"]), "jobId": r["job_id"], "outputUrl": r["output_url"],
                  "posterUrl": r["poster_url"], "scores": r["scores"], "verdict": r["verdict"],
-                 "reason": r["reason"], "createdAt": r["created_at"]} for r in rows]
+                 "reason": r["reason"], "createdAt": r["created_at"],
+                 "deletedAt": r["deleted_at"]} for r in rows]
+
+    # ---------- verdicts (C2) ----------
+
+    def _owned_take(self, db, take_id, owner_id):
+        return db.execute(
+            """SELECT t.*, s.project_id, s.request, s.pinned, s.accepted_take_id
+                 FROM takes t JOIN shots s ON s.id = t.shot_id
+                 JOIN projects p ON p.id = s.project_id
+                WHERE t.id = %s AND p.owner_id = %s""",
+            (_identifier(take_id, "take id"), owner_id)).fetchone()
+
+    def accept_take(self, take_id, owner_id):
+        """Make this take the one that goes to assembly.
+
+        The shot's previously accepted take becomes 'overridden' rather than 'pending': it was
+        judged, and the judgement was superseded - that is different from never having been
+        looked at. Uniqueness of accepted_take_id is a table constraint, so two shots cannot end
+        up claiming the same take no matter how this is called.
+        """
+        now = time.time()
+        with self.connect() as db:
+            take = self._owned_take(db, take_id, owner_id)
+            if take is None:
+                return None
+            if take["deleted_at"]:
+                raise FactoryError("take_deleted", "This take's output was deleted")
+            if take["job_id"] is None and not take["output_url"]:
+                raise FactoryError("take_unfinished", "Only a finished take can be accepted")
+            db.execute("UPDATE takes SET verdict='overridden' WHERE shot_id=%s AND verdict='accepted' "
+                       "AND id<>%s", (take["shot_id"], take["id"]))
+            db.execute("UPDATE takes SET verdict='accepted' WHERE id=%s", (take["id"],))
+            db.execute("UPDATE shots SET accepted_take_id=%s, updated_at=%s WHERE id=%s",
+                       (take["id"], now, take["shot_id"]))
+            db.execute("UPDATE projects SET updated_at=%s WHERE id=%s", (now, take["project_id"]))
+        return take["project_id"]
+
+    def reject_take(self, take_id, owner_id, reason):
+        """Send a take back and open the next one, with the reason carried into its prompt.
+
+        The reason is appended as its own "避免：" line and earlier lines are kept: a second
+        rejection must not erase what the first one learned. The prompt is pinned afterwards so a
+        Bible reprojection cannot wash the accumulated notes away. The user can still edit it.
+        """
+        if not isinstance(reason, str) or not reason.strip():
+            raise FactoryError("reason_required", "A rejection needs a reason")
+        reason = reason.strip()[:300]
+        now = time.time()
+        with self.connect() as db:
+            take = self._owned_take(db, take_id, owner_id)
+            if take is None:
+                return None
+            request = dict(take["request"] or {})
+            prompt = str(request.get("prompt") or "").rstrip()
+            prompt = f"{prompt}\n避免：{reason}" if prompt else f"避免：{reason}"
+            if len(prompt) > MAX_PROMPT:
+                raise FactoryError("prompt_too_long",
+                                   f"Adding this reason would push the prompt past {MAX_PROMPT} characters")
+            request["prompt"] = prompt
+            pinned = list(take["pinned"] or [])
+            if "prompt" not in pinned:
+                pinned.append("prompt")
+            db.execute("UPDATE takes SET verdict='rejected', reason=%s WHERE id=%s",
+                       (reason, take["id"]))
+            # A new attempt needs a new key (see rotate_key); the shot goes back to draft so a
+            # person confirms the amended prompt before GPU time is spent on it.
+            db.execute(
+                "UPDATE shots SET request=%s, pinned=%s, status='draft', idempotency_key=%s, "
+                "accepted_take_id=CASE WHEN accepted_take_id=%s THEN NULL ELSE accepted_take_id END, "
+                "updated_at=%s WHERE id=%s",
+                (Jsonb(request), Jsonb(pinned), f"factory-{take['shot_id']}-{uuid.uuid4().hex[:8]}",
+                 take["id"], now, take["shot_id"]))
+            db.execute("UPDATE projects SET updated_at=%s WHERE id=%s", (now, take["project_id"]))
+        return take["project_id"]
+
+    def mark_take_deleted(self, job_id):
+        """The recycle bin took this job's output. Only that take changes.
+
+        No owner argument: the job deletion that calls this already checked ownership, and the
+        take is found through the job, never through anything the caller names.
+        """
+        now = time.time()
+        with self.connect() as db:
+            rows = db.execute("UPDATE takes SET deleted_at=%s WHERE job_id=%s AND deleted_at IS NULL "
+                              "RETURNING id, shot_id", (now, job_id)).fetchall()
+            for row in rows:
+                # A shot cannot keep an accepted take whose output no longer exists.
+                db.execute("UPDATE shots SET accepted_take_id=NULL, updated_at=%s "
+                           "WHERE id=%s AND accepted_take_id=%s", (now, row["shot_id"], row["id"]))
+        return len(rows)
 
     # ---------- run control ----------
 

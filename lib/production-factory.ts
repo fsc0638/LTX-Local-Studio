@@ -54,6 +54,8 @@ export type FactoryShot = {
   progress: number;
   message?: string;
   error?: string;
+  /** The take that goes to assembly, chosen in review (C2). Server state; absent until then. */
+  acceptedTakeId?: string;
 };
 
 export type FactoryPlan = {
@@ -368,6 +370,8 @@ export function restoreFactoryPlan(value: unknown): FactoryPlan {
       ? (shot.status as FactoryShotState)
       : 'draft';
     const jobId = typeof shot.jobId === 'string' ? shot.jobId : undefined;
+    const acceptedTakeId =
+      typeof shot.acceptedTakeId === 'string' ? shot.acceptedTakeId : undefined;
     const statusUrl = safePath(shot.statusUrl, '/api/');
     if (status === 'validating' || status === 'submitting') status = 'queued';
     if (status === 'running' && (!jobId || !statusUrl)) status = 'queued';
@@ -394,6 +398,7 @@ export function restoreFactoryPlan(value: unknown): FactoryPlan {
           : `factory-${shot.id}`,
       jobId,
       statusUrl,
+      ...(acceptedTakeId ? { acceptedTakeId } : {}),
       outputUrl: safePath(shot.outputUrl, '/'),
       posterUrl: safePath(shot.posterUrl, '/'),
       progress:
