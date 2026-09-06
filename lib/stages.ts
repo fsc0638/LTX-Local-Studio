@@ -8,6 +8,10 @@ export type PlanSnapshot = {
   total: number;
   completed: number;
   failed: number;
+  /** Finished shots nobody has judged yet. */
+  awaitingReview: number;
+  /** Shots with an accepted take. */
+  accepted: number;
 };
 
 /** What the line looks like before a plan exists at all. */
@@ -17,6 +21,8 @@ export const EMPTY_PLAN_SNAPSHOT: PlanSnapshot = {
   total: 0,
   completed: 0,
   failed: 0,
+  awaitingReview: 0,
+  accepted: 0,
 };
 
 export type StageKey =
@@ -41,8 +47,8 @@ export const STAGE_KEYS: StageKey[] = [
   'assembly',
 ];
 
-/** Keyframes, review and post need the judge and imagegen services (phases C and D). */
-export const UNAVAILABLE_STAGES: StageKey[] = ['keyframes', 'review', 'post'];
+/** Keyframes and post need the imagegen and post adapters (phase D). Review arrived in C3. */
+export const UNAVAILABLE_STAGES: StageKey[] = ['keyframes', 'post'];
 
 export type StageOwner = 'user' | 'worker' | 'none';
 
@@ -70,7 +76,13 @@ function baseStatuses(plan: PlanSnapshot): Record<StageKey, StageStatus> {
         : allDone
           ? 'done'
           : 'idle',
-    review: 'disabled',
+    // Review asks for a person as soon as one finished shot has no verdict; it is done when every
+    // shot has an accepted take. Between those it is simply idle - nothing to look at yet.
+    review: plan.awaitingReview
+      ? 'attention'
+      : plan.total > 0 && plan.accepted === plan.total
+        ? 'done'
+        : 'idle',
     post: 'disabled',
     assembly: plan.status === 'completed' ? 'done' : 'idle',
   };
@@ -92,6 +104,7 @@ export function planProgress(plan: PlanSnapshot): PlanProgress {
 
   let lastResult = 'resultNone';
   if (plan.failed) lastResult = 'resultFailed';
+  else if (plan.total > 0 && plan.accepted === plan.total) lastResult = 'resultReviewed';
   else if (plan.status === 'completed') lastResult = 'resultCompleted';
   else if (plan.completed) lastResult = 'resultShots';
   else if (plan.total) lastResult = 'resultBreakdown';
@@ -110,6 +123,8 @@ export function planProgress(plan: PlanSnapshot): PlanProgress {
     nextAction = 'nextShots';
   } else if (current === 'shoot') {
     nextAction = 'nextRun';
+  } else if (current === 'review') {
+    nextAction = plan.awaitingReview ? 'nextReview' : 'nextRun';
   } else if (current === 'assembly') {
     nextAction = 'nextAssemble';
   } else {

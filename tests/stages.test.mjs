@@ -13,6 +13,8 @@ const snapshot = (over = {}) => ({
   total: 0,
   completed: 0,
   failed: 0,
+  awaitingReview: 0,
+  accepted: 0,
   ...over,
 });
 
@@ -87,4 +89,25 @@ test('the line has a valid state before any plan exists', () => {
   assert.equal(progress.current, 'bible');
   assert.equal(progress.statuses.bible, 'active');
   assert.equal(progress.owner, 'user');
+});
+
+test('review asks for a person once a finished shot has no verdict', () => {
+  const progress = planProgress(snapshot({ hasBible: true, total: 3, completed: 3, awaitingReview: 2, accepted: 1 }));
+  assert.equal(progress.statuses.review, 'attention');
+  assert.equal(progress.current, 'review');
+  assert.equal(progress.owner, 'user');
+  assert.equal(progress.nextAction, 'nextReview');
+});
+
+test('review is done when every shot has an accepted take', () => {
+  const progress = planProgress(snapshot({ hasBible: true, total: 3, completed: 3, accepted: 3, status: 'completed' }));
+  assert.equal(progress.statuses.review, 'done');
+  assert.equal(progress.lastResult, 'resultReviewed');
+  assert.equal(progress.current, 'assembly');
+});
+
+test('review is idle, not disabled, while nothing has finished', () => {
+  const progress = planProgress(snapshot({ hasBible: true, total: 3 }));
+  assert.equal(progress.statuses.review, 'idle');
+  assert.ok(!UNAVAILABLE_STAGES.includes('review'));
 });

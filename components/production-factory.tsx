@@ -454,11 +454,19 @@ export function ProductionFactory({
   onPlanChange,
   section = 'all',
   draftAvailable = false,
+  hostVersion = 0,
 }: {
   locale: Locale;
   online: boolean;
   /** Whether the host has an OpenAI key. False disables the draft button and says why. */
   draftAvailable?: boolean;
+  /**
+   * Bumped by the page when another stage changed the plan on the host (review accepts and
+   * rejects). This component only polls while the line is running; without this, a rejected
+   * shot's amended prompt would sit on the host while stage 03 still held the old one - and the
+   * next save from 03 would write the old one back over it.
+   */
+  hostVersion?: number;
   incoming: FactoryIncoming | null;
   onIncomingConsumed: () => void;
   /** Lets the page derive stage status and the board from the same plan this component owns. */
@@ -708,6 +716,24 @@ export function ProductionFactory({
       window.clearInterval(timer);
     };
   }, [hydrated, plan.id, plan.status]);
+
+  useEffect(() => {
+    if (!hydrated || !plan.id || hostVersion === 0) return;
+    let disposed = false;
+    void (async () => {
+      try {
+        const fresh = await factory.getProject(plan.id);
+        if (!disposed) setPlan(fresh);
+      } catch {
+        // The next poll or reload will show it; nothing here is worth interrupting the user for.
+      }
+    })();
+    return () => {
+      disposed = true;
+    };
+    // plan.id is read but must not retrigger: this reacts to the host changing, not to the plan.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated, hostVersion]);
 
   const summary = summarizeFactory(plan);
   const active = activeFactoryShot(plan);
