@@ -147,7 +147,7 @@ WO = [
  dict(id="D2", title="關鍵格階段", phase="D", size="M", tests=JS, body=
 "1. 02 關鍵格頁：鏡頭清單變縮圖格；「產生全部關鍵格」整批：每鏡依 directing.angle 選參照（既有 select_reference 邏輯）→ imagegen job → C1 判分 → 綠／黃／紅；紅自動換 seed 重生一次再請人看；核准圖成為該鏡 image_id 並在籤上標「來自關鍵格」。\n"
 "2. 介面明確顯示「現在是關鍵格階段／拍攝階段」與切換代價（336 s）。",
- extra=""),
+ extra="可機驗：LTX venv 跑 tests/test_keyframes.py（真 imagegen 服務模組的 LTX_IMAGEGEN_FAKE=1 模式＋腳本化 judge）——「每鏡一張、依 angle 選參照」「紅燈換 seed 重生一次後交人」「混入另一角色（連兩次紅）停在紅燈、不自動進 03」「核准後 image_id 更新、pin、keyframe_id 標記、他人帳號讀不到」都在裡面；再加 node --test tests/keyframes.test.mjs tests/stages.test.mjs。\n**「24 鏡 ≈ 336 s＋24×26 s」是真模型項目，回報「待實測」不判 FAIL**：需要沒有 LTX job 的時段，且會真的載 61 GB；不要在驗收裡按「產生全部關鍵格」。登入後的 02 頁面照 docs/work-orders/D2.md 的紀錄回報，沒紀錄就寫「需要阿寶在瀏覽器確認」。\n測試裡 submit_job 被包成「admission 後同步跑 job」，那是因為 fixture 把背景 job 執行緒 stub 掉（同 run_job_implementation 慣例），不是繞過 admission。\nkeyframes 階段是**可略過的**：idle 不會成為「你在這裡」，只有候選等人時才 attention——看到 03 是 current 而 02 是 idle 不是 FAIL。\n"),
  dict(id="D3", title="後製 adapter VX", phase="D", size="M", tests=PYDB, body=
 "1. 先檢查 /opt/studio/tools/rife/train_log 是否有權重；沒有就回報阿寶並跳過 RIFE、只做 ESRGAN 與 LaMa。\n"
 "2. 對核准的 take 提供三個 post job：補幀（RIFE 到目標 FPS）、放大（Real-ESRGAN ×4 或沿用 LTX x2）、清理（LaMa，用戶畫遮罩）；輸入是本機 take 檔而非上傳；輸出成新 take 版本；完成後自動過 MQ。",
