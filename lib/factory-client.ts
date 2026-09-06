@@ -21,6 +21,7 @@ export type FactorySummaryRow = {
 
 export type FactoryTake = {
   id: string;
+  shotId: string;
   jobId: string | null;
   outputUrl: string | null;
   posterUrl: string | null;
@@ -30,6 +31,20 @@ export type FactoryTake = {
   createdAt: number;
   /** Set when the recycle bin took this take's output. The row stays as history. */
   deletedAt: number | null;
+  /** Who accepted this take against a red light, and when. Null for a plain acceptance. */
+  overriddenBy: string | null;
+  overriddenAt: number | null;
+  /** The VLM's sentence, kept once paid for; disagreed_by/at when the reviewer rejected it. */
+  opinion: {
+    text: string;
+    model?: string;
+    at?: number;
+    disagreed_by?: string;
+    disagreed_at?: number;
+  } | null;
+  /** Present on the project-level listing: the lines and lights in force for this take. */
+  thresholds?: import('./review').Thresholds;
+  lights?: Record<import('./review').LightKey, import('./review').Light>;
 };
 
 export class FactoryRequestError extends Error {
@@ -126,9 +141,30 @@ export async function replaceShots(
   );
 }
 
-/** Make this take the shot's accepted one; a previously accepted take becomes overridden. */
-export async function acceptTake(takeId: string): Promise<FactoryPlan> {
-  return plan(await call(`/takes/${takeId}/accept`, { method: 'POST' }));
+/**
+ * Make this take the shot's accepted one. The server computes the light itself and records an
+ * override if it was red; `strict` asks it to judge against the adjacent-shot thresholds.
+ */
+export async function acceptTake(takeId: string, strict = false): Promise<FactoryPlan> {
+  return plan(await call(`/takes/${takeId}/accept`, json({ strict })));
+}
+
+/** Every take in the project, grouped by shot id, each with its thresholds and lights. */
+export async function projectTakes(id: string): Promise<Record<string, FactoryTake[]>> {
+  const body = (await call(`/projects/${id}/takes`)) as { takes?: Record<string, FactoryTake[]> };
+  return body.takes || {};
+}
+
+/** Ask the host for one sentence about a take. Charged to the project's draft budget. */
+export async function takeOpinion(takeId: string): Promise<NonNullable<FactoryTake['opinion']>> {
+  const body = (await call(`/takes/${takeId}/opinion`, json({}))) as {
+    opinion: NonNullable<FactoryTake['opinion']>;
+  };
+  return body.opinion;
+}
+
+export async function disagreeOpinion(takeId: string): Promise<FactoryPlan> {
+  return plan(await call(`/takes/${takeId}/disagree`, json({})));
 }
 
 /**

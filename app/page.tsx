@@ -73,6 +73,7 @@ import {
 } from '@/components/production-factory';
 import { StageRail, stageCopy, type RailKey } from '@/components/stage-rail';
 import { BreakdownEditor } from '@/components/breakdown-editor';
+import { ReviewBoard } from '@/components/review-board';
 import {
   breakdownCues,
   planBreakdown,
@@ -203,6 +204,8 @@ const translations = {
     unavailableNote: '模型都已安裝，但還沒接上介面。實作進度見 docs/PRODUCTION_ROADMAP.md。',
     unavailableKeyframes: '需要把 Qwen-Image-Edit 註冊成 adapter，並接上一致性裁判（D 期）。',
     unavailableReview: '需要裁判服務與 take 概念（C 期）。',
+    reviewTitle: '審每一鏡的 take',
+    reviewNote: '三個裁判只亮燈、不否決：紅燈下你仍可採用，但會記錄是誰、何時推翻。門檻在校準前是暫定值。',
     unavailablePost: '需要後製 adapter：補幀、放大、清理（D 期）。',
     backToBoard: '回狀態板',
     ready: '已就緒',
@@ -362,6 +365,8 @@ const translations = {
     unavailableNote: 'The models are installed; nothing is wired to the interface yet. See docs/PRODUCTION_ROADMAP.md.',
     unavailableKeyframes: 'Needs Qwen-Image-Edit registered as an adapter and the consistency judge (phase D).',
     unavailableReview: 'Needs the judge service and the take model (phase C).',
+    reviewTitle: 'Review each shot\u2019s takes',
+    reviewNote: 'The three judges light up; they do not veto. You can accept under a red light, and who did so and when is recorded. Thresholds are placeholders until calibrated.',
     unavailablePost: 'Needs the post adapters: interpolation, upscaling, cleanup (phase D).',
     backToBoard: 'Back to the board',
     ready: 'READY',
@@ -522,6 +527,8 @@ const translations = {
     unavailableNote: 'モデルは導入済みですが、まだ画面につながっていません。docs/PRODUCTION_ROADMAP.md を参照してください。',
     unavailableKeyframes: 'Qwen-Image-Edit のアダプター登録と一貫性判定が必要です（フェーズD）。',
     unavailableReview: '判定サービスとテイク概念が必要です（フェーズC）。',
+    reviewTitle: '各ショットのテイクをレビュー',
+    reviewNote: '3つの判定はランプを点けるだけで拒否はしません。赤でも採用できますが、誰がいつ覆したかは記録されます。しきい値は校正前は暫定値です。',
     unavailablePost: '仕上げアダプター（補間・拡大・除去）が必要です（フェーズD）。',
     backToBoard: 'ボードに戻る',
     ready: '準備完了',
@@ -752,6 +759,8 @@ function Studio() {
   const [tab, setTab] = useState<TabKey>('board');
   // The factory owns the plan; the page keeps a mirror so the rail and the board can read it.
   const [plan, setPlan] = useState<FactoryPlan | null>(null);
+  // Counts host-side plan changes made outside the factory component (review verdicts).
+  const [hostVersion, setHostVersion] = useState(0);
 
   const [prompt, setPrompt] = useState(initialPrompt);
   const [model, setModel] = useState('ltx23-distilled');
@@ -1295,6 +1304,25 @@ function Studio() {
             locale={locale}
             onOpenStage={setTab}
           />
+        )}
+
+        {tab === 'review' && (
+          <section>
+            <SectionTitle
+              eyebrow={`${stageIndexOf('review')} / ${stageNames.review}`}
+              title={ui.reviewTitle}
+              note={ui.reviewNote}
+            />
+            <ReviewBoard
+              plan={plan}
+              locale={locale}
+              opinionsAvailable={capabilities?.draft_available === true}
+              onPlanChange={(next) => {
+                setPlan(next);
+                setHostVersion((version) => version + 1);
+              }}
+            />
+          </section>
         )}
 
         {UNAVAILABLE_STAGES.includes(tab as StageKey) && (
@@ -2184,6 +2212,7 @@ function Studio() {
             onIncomingConsumed={() => setFactoryIncoming(null)}
             onPlanChange={setPlan}
             draftAvailable={capabilities?.draft_available === true}
+            hostVersion={hostVersion}
             section={tab === 'shoot' ? 'queue' : 'bible'}
           />
         </div>
