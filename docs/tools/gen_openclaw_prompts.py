@@ -136,7 +136,7 @@ WO = [
  dict(id="C4", title="門檻校準", phase="C", size="S", tests=JS, body=
 "1. 檢查 calibration/ 是否存在且 ≥2 個角色資料夾、每個 ≥10 張；不足就列出缺什麼並停下回報，不要自己找圖湊數。\n"
 "2. 足夠時：/opt/studio/venvs/vision/bin/python infra/gb10/tools/calibrate_embeddings.py --root calibration --out calibration_report.json；把 fpr 5% 門檻寫進 Bible 預設、fpr 1% 當相鄰鏡嚴格值；UI 加「匯入校準報告」讀 JSON 進 bible.thresholds；C3 門檻線不再標「未校準」；無臉圖列出並在 UI 標示。",
- extra=""),
+ extra="素材放在**主 checkout** 的 calibration/（已 gitignore，不會進版控），worktree 用絕對路徑「/home/kwayrdc/LTX Local Studio/calibration」讀。沒有素材就停下回報，**不要自己生圖或抓圖湊數**。\n報告對 Bible 的對應（見 docs/work-orders/C4.md 的表）：`fpr_05.threshold` → 預設，`fpr_01.threshold` → `thresholds.strict.*`，同時寫 `calibrated: true` 與 `eer`／`tpr`。metric 對欄位：face_facenet → `cj`、clip_vit_l14 → `sj`、**dinov2_large → 新欄位 `cj_dino`**：CJ 有臉走 facenet、無臉退 DINOv2，兩者尺度不同不能共用一條線，review_rules.py 與 lib/review.ts 要依 method_per_frame 選線（C1 時兩條路共用 0.80 是暫定）。驗收不只看 banner 消失，要看 `cj_dino` 存在且無臉幀用的是它。\n「無臉圖列出並在 UI 標示」：來源是報告的 no-face 清單，不是 UI 自己猜。\n校準腳本用 vision venv 跑：/opt/studio/venvs/vision/bin/python，設 HF_HOME=/opt/studio/models/hf TORCH_HOME=/opt/studio/models/torch 免下載。\n"),
  dict(id="D1", title="imagegen adapter 與 GPU 租約", phase="D", size="L", tests=PYDB, body=
 "1. local_adapters/imagegen.py：Qwen-Image-Edit-2509、Z-Image-Turbo 註冊成 media_type image 的 adapter；參數 steps（預設 8）、seed、references（1–3 個 image_id）、lightning、size，經 model_registry.py 檢查；不接受路徑。\n"
 "2. services/imagegen/server.py：跑在 /opt/studio/venvs/imagegen，只 bind 127.0.0.1:8792；模型常駐、閒置 N 分鐘釋放；infra/systemd/ltx-imagegen.service 只建檔，enable 需核准。\n"
