@@ -15,6 +15,8 @@ const snapshot = (over = {}) => ({
   failed: 0,
   awaitingReview: 0,
   accepted: 0,
+  keyframed: 0,
+  keyframesAttention: 0,
   ...over,
 });
 
@@ -110,4 +112,19 @@ test('review is idle, not disabled, while nothing has finished', () => {
   const progress = planProgress(snapshot({ hasBible: true, total: 3 }));
   assert.equal(progress.statuses.review, 'idle');
   assert.ok(!UNAVAILABLE_STAGES.includes('review'));
+});
+
+test('keyframes are idle, not disabled, and ask for a person when a candidate is red or yellow', () => {
+  assert.ok(!UNAVAILABLE_STAGES.includes('keyframes'));
+  const idle = planProgress(snapshot({ hasBible: true, total: 3 }));
+  assert.equal(idle.statuses.keyframes, 'idle');
+  const attention = planProgress(snapshot({ hasBible: true, total: 3, keyframesAttention: 1 }));
+  assert.equal(attention.statuses.keyframes, 'attention');
+  assert.equal(attention.current, 'keyframes');
+  assert.equal(attention.nextAction, 'nextKeyframesReview');
+});
+
+test('keyframes are done when every shot starts from an approved one', () => {
+  const progress = planProgress(snapshot({ hasBible: true, total: 3, keyframed: 3 }));
+  assert.equal(progress.statuses.keyframes, 'done');
 });

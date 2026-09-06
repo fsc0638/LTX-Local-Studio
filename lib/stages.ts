@@ -12,6 +12,10 @@ export type PlanSnapshot = {
   awaitingReview: number;
   /** Shots with an accepted take. */
   accepted: number;
+  /** Shots whose image_id came from an approved keyframe. */
+  keyframed: number;
+  /** Shots whose newest keyframe is red or yellow and waiting on a person. */
+  keyframesAttention: number;
 };
 
 /** What the line looks like before a plan exists at all. */
@@ -23,6 +27,8 @@ export const EMPTY_PLAN_SNAPSHOT: PlanSnapshot = {
   failed: 0,
   awaitingReview: 0,
   accepted: 0,
+  keyframed: 0,
+  keyframesAttention: 0,
 };
 
 export type StageKey =
@@ -47,8 +53,8 @@ export const STAGE_KEYS: StageKey[] = [
   'assembly',
 ];
 
-/** Keyframes and post need the imagegen and post adapters (phase D). Review arrived in C3. */
-export const UNAVAILABLE_STAGES: StageKey[] = ['keyframes', 'post'];
+/** Post needs the post adapter (D3). Keyframes arrived in D2, review in C3. */
+export const UNAVAILABLE_STAGES: StageKey[] = ['post'];
 
 export type StageOwner = 'user' | 'worker' | 'none';
 
@@ -68,7 +74,13 @@ function baseStatuses(plan: PlanSnapshot): Record<StageKey, StageStatus> {
   return {
     bible: plan.hasBible ? 'done' : 'idle',
     breakdown: plan.total ? 'done' : 'idle',
-    keyframes: 'disabled',
+    // Keyframes are optional before shooting: idle until there are shots, attention while a
+    // candidate waits on a person, done once every shot starts from an approved keyframe.
+    keyframes: plan.keyframesAttention
+      ? 'attention'
+      : plan.total > 0 && plan.keyframed === plan.total
+        ? 'done'
+        : 'idle',
     shoot: plan.failed
       ? 'attention'
       : plan.status === 'running'
@@ -96,8 +108,13 @@ export function planProgress(plan: PlanSnapshot): PlanProgress {
   const statuses = baseStatuses(plan);
 
   // "You are here" is the first stage that is neither finished nor out of scope this phase.
+  // Keyframes are optional: an idle keyframe stage is skipped over, and only asks to be current
+  // while a candidate is waiting on a person.
   const pending = STAGE_KEYS.find(
-    (key) => statuses[key] !== 'done' && statuses[key] !== 'disabled',
+    (key) =>
+      statuses[key] !== 'done' &&
+      statuses[key] !== 'disabled' &&
+      !(key === 'keyframes' && statuses[key] === 'idle'),
   );
   const current = pending ?? 'assembly';
   if (pending && statuses[pending] === 'idle') statuses[pending] = 'active';
@@ -125,6 +142,8 @@ export function planProgress(plan: PlanSnapshot): PlanProgress {
     nextAction = 'nextRun';
   } else if (current === 'review') {
     nextAction = plan.awaitingReview ? 'nextReview' : 'nextRun';
+  } else if (current === 'keyframes') {
+    nextAction = plan.keyframesAttention ? 'nextKeyframesReview' : 'nextKeyframes';
   } else if (current === 'assembly') {
     nextAction = 'nextAssemble';
   } else {
