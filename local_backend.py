@@ -82,6 +82,19 @@ def ltx_job_active():
 
 
 GPU_LEASE = gpu_lease.GpuLease(IMAGEGEN_SERVICE, ltx_job_active)
+
+# D2: keyframes are generated with the edit model from the Bible's references.
+KEYFRAME_MODEL = os.environ.get("LTX_KEYFRAME_MODEL", "qwen-image-edit-2509")
+KEYFRAME_STEPS = int(os.environ.get("LTX_KEYFRAME_STEPS", "8"))
+# The roadmap's measured costs: one model switch, then one generation per shot.
+KEYFRAME_SWITCH_SECONDS = 336
+KEYFRAME_SECONDS = 26
+KEYFRAME_RETRY_SEED = 7919
+# How long a keyframe waits for the GPU and for its job. Tests cap these; production waits.
+KEYFRAME_BUSY_RETRIES = int(os.environ.get("LTX_KEYFRAME_BUSY_RETRIES", "240"))
+KEYFRAME_BUSY_SLEEP = float(os.environ.get("LTX_KEYFRAME_BUSY_SLEEP", "5"))
+KEYFRAME_WAIT_SECONDS = float(os.environ.get("LTX_KEYFRAME_WAIT_SECONDS", "1800"))
+KEYFRAME_RUNS: dict[str, threading.Thread] = {}
 # Alignment against the studio's own LRC sheets sits about 0.9 s ahead of the printed times.
 # Whether that is stable-ts running early or the sheets being written late is unresolved
 # (docs/GB10_SETUP.md), so it is published as a correctable constant rather than folded in.
@@ -913,6 +926,16 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
             takes = FACTORY.takes(match.group(1), owner)
             self.send_json(200, {"takes": takes}) if takes is not None else self.send_json(404, {"error": "Shot not found", "code": "shot_not_found"})
             return True
+        match = re.fullmatch(r"/api/v1/factory/projects/([0-9a-fA-F-]{36})/keyframes", path)
+        if match:
+            listing = FACTORY.list_keyframes(match.group(1), owner)
+            if listing is None:
+                self.send_json(404, {"error": "Project not found", "code": "project_not_found"})
+            else:
+                lease = GPU_LEASE.describe()
+                self.send_json(200, {**listing, "gpu": {"holder": lease["holder"], "imagegen_loaded": lease["imagegen_loaded"]},
+                                     "costs": {"switch_seconds": KEYFRAME_SWITCH_SECONDS, "per_keyframe_seconds": KEYFRAME_SECONDS}})
+            return True
         match = re.fullmatch(r"/api/v1/factory/projects/([0-9a-fA-F-]{36})/takes", path)
         if match:
             grouped = FACTORY.project_takes(match.group(1), owner)
@@ -938,6 +961,52 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
         match = re.fullmatch(r"/api/v1/factory/takes/([0-9a-fA-F-]{36})/opinion", path)
         if match:
             self.factory_opinion(match.group(1), owner)
+            return True
+        match = re.fullmatch(r"/api/v1/factory/projects/([0-9a-fA-F-]{36})/keyframes/(run|stop)", path)
+        if match:
+            project_id, action = match.groups()
+            plan = FACTORY.get_project(project_id, owner)
+            if plan is None:
+                self.send_json(404, {"error": "Project not found", "code": "project_not_found"})
+                return True
+            if action == "stop":
+                run = FACTORY.keyframe_run(project_id)
+                if run.get("status") == "running":
+                    FACTORY.set_keyframe_run(project_id, {**run, "status": "stopping"})
+                self.send_json(200, {"run": FACTORY.keyframe_run(project_id)})
+                return True
+            if FACTORY.keyframe_run(project_id).get("status") in ("running", "stopping") or project_id in KEYFRAME_RUNS:
+                self.send_json(409, {"error": "Keyframes are already being generated", "code": "keyframes_running"})
+                return True
+            if not plan["shots"]:
+                self.send_json(400, {"error": "The project has no shots", "code": "no_shots"})
+                return True
+            thread = threading.Thread(target=keyframe_batch, args=(project_id, owner), name=f"keyframes-{project_id[:8]}", daemon=True)
+            KEYFRAME_RUNS[project_id] = thread
+            thread.start()
+            self.send_json(202, {"run": {"status": "running", "total": len(plan["shots"]),
+                                         "estimate_seconds": KEYFRAME_SWITCH_SECONDS + KEYFRAME_SECONDS * len(plan["shots"])}})
+            return True
+        match = re.fullmatch(r"/api/v1/factory/keyframes/([0-9a-fA-F-]{36})/(approve|reject)", path)
+        if match:
+            keyframe_id, action = match.groups()
+            if action == "reject":
+                project_id = FACTORY.reject_keyframe(keyframe_id, owner, self.factory_body().get("reason"))
+            else:
+                context = FACTORY.keyframe_context(keyframe_id, owner)
+                if context is None:
+                    self.send_json(404, {"error": "Keyframe not found", "code": "keyframe_not_found"})
+                    return True
+                png = output_location(str(context.get("output_url") or "").rsplit("/", 1)[-1]) if context.get("output_url") else None
+                if not png or not png.is_file():
+                    self.send_json(400, {"error": "This keyframe has no output to approve", "code": "keyframe_unfinished"})
+                    return True
+                asset_id = promote_keyframe_asset(png, f"keyframe-{keyframe_id[:8]}.png", owner)
+                project_id = FACTORY.approve_keyframe(keyframe_id, owner, asset_id)
+            if project_id is None:
+                self.send_json(404, {"error": "Keyframe not found", "code": "keyframe_not_found"})
+            else:
+                self.send_json(200, FACTORY.get_project(project_id, owner))
             return True
         match = re.fullmatch(r"/api/v1/factory/takes/([0-9a-fA-F-]{36})/(accept|reject|disagree)", path)
         if match:
@@ -1636,6 +1705,161 @@ def score_take(shot_id, job_id, output_url):
         FACTORY.record_scores(shot_id, job_id, scores)
     except Exception as exc:  # noqa: BLE001 - a lost score must not kill the thread pool
         print(f"[LTX API] could not store scores for shot {shot_id}: {str(exc)[:200]}")
+
+
+def keyframe_size(bible):
+    """A generation size in the Bible's aspect. Landscape unless the output says otherwise."""
+    ratio = str(((bible or {}).get("output") or {}).get("aspect_ratio") or "16:9")
+    return {"9:16": "720x1280", "1:1": "1024x1024"}.get(ratio, "1280x720")
+
+
+def promote_keyframe_asset(png_path, name, owner_id):
+    """Copy a generated keyframe into the asset store as the owner's image.
+
+    Everything downstream resolves pictures by asset id - i2v, the judge's references, the
+    Bible - so an approved keyframe has to become one. The sidecar is what receive_asset writes,
+    built the same way: the file is validated by the same script before it is listed.
+    """
+    from media_store import FORMATS, MAX_LIBRARY, UPLOAD_DIR, UPLOAD_LOCK, image_geometry
+
+    png_path = Path(png_path)
+    if not png_path.is_file() or png_path.is_symlink():
+        raise ValueError("keyframe output is missing")
+    size = png_path.stat().st_size
+    with UPLOAD_LOCK:
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        used = sum(path.stat().st_size for path in UPLOAD_DIR.iterdir() if path.is_file())
+        if used + size > MAX_LIBRARY or shutil.disk_usage(UPLOAD_DIR).free < size + 5 * 1024**3:
+            raise ValueError("asset library is full")
+        checked = subprocess.run([str(LTX_PYTHON), str(SITE_ROOT / "scripts/validate_media.py"),
+                                  str(png_path), "image"], capture_output=True, text=True, timeout=20, check=False)
+        if checked.returncode != 0:
+            raise ValueError("keyframe output failed media validation")
+        asset_id = uuid.uuid4().hex
+        filename = asset_id + FORMATS["image/png"]
+        temporary = UPLOAD_DIR / (asset_id + ".part")
+        shutil.copyfile(png_path, temporary)
+        temporary.replace(UPLOAD_DIR / filename)
+        asset = {"id": asset_id, "filename": filename, "name": name[:180], "kind": "image",
+                 "content_type": "image/png", "size_bytes": size, "created_at": time.time(),
+                 "owner_id": owner_id, "url": f"/api/assets/{asset_id}/file",
+                 "source": "keyframe", **json.loads(checked.stdout)}
+        asset.update(image_geometry(asset["width"], asset["height"]))
+        sidecar = UPLOAD_DIR / (asset_id + ".json.part")
+        sidecar.write_text(json.dumps(asset, ensure_ascii=False), encoding="utf-8")
+        sidecar.replace(UPLOAD_DIR / (asset_id + ".json"))
+    return asset_id
+
+
+def keyframe_wait(job_id, timeout):
+    """Block until a job settles, or the batch is stopped. Returns the job or None."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        job = JOBS.get(job_id) or (STORE.get(job_id) if STORE else None)
+        if job and job["status"] not in ("queued", "running"):
+            return job
+        time.sleep(0.5)
+    return None
+
+
+def keyframe_generate(project, shot, owner, keyframe_id, seed, reference, size):
+    """One keyframe through the ordinary admission path, then the judge. Returns (light, scores)."""
+    from user_auth import digest
+    bible = project.get("bible") or {}
+    raw = {"model": KEYFRAME_MODEL, "mode": "edit", "image_id": reference,
+           "prompt": mv_timeline.compose_prompt(shot["request"].get("prompt", ""), shot["request"].get("directing", {})),
+           "parameters": {"seed": int(seed), "size": size, "steps": KEYFRAME_STEPS},
+           "external": {"project_id": str(project["id"]), "asset_id": reference,
+                        "shot_id": str(shot["id"]), "request_id": f"keyframe-{keyframe_id[:8]}"}}
+    key = digest(f"user:{owner}:keyframe:{keyframe_id}") if owner else f"keyframe-{keyframe_id}"
+    payload, external, requested = worker.parse_request(raw, parse_payload)
+    # An LTX job may be on the GPU; keep the keyframe's place and try again rather than fail it.
+    for _ in range(KEYFRAME_BUSY_RETRIES):
+        status, result = submit_job(payload, key=key, external=external, requested=requested, owner_id=owner)
+        if status == 409 and result.get("code") == "worker_busy":
+            time.sleep(KEYFRAME_BUSY_SLEEP)
+            continue
+        break
+    if status not in (200, 202) or "id" not in result:
+        raise ValueError(str(result.get("code") or result.get("error"))[:200])
+    FACTORY.update_keyframe(keyframe_id, job_id=result["id"])
+    job = keyframe_wait(result["id"], KEYFRAME_WAIT_SECONDS)
+    if not job or job["status"] != "succeeded":
+        raise ValueError((job or {}).get("error", {}).get("code") if job else "timeout")
+    output = output_location(str(job["output_url"]).rsplit("/", 1)[-1])
+    references, _ = judge_inputs(bible)
+    try:
+        scores = judge_service({"media_path": str(output), "references": references})
+    except (OSError, urllib.error.URLError):
+        scores = {"status": "unscored", "reason": "judge_unavailable"}
+    thresholds = review_rules.resolve_thresholds(bible, shot["request"])
+    light = review_rules.keyframe_light(scores, thresholds)
+    FACTORY.update_keyframe(keyframe_id, output_url=job["output_url"], scores=scores, light=light)
+    return light, scores
+
+
+def keyframe_batch(project_id, owner):
+    """Generate a keyframe for every shot, in order, on one thread.
+
+    The whole project is done in one pass because the first image pays for a model switch (the
+    roadmap measured 336 s) and every later one only for itself. A red keyframe is generated
+    once more with a derived seed; a second red is left for a person - two reds on two seeds say
+    something about the reference, not about luck. A shot with no reference is recorded as failed
+    and the batch carries on: one shot without a character should not stop the other twenty.
+    """
+    project, shots = FACTORY.project_for_keyframes(project_id)
+    if not project:
+        return
+    bible = project.get("bible") or {}
+    size = keyframe_size(bible)
+    state = {"status": "running", "started_at": time.time(), "total": len(shots), "done": 0,
+             "current": None, "estimate_seconds": KEYFRAME_SWITCH_SECONDS + KEYFRAME_SECONDS * len(shots)}
+    FACTORY.set_keyframe_run(project_id, state)
+    try:
+        for shot in shots:
+            if FACTORY.keyframe_run(project_id).get("status") == "stopping":
+                state["status"] = "stopped"
+                break
+            state["current"] = str(shot["id"])
+            FACTORY.set_keyframe_run(project_id, state)
+            request = shot["request"] or {}
+            character = bible.get("character") or {}
+            reference = character_consistency.select_reference(
+                character or None, request.get("directing") or {}, request.get("image_id"))
+            if not reference and character.get("references"):
+                # The browser projects the Bible's first reference onto every shot; a shot saved
+                # without that projection still belongs to the character, so start from the same
+                # picture the projection would have chosen.
+                reference = character["references"][0].get("image_id")
+            seed = int(request.get("seed") or 42)
+            attempt = 1
+            while True:
+                keyframe_id = FACTORY.insert_keyframe(shot["id"], seed=seed, attempt=attempt, reference_id=reference)
+                if not reference:
+                    FACTORY.update_keyframe(keyframe_id, verdict="failed", reason="no_reference")
+                    break
+                try:
+                    light, _ = keyframe_generate(project, shot, owner, keyframe_id, seed, reference, size)
+                except (ValueError, TypeError, OSError) as exc:
+                    FACTORY.update_keyframe(keyframe_id, verdict="failed", reason=str(exc)[:300])
+                    break
+                if light == "red" and attempt < 2:
+                    FACTORY.update_keyframe(keyframe_id, verdict="rejected", reason="red_retry")
+                    seed = (seed + KEYFRAME_RETRY_SEED) % 2147483647
+                    attempt += 1
+                    continue
+                break
+            state["done"] += 1
+            FACTORY.set_keyframe_run(project_id, state)
+        else:
+            state["status"] = "done"
+    except Exception as exc:  # noqa: BLE001 - the run state must say why it stopped
+        state["status"] = "failed"
+        state["error"] = str(exc)[:300]
+    state["current"] = None
+    state["finished_at"] = time.time()
+    FACTORY.set_keyframe_run(project_id, state)
+    KEYFRAME_RUNS.pop(str(project_id), None)
 
 
 def record_succeeded_take(shot_id, job):

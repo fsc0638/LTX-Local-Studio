@@ -89,3 +89,19 @@ def lights(scores, thresholds):
 
 def is_red(scores, thresholds):
     return "red" in lights(scores, thresholds).values()
+
+
+# ---- keyframes (D2) ----
+# Mirror of lib/keyframes.ts: green at or above the consistency line, yellow within the band
+# under it, red below. Keep the band in step with YELLOW_BAND there.
+KEYFRAME_YELLOW_BAND = 0.05
+
+
+def keyframe_light(scores, thresholds):
+    cj = take_scores(scores)["cj"]
+    if cj is None:
+        return None
+    line = consistency_line(scores, thresholds)
+    if cj >= line:
+        return "green"
+    return "yellow" if cj >= line - KEYFRAME_YELLOW_BAND else "red"

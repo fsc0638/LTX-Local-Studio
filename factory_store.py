@@ -107,6 +107,14 @@ def project_json(row, shots):
     }
 
 
+def _keyframe_json(r):
+    return {"id": str(r["id"]), "shotId": str(r["shot_id"]), "jobId": r["job_id"],
+            "attempt": r["attempt"], "seed": r["seed"], "referenceId": r["reference_id"],
+            "outputUrl": r["output_url"], "scores": r["scores"], "light": r["light"],
+            "verdict": r["verdict"], "assetId": r["asset_id"], "reason": r["reason"],
+            "createdAt": r["created_at"]}
+
+
 def _take_json(r):
     return {"id": str(r["id"]), "shotId": str(r["shot_id"]), "jobId": r["job_id"],
             "outputUrl": r["output_url"], "posterUrl": r["poster_url"], "scores": r["scores"],
@@ -569,6 +577,122 @@ class FactoryStore:
                 db.execute("UPDATE shots SET accepted_take_id=NULL, updated_at=%s "
                            "WHERE id=%s AND accepted_take_id=%s", (now, row["shot_id"], row["id"]))
         return len(rows)
+
+    # ---------- keyframes (D2) ----------
+
+    def project_for_keyframes(self, project_id):
+        """The project and its shots for the batch thread. No owner: the thread was started by an
+        owner-checked request and carries the owner it was given."""
+        project_id = _identifier(project_id, "project id")
+        with self.connect() as db:
+            project = db.execute("SELECT * FROM projects WHERE id=%s", (project_id,)).fetchone()
+            if not project:
+                return None, []
+            shots = db.execute("SELECT * FROM shots WHERE project_id=%s ORDER BY position",
+                               (project_id,)).fetchall()
+        return project, shots
+
+    def set_keyframe_run(self, project_id, state):
+        with self.connect() as db:
+            db.execute("UPDATE projects SET keyframe_run=%s, updated_at=%s WHERE id=%s",
+                       (Jsonb(state), time.time(), project_id))
+
+    def keyframe_run(self, project_id):
+        with self.connect() as db:
+            row = db.execute("SELECT keyframe_run FROM projects WHERE id=%s", (project_id,)).fetchone()
+        return (row or {}).get("keyframe_run") or {}
+
+    def insert_keyframe(self, shot_id, *, seed, attempt=1, reference_id=None, job_id=None):
+        keyframe_id = str(uuid.uuid4())
+        with self.connect() as db:
+            db.execute("INSERT INTO keyframes(id,shot_id,job_id,attempt,seed,reference_id,created_at) "
+                       "VALUES(%s,%s,%s,%s,%s,%s,%s)",
+                       (keyframe_id, shot_id, job_id, attempt, int(seed), reference_id, time.time()))
+        return keyframe_id
+
+    def update_keyframe(self, keyframe_id, **fields):
+        allowed = {"job_id", "output_url", "scores", "light", "verdict", "reason", "asset_id"}
+        unknown = set(fields) - allowed
+        if unknown:
+            raise FactoryError("invalid_keyframe", f"unknown keyframe fields: {', '.join(sorted(unknown))}")
+        if not fields:
+            return
+        sets, values = [], []
+        for key, value in fields.items():
+            sets.append(f"{key}=%s")
+            values.append(Jsonb(value) if key == "scores" and value is not None else value)
+        values.append(keyframe_id)
+        with self.connect() as db:
+            db.execute(f"UPDATE keyframes SET {', '.join(sets)} WHERE id=%s", values)
+
+    def list_keyframes(self, project_id, owner_id):
+        project_id = _identifier(project_id, "project id")
+        with self.connect() as db:
+            owned = db.execute("SELECT keyframe_run FROM projects WHERE id=%s AND owner_id=%s",
+                               (project_id, owner_id)).fetchone()
+            if not owned:
+                return None
+            rows = db.execute(
+                """SELECT k.* FROM keyframes k JOIN shots s ON s.id = k.shot_id
+                    WHERE s.project_id = %s ORDER BY s.position, k.created_at DESC""",
+                (project_id,)).fetchall()
+        grouped = {}
+        for r in rows:
+            grouped.setdefault(str(r["shot_id"]), []).append(_keyframe_json(r))
+        return {"run": owned["keyframe_run"] or {}, "keyframes": grouped}
+
+    def _owned_keyframe(self, db, keyframe_id, owner_id):
+        return db.execute(
+            """SELECT k.*, s.project_id, s.request, s.pinned, p.owner_id
+                 FROM keyframes k JOIN shots s ON s.id = k.shot_id
+                 JOIN projects p ON p.id = s.project_id
+                WHERE k.id = %s AND p.owner_id = %s""",
+            (_identifier(keyframe_id, "keyframe id"), owner_id)).fetchone()
+
+    def keyframe_context(self, keyframe_id, owner_id):
+        with self.connect() as db:
+            row = self._owned_keyframe(db, keyframe_id, owner_id)
+        return dict(row) if row else None
+
+    def approve_keyframe(self, keyframe_id, owner_id, asset_id):
+        """The keyframe becomes the shot's picture.
+
+        The shot's image_id is set to the promoted asset and pinned, so a Bible reprojection cannot
+        put the reference back; keyframe_id on the request is what the UI reads as "from a
+        keyframe". A previously approved keyframe for the shot is marked superseded, not deleted.
+        """
+        now = time.time()
+        with self.connect() as db:
+            row = self._owned_keyframe(db, keyframe_id, owner_id)
+            if row is None:
+                return None
+            if row["verdict"] == "failed" or not row["output_url"]:
+                raise FactoryError("keyframe_unfinished", "Only a generated keyframe can be approved")
+            request = dict(row["request"] or {})
+            request["image_id"] = asset_id
+            request["keyframe_id"] = str(row["id"])
+            pinned = list(row["pinned"] or [])
+            if "image_id" not in pinned:
+                pinned.append("image_id")
+            db.execute("UPDATE keyframes SET verdict='rejected', reason='superseded' "
+                       "WHERE shot_id=%s AND verdict='approved' AND id<>%s", (row["shot_id"], row["id"]))
+            db.execute("UPDATE keyframes SET verdict='approved', asset_id=%s, reason=NULL WHERE id=%s",
+                       (asset_id, row["id"]))
+            db.execute("UPDATE shots SET request=%s, pinned=%s, updated_at=%s WHERE id=%s",
+                       (Jsonb(request), Jsonb(pinned), now, row["shot_id"]))
+            db.execute("UPDATE projects SET updated_at=%s WHERE id=%s", (now, row["project_id"]))
+        return row["project_id"]
+
+    def reject_keyframe(self, keyframe_id, owner_id, reason):
+        if not isinstance(reason, str) or not reason.strip():
+            raise FactoryError("reason_required", "A rejection needs a reason")
+        with self.connect() as db:
+            row = self._owned_keyframe(db, keyframe_id, owner_id)
+            if row is None:
+                return None
+            db.execute("UPDATE keyframes SET verdict='rejected', reason=%s WHERE id=%s",
+                       (reason.strip()[:300], row["id"]))
+        return row["project_id"]
 
     # ---------- run control ----------
 
