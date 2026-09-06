@@ -143,7 +143,7 @@ WO = [
 "3. local_backend.py 大工站租約：同時只有 LTX 或 imagegen 持有 GPU；切換前必須釋放（imagegen 卸模型、LTX 無進行中 job）；裁判、音訊、後製不受限。\n"
 "4. tests/test_imagegen_adapter.py、tests/test_gpu_lease.py（租約用假工站測互斥與交棒）。\n"
 "絕對不要在有 LTX job 進行中時載入 Qwen（61 GB）；先查 GET /api/internal/active-jobs。",
- extra="額外檢查：LTX job 進行中送 imagegen job → 排隊不 OOM；連續 20 張只付一次載入（看服務日誌）；閒置超時後 nvidia-smi 無 imagegen 程序。\n"),
+ extra="可機驗：LTX venv 跑 tests/test_gpu_lease.py（假工站）與 tests/test_imagegen_adapter.py（真服務模組的 LTX_IMAGEGEN_FAKE=1 模式，程序內起在隨機 port）——「20 張只付一次載入」「換模型卸載另一個」「LTX 進行中拒絕 imagegen」「服務不放手就逾時」都在裡面。`systemd-analyze --user verify infra/systemd/ltx-imagegen.service` 輸出須為空。\n**真模型那幾條（Z-Image 23 GB、Qwen 61 GB／載入約 6 分鐘）回報「待實測」，不判 FAIL**：unit 檔還在分支上不要 enable，也不要自己起服務載模型；就算要做，**先查 GET /api/internal/active-jobs，有 LTX job 進行中絕對不載 Qwen**。正式站 ltx-api 的 LTX_MODEL_ADAPTERS 尚未含 local_adapters.imagegen，/api/v1/models 沒有這兩個模型是預期的。\n「排隊不 OOM」在這個系統的語意是 409 worker_busy＋重試（工廠排程器會自動重送），不是伺服器端排隊；看到 409 不是 FAIL。\n額外檢查：LTX job 進行中送 imagegen job → 排隊不 OOM；連續 20 張只付一次載入（看服務日誌）；閒置超時後 nvidia-smi 無 imagegen 程序。\n"),
  dict(id="D2", title="關鍵格階段", phase="D", size="M", tests=JS, body=
 "1. 02 關鍵格頁：鏡頭清單變縮圖格；「產生全部關鍵格」整批：每鏡依 directing.angle 選參照（既有 select_reference 邏輯）→ imagegen job → C1 判分 → 綠／黃／紅；紅自動換 seed 重生一次再請人看；核准圖成為該鏡 image_id 並在籤上標「來自關鍵格」。\n"
 "2. 介面明確顯示「現在是關鍵格階段／拍攝階段」與切換代價（336 s）。",
