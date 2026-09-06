@@ -127,7 +127,7 @@ WO = [
 "1. 以 B1 的 takes 表為基礙：verdict 狀態機 pending → accepted／rejected／overridden；shot.accepted_take_id；「修改／重做」（既有 reopenFactoryShot）改為建立新 take；退回必填 reason，reason 自動以「避免：…」接到下一 take 的 prompt 末尾，累積不覆蓋，用戶可改。\n"
 "2. 既有的成品刪除（回收區）→ 該 take 標 deleted，鏡與其他 take 不受影響。\n"
 "3. 測試涵蓋兩次退回累積、刪除隔離、accepted_take_id 唯一。",
- extra=""),
+ extra="測試在 tests/test_factory_verdicts.py，用 LTX venv 跑；其中 RecycleBinTests 走**真正的** DELETE /api/v1/jobs 路由（session 驗證）。\n「修改／重做改為建立新 take」在前端沿用既有 reopenFactoryShot（換 idempotency key 就是新 take），**不要因為前端沒有新按鈕就判 FAIL** —— 審片頁的按鈕與 verdict 呈現是 C3。\n多驗一條：replace_shots 已從「整批刪除再插入」改成 upsert。之前 takes 對 shots 是 ON DELETE CASCADE，前端每存一次計畫所有 take 就被清光（B1 遺留）。驗：編輯／重排計畫後 take 與 acceptedTakeId 仍在（test_editing_the_plan_keeps_every_take），且送別的專案的 shot id 會被拒（invalid_shots）。\naccepted_take_id 唯一是**部分唯一索引**，測試用直接 SQL 違反它驗證；遷移 0004 用 IF NOT EXISTS 可重跑。驗收只用測試庫，不重啟服務。\n"),
  dict(id="C3", title="審片頁", phase="C", size="M", tests=JS, body=
 "1. 04 審片頁：每鏡 take 並排；三條分數 vs Bible 門檻線（C4 前顯示「未校準」用暫定值並標示）；VLM 一句話（主機端 gpt-5.6 呼叫，走 B4 同一 key 與 usage 記帳）＋「我不同意」；接受／退回（必填原因）；紅燈下按接受 → overridden 並記錄誰、何時。\n"
 "2. 抽屜：逐幀 CJ 曲線、相鄰鏡嚴格模式（fpr 1% 門檻）、本鏡門檻覆寫。\n"

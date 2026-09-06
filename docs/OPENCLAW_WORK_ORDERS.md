@@ -312,6 +312,10 @@ nvidia-smi 看服務常駐記憶體。
 背景任務：【工單 C2 · 驗收】
 專案目錄 "/home/kwayrdc/LTX Local Studio"（主 checkout，只能讀、不切分支）。git fetch origin；到 worktree ~/LTX-worktrees/wo-c2 驗收（沒有就 git worktree add ~/LTX-worktrees/wo-c2 wo/c2 並 ln -s 主 checkout 的 node_modules；分支不存在就回報並停止）。這是驗收不是開發：不修改程式與文件；只允許為了讓測試跑起來準備測試資料庫或暫存目錄，且做完要清掉。
 依 docs/PRODUCTION_ROADMAP.md「C2」節的驗收清單逐條執行，每條回報 PASS 或 FAIL 並附證據（指令、輸出摘要、數字、路徑）。另外必跑並附結果：LTX_TEST_DATABASE_URL=postgresql:///ltx_studio_test?host=/var/run/postgresql PYTHONPATH=tests /home/kwayrdc/Documents/Codex/2026-08-28/new-chat-2/work/ltx-2.3/LTX-2/.venv/bin/python -m unittest discover -s tests -p 'test_*.py' && node --test tests/*.test.mjs && npx --no-install tsc --noEmit -p tsconfig.json。
+測試在 tests/test_factory_verdicts.py，用 LTX venv 跑；其中 RecycleBinTests 走**真正的** DELETE /api/v1/jobs 路由（session 驗證）。
+「修改／重做改為建立新 take」在前端沿用既有 reopenFactoryShot（換 idempotency key 就是新 take），**不要因為前端沒有新按鈕就判 FAIL** —— 審片頁的按鈕與 verdict 呈現是 C3。
+多驗一條：replace_shots 已從「整批刪除再插入」改成 upsert。之前 takes 對 shots 是 ON DELETE CASCADE，前端每存一次計畫所有 take 就被清光（B1 遺留）。驗：編輯／重排計畫後 take 與 acceptedTakeId 仍在（test_editing_the_plan_keeps_every_take），且送別的專案的 shot id 會被拒（invalid_shots）。
+accepted_take_id 唯一是**部分唯一索引**，測試用直接 SQL 違反它驗證；遷移 0004 用 IF NOT EXISTS 可重跑。驗收只用測試庫，不重啟服務。
 任何 FAIL 不要自己修：寫出重現步驟、你懷疑的檔案與行號。最後一行只能是「C2 可合併」或「C2 退回」。
 ```
 
