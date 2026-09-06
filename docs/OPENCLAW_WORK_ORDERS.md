@@ -371,6 +371,10 @@ accepted_take_id 唯一是**部分唯一索引**，測試用直接 SQL 違反它
 背景任務：【工單 C4 · 驗收】
 專案目錄 "/home/kwayrdc/LTX Local Studio"（主 checkout，只能讀、不切分支）。git fetch origin；到 worktree ~/LTX-worktrees/wo-c4 驗收（沒有就 git worktree add ~/LTX-worktrees/wo-c4 wo/c4 並 ln -s 主 checkout 的 node_modules；分支不存在就回報並停止）。這是驗收不是開發：不修改程式與文件；只允許為了讓測試跑起來準備測試資料庫或暫存目錄，且做完要清掉。
 依 docs/PRODUCTION_ROADMAP.md「C4」節的驗收清單逐條執行，每條回報 PASS 或 FAIL 並附證據（指令、輸出摘要、數字、路徑）。另外必跑並附結果：node --test tests/*.test.mjs && npx --no-install tsc --noEmit -p tsconfig.json。
+素材放在**主 checkout** 的 calibration/（已 gitignore，不會進版控），worktree 用絕對路徑「/home/kwayrdc/LTX Local Studio/calibration」讀。沒有素材就停下回報，**不要自己生圖或抓圖湊數**。
+報告對 Bible 的對應（見 docs/work-orders/C4.md 的表）：`fpr_05.threshold` → 預設，`fpr_01.threshold` → `thresholds.strict.*`，同時寫 `calibrated: true` 與 `eer`／`tpr`。metric 對欄位：face_facenet → `cj`、clip_vit_l14 → `sj`、**dinov2_large → 新欄位 `cj_dino`**：CJ 有臉走 facenet、無臉退 DINOv2，兩者尺度不同不能共用一條線，review_rules.py 與 lib/review.ts 要依 method_per_frame 選線（C1 時兩條路共用 0.80 是暫定）。驗收不只看 banner 消失，要看 `cj_dino` 存在且無臉幀用的是它。
+「無臉圖列出並在 UI 標示」：來源是報告的 no-face 清單，不是 UI 自己猜。
+校準腳本用 vision venv 跑：/opt/studio/venvs/vision/bin/python，設 HF_HOME=/opt/studio/models/hf TORCH_HOME=/opt/studio/models/torch 免下載。
 任何 FAIL 不要自己修：寫出重現步驟、你懷疑的檔案與行號。最後一行只能是「C4 可合併」或「C4 退回」。
 ```
 
