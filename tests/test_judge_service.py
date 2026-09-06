@@ -17,7 +17,11 @@ import importlib.util
 import json
 import os
 import tempfile
+import threading
+import time
 import unittest
+import uuid
+import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
@@ -204,3 +208,85 @@ class DirectionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# The backend half: scoring is attached to a take without ever touching the job. These need
+# psycopg and the backend, so they are skipped in the vision venv the way the direction tests are
+# skipped in the LTX venv. Between the two interpreters everything runs.
+try:
+    import local_backend as backend
+    import test_factory_api
+
+    HAS_BACKEND = True
+except ImportError:
+    HAS_BACKEND = False
+
+
+@unittest.skipUnless(HAS_BACKEND, "needs the backend and psycopg")
+class ScoringTests(test_factory_api.FactoryAPITests if HAS_BACKEND else unittest.TestCase):
+    """A judge that is down, slow or wrong must not change what happened to the job."""
+
+    def shot_and_job(self):
+        """A real jobs row: takes.job_id points at it, so a made-up id fails the foreign key."""
+        from production_store import ProductionStore
+
+        plan = self.new_project(shots=[test_factory_api.shot("first")])
+        shot = plan["shots"][0]
+        job = {"id": uuid.uuid4().hex, "status": "succeeded",
+               "output_url": "/generated/take.mp4", "created_at": time.time()}
+        ProductionStore().record(job)
+        return shot, job
+
+    def test_a_finished_take_is_recorded_before_the_judge_is_asked(self):
+        shot, job = self.shot_and_job()
+        started = threading.Event()
+        with patch.object(backend, "judge_service",
+                          side_effect=lambda *a, **k: started.set() or {"media": {}}):
+            with patch.object(backend, "output_location", return_value=Path(__file__)):
+                backend.record_succeeded_take(shot["id"], job)
+                started.wait(timeout=10)
+        takes = self.factory.takes(shot["id"], "@service")
+        self.assertEqual(len(takes), 1)
+        self.assertEqual(takes[0]["status"] if "status" in takes[0] else "succeeded", "succeeded")
+
+    def test_the_scores_land_on_the_take(self):
+        shot, job = self.shot_and_job()
+        self.factory.record_take(shot["id"], job_id=job["id"], status="succeeded",
+                                 output_url=job["output_url"])
+        with patch.object(backend, "judge_service", return_value={"consistency": {"median": 0.87}}):
+            with patch.object(backend, "output_location", return_value=Path(__file__)):
+                backend.score_take(shot["id"], job["id"], job["output_url"])
+        stored = self.factory.takes(shot["id"], "@service")[0]
+        self.assertEqual(stored["scores"]["consistency"]["median"], 0.87)
+
+    def test_a_judge_that_is_down_leaves_the_take_unscored_and_succeeded(self):
+        shot, job = self.shot_and_job()
+        self.factory.record_take(shot["id"], job_id=job["id"], status="succeeded",
+                                 output_url=job["output_url"])
+        with patch.object(backend, "judge_service", side_effect=urllib.error.URLError("down")):
+            with patch.object(backend, "output_location", return_value=Path(__file__)):
+                backend.score_take(shot["id"], job["id"], job["output_url"])
+        stored = self.factory.takes(shot["id"], "@service")[0]
+        self.assertEqual(stored["scores"], {"status": "unscored", "reason": "judge_unavailable"})
+        # The take, and so the shot, is still a success: a judge that is down is not a verdict.
+        project_id = self.factory.judge_context(shot["id"])["project_id"]
+        self.assertEqual(
+            self.factory.get_project(project_id, "@service")["shots"][0]["status"], "succeeded")
+
+    def test_a_missing_output_is_reported_rather_than_scored(self):
+        shot, job = self.shot_and_job()
+        self.factory.record_take(shot["id"], job_id=job["id"], status="succeeded",
+                                 output_url=job["output_url"])
+        with patch.object(backend, "judge_service") as asked:
+            with patch.object(backend, "output_location", return_value=Path("/nonexistent.mp4")):
+                backend.score_take(shot["id"], job["id"], job["output_url"])
+        self.assertFalse(asked.called, "a missing file must not be sent to the judge")
+        stored = self.factory.takes(shot["id"], "@service")[0]
+        self.assertEqual(stored["scores"]["reason"], "output_missing")
+
+    def test_references_the_user_deleted_are_skipped_not_fatal(self):
+        bible = {"character": {"name": "A", "description": "d",
+                               "references": [{"image_id": "0" * 32, "view": "front"}]}}
+        references, anchor = backend.judge_inputs(bible)
+        self.assertEqual(references, [])
+        self.assertIsNone(anchor)

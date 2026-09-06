@@ -66,6 +66,10 @@ SERVICE_OWNER = "@service"
 FACTORY_QUEUE_LIMIT = int(os.environ.get("LTX_FACTORY_QUEUE_LIMIT", "100"))
 AUDIO_SERVICE = os.environ.get("LTX_AUDIO_SERVICE", "http://127.0.0.1:8790")
 AUDIO_CACHE_DIR = SITE_ROOT / "data/worker/audio-cache"
+# The judge (C1) scores a finished take. It runs models, so it is given a long timeout and is
+# never called on the scheduler's thread - the queue must not wait on RAFT.
+JUDGE_SERVICE = os.environ.get("LTX_JUDGE_SERVICE", "http://127.0.0.1:8791")
+JUDGE_TIMEOUT = int(os.environ.get("LTX_JUDGE_TIMEOUT", "900"))
 # Alignment against the studio's own LRC sheets sits about 0.9 s ahead of the printed times.
 # Whether that is stable-ts running early or the sheets being written late is unresolved
 # (docs/GB10_SETUP.md), so it is published as a correctable constant rather than folded in.
@@ -1411,6 +1415,75 @@ def openai_draft(key, context):
             "primary_action": str(draft.get("primary_action", ""))}, tokens
 
 
+def judge_service(payload, timeout=JUDGE_TIMEOUT):
+    """Call the loopback judge. Raises OSError when it is not answering."""
+    request = urllib.request.Request(
+        f"{JUDGE_SERVICE}/score", data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.load(response)
+
+
+def judge_inputs(bible):
+    """Reference and style-anchor paths from the Bible, skipping anything no longer on disk.
+
+    A reference the user deleted is not an error: the take is still worth scoring against the
+    references that remain, and scoring against none is reported as no consistency score at all.
+    """
+    references, anchor = [], None
+    character = (bible or {}).get("character") or {}
+    for reference in character.get("references") or []:
+        try:
+            references.append(str(asset_path(asset_by_id(str(reference.get("image_id", ""))))))
+        except (ValueError, TypeError):
+            continue
+    raw_anchor = (bible or {}).get("style_anchor")
+    if raw_anchor:
+        try:
+            anchor = str(asset_path(asset_by_id(str(raw_anchor))))
+        except (ValueError, TypeError):
+            anchor = None
+    return references, anchor
+
+
+def score_take(shot_id, job_id, output_url):
+    """Score a finished take on its own thread and write the numbers to it.
+
+    Scoring never touches the job or the shot: a take that could not be scored is marked
+    "unscored" and the run carries on. The judge is an opinion about the work, not a gate on it -
+    a failed opinion must not turn a finished video into a failure.
+    """
+    scores = {"status": "unscored", "reason": "judge_unavailable"}
+    try:
+        context = FACTORY.judge_context(shot_id)
+        filename = str(output_url or "").rsplit("/", 1)[-1]
+        media = output_location(filename) if filename else None
+        if context is None or not media or not media.is_file():
+            scores = {"status": "unscored", "reason": "output_missing"}
+        else:
+            references, anchor = judge_inputs(context["bible"])
+            payload = {"media_path": str(media), "references": references}
+            if anchor:
+                payload["style_anchor_path"] = anchor
+            scores = judge_service(payload)
+    except (OSError, urllib.error.URLError):
+        scores = {"status": "unscored", "reason": "judge_unavailable"}
+    except (ValueError, TypeError, KeyError) as exc:
+        scores = {"status": "unscored", "reason": str(exc)[:200]}
+    try:
+        FACTORY.record_scores(shot_id, job_id, scores)
+    except Exception as exc:  # noqa: BLE001 - a lost score must not kill the thread pool
+        print(f"[LTX API] could not store scores for shot {shot_id}: {str(exc)[:200]}")
+
+
+def record_succeeded_take(shot_id, job):
+    """Write the finished take, then score it in the background."""
+    FACTORY.record_take(shot_id, job_id=job.get("id"), status="succeeded",
+                        output_url=job.get("output_url"), poster_url=job.get("poster_url"))
+    threading.Thread(target=score_take, args=(shot_id, job.get("id"), job.get("output_url")),
+                     name=f"judge-{str(job.get('id'))[:8]}", daemon=True).start()
+
+
 def audio_analysis(asset, lyrics, language):
     """Beats always; word timings when lyrics are supplied. Cached per file and per lyric sheet.
 
@@ -1460,8 +1533,7 @@ def factory_replayed(shot, job):
         return True
     if status == "succeeded":
         # The work is already done; no GPU time is owed.
-        FACTORY.record_take(shot["id"], job_id=job.get("id"), status="succeeded",
-                            output_url=job.get("output_url"), poster_url=job.get("poster_url"))
+        record_succeeded_take(shot["id"], job)
         return True
     if status == "interrupted":
         # A restart is not the shot's fault. Open a new take: the old key can only ever replay
@@ -1527,8 +1599,7 @@ def factory_collect(shot_row, take_job_id):
     if not job or job["status"] in {"queued", "running"}:
         return
     if job["status"] == "succeeded":
-        FACTORY.record_take(shot_row["id"], job_id=take_job_id, status="succeeded",
-                            output_url=job.get("output_url"), poster_url=job.get("poster_url"))
+        record_succeeded_take(shot_row["id"], job)
         return
     # failed, cancelled or interrupted: the line stops so a person decides what to do.
     reason = (job.get("error") or {}).get("code") or job["status"]

@@ -294,6 +294,31 @@ class FactoryStore:
                            (now, row["project_id"]))
             return row["project_id"]
 
+    def judge_context(self, shot_id):
+        """The Bible behind a shot, for the server's own scoring pass.
+
+        No owner argument, like set_shot_status and record_take: this is reached from the
+        scheduler after a job the host itself ran, never from a request.
+        """
+        with self.connect() as db:
+            return db.execute(
+                """SELECT s.id AS shot_id, s.project_id, p.bible
+                     FROM shots s JOIN projects p ON p.id = s.project_id
+                    WHERE s.id = %s""", (shot_id,)).fetchone()
+
+    def record_scores(self, shot_id, job_id, scores):
+        """Attach judge numbers to a take that already exists.
+
+        Separate from record_take because scoring happens after the take is final and takes far
+        longer than recording it: the queue must not wait on a model. A take with scores NULL has
+        not been scored yet; one holding {"status": "unscored"} was tried and could not be.
+        """
+        with self.connect() as db:
+            row = db.execute(
+                "UPDATE takes SET scores=%s WHERE shot_id=%s AND job_id=%s RETURNING id",
+                (Jsonb(scores), shot_id, job_id)).fetchone()
+        return row["id"] if row else None
+
     def rotate_key(self, shot_id):
         """Give a shot a fresh idempotency key so its next run is a new take.
 
