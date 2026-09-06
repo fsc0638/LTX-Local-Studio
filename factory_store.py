@@ -14,6 +14,8 @@ import uuid
 
 from psycopg.types.json import Jsonb
 
+import review_rules
+
 import database
 
 FORMAT = "ltx-production-factory"
@@ -103,6 +105,14 @@ def project_json(row, shots):
         "updatedAt": _iso(row["updated_at"]),
         "shots": shots,
     }
+
+
+def _take_json(r):
+    return {"id": str(r["id"]), "shotId": str(r["shot_id"]), "jobId": r["job_id"],
+            "outputUrl": r["output_url"], "posterUrl": r["poster_url"], "scores": r["scores"],
+            "verdict": r["verdict"], "reason": r["reason"], "createdAt": r["created_at"],
+            "deletedAt": r["deleted_at"], "overriddenBy": r.get("overridden_by"),
+            "overriddenAt": r.get("overridden_at"), "opinion": r.get("opinion")}
 
 
 def shot_json(row, take=None):
@@ -401,28 +411,34 @@ class FactoryStore:
                 return None
             rows = db.execute("SELECT * FROM takes WHERE shot_id=%s ORDER BY created_at DESC",
                               (shot_id,)).fetchall()
-        return [{"id": str(r["id"]), "jobId": r["job_id"], "outputUrl": r["output_url"],
-                 "posterUrl": r["poster_url"], "scores": r["scores"], "verdict": r["verdict"],
-                 "reason": r["reason"], "createdAt": r["created_at"],
-                 "deletedAt": r["deleted_at"]} for r in rows]
+        return [_take_json(r) for r in rows]
 
     # ---------- verdicts (C2) ----------
 
     def _owned_take(self, db, take_id, owner_id):
         return db.execute(
-            """SELECT t.*, s.project_id, s.request, s.pinned, s.accepted_take_id
+            """SELECT t.*, s.project_id, s.request, s.pinned, s.accepted_take_id, s.title AS shot_title,
+                      p.bible
                  FROM takes t JOIN shots s ON s.id = t.shot_id
                  JOIN projects p ON p.id = s.project_id
                 WHERE t.id = %s AND p.owner_id = %s""",
             (_identifier(take_id, "take id"), owner_id)).fetchone()
 
-    def accept_take(self, take_id, owner_id):
+    def accept_take(self, take_id, owner_id, strict=False):
         """Make this take the one that goes to assembly.
 
-        The shot's previously accepted take becomes 'overridden' rather than 'pending': it was
-        judged, and the judgement was superseded - that is different from never having been
-        looked at. Uniqueness of accepted_take_id is a table constraint, so two shots cannot end
-        up claiming the same take no matter how this is called.
+        The judge does not get a veto, but it gets a record: accepting a take with a red light is
+        written as 'overridden' with who and when, so the cut can later say why this take is in
+        it. The light is computed here from the stored scores and the thresholds in force, not
+        taken from the client - the browser shows the same lights, but the verdict must not depend
+        on what it claims to have shown.
+
+        The shot's previously chosen take goes back to 'pending'. The roadmap's state machine
+        reserves 'overridden' for a person overruling the judge, so a superseded take cannot use it;
+        pending is honest - it is once again a take nobody has picked.
+
+        Uniqueness of accepted_take_id is a table constraint, so two shots cannot claim the same
+        take no matter how this is called.
         """
         now = time.time()
         with self.connect() as db:
@@ -433,13 +449,72 @@ class FactoryStore:
                 raise FactoryError("take_deleted", "This take's output was deleted")
             if take["job_id"] is None and not take["output_url"]:
                 raise FactoryError("take_unfinished", "Only a finished take can be accepted")
-            db.execute("UPDATE takes SET verdict='overridden' WHERE shot_id=%s AND verdict='accepted' "
-                       "AND id<>%s", (take["shot_id"], take["id"]))
-            db.execute("UPDATE takes SET verdict='accepted' WHERE id=%s", (take["id"],))
+            thresholds = review_rules.resolve_thresholds(take["bible"], take["request"], strict)
+            red = review_rules.is_red(take["scores"], thresholds)
+            db.execute("UPDATE takes SET verdict='pending', overridden_by=NULL, overridden_at=NULL "
+                       "WHERE shot_id=%s AND verdict IN ('accepted','overridden') AND id<>%s",
+                       (take["shot_id"], take["id"]))
+            if red:
+                db.execute("UPDATE takes SET verdict='overridden', overridden_by=%s, overridden_at=%s "
+                           "WHERE id=%s", (owner_id, now, take["id"]))
+            else:
+                db.execute("UPDATE takes SET verdict='accepted', overridden_by=NULL, overridden_at=NULL "
+                           "WHERE id=%s", (take["id"],))
             db.execute("UPDATE shots SET accepted_take_id=%s, updated_at=%s WHERE id=%s",
                        (take["id"], now, take["shot_id"]))
             db.execute("UPDATE projects SET updated_at=%s WHERE id=%s", (now, take["project_id"]))
         return take["project_id"]
+
+    def take_context(self, take_id, owner_id):
+        """A take with the shot and Bible behind it, for the VLM's one sentence."""
+        with self.connect() as db:
+            take = self._owned_take(db, take_id, owner_id)
+        if take is None:
+            return None
+        thresholds = review_rules.resolve_thresholds(take["bible"], take["request"])
+        return {**dict(take), "thresholds": thresholds,
+                "lights": review_rules.lights(take["scores"], thresholds)}
+
+    def record_opinion(self, take_id, opinion):
+        with self.connect() as db:
+            row = db.execute("UPDATE takes SET opinion=%s WHERE id=%s RETURNING id",
+                             (Jsonb(opinion), _identifier(take_id, "take id"))).fetchone()
+        return row["id"] if row else None
+
+    def disagree_opinion(self, take_id, owner_id):
+        """The reviewer rejects the sentence. It stays visible, struck through, with who said so."""
+        now = time.time()
+        with self.connect() as db:
+            take = self._owned_take(db, take_id, owner_id)
+            if take is None:
+                return None
+            if not take["opinion"]:
+                raise FactoryError("no_opinion", "There is no opinion on this take to disagree with")
+            opinion = {**take["opinion"], "disagreed_by": owner_id, "disagreed_at": now}
+            db.execute("UPDATE takes SET opinion=%s WHERE id=%s", (Jsonb(opinion), take["id"]))
+        return take["project_id"]
+
+    def project_takes(self, project_id, owner_id):
+        """Every take in the project, grouped by shot, with what the review page needs per take."""
+        project_id = _identifier(project_id, "project id")
+        with self.connect() as db:
+            owned = db.execute("SELECT bible FROM projects WHERE id=%s AND owner_id=%s",
+                               (project_id, owner_id)).fetchone()
+            if not owned:
+                return None
+            rows = db.execute(
+                """SELECT t.*, s.request FROM takes t JOIN shots s ON s.id = t.shot_id
+                    WHERE s.project_id = %s ORDER BY s.position, t.created_at DESC""",
+                (project_id,)).fetchall()
+        grouped = {}
+        for r in rows:
+            thresholds = review_rules.resolve_thresholds(owned["bible"], r["request"])
+            grouped.setdefault(str(r["shot_id"]), []).append(
+                {**_take_json(r), "thresholds": thresholds,
+                 "lights": review_rules.lights(r["scores"], thresholds)})
+        return grouped
+
+
 
     def reject_take(self, take_id, owner_id, reason):
         """Send a take back and open the next one, with the reason carried into its prompt.
