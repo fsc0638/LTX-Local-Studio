@@ -163,6 +163,62 @@ export async function takeOpinion(takeId: string): Promise<NonNullable<FactoryTa
   return body.opinion;
 }
 
+export type FactoryKeyframe = {
+  id: string;
+  shotId: string;
+  jobId: string | null;
+  attempt: number;
+  seed: number;
+  referenceId: string | null;
+  outputUrl: string | null;
+  scores: Record<string, unknown> | null;
+  light: 'green' | 'yellow' | 'red' | null;
+  verdict: 'pending' | 'approved' | 'rejected' | 'failed';
+  assetId: string | null;
+  reason: string | null;
+  createdAt: number;
+};
+
+export type KeyframeRun = {
+  status?: 'running' | 'stopping' | 'stopped' | 'done' | 'failed';
+  started_at?: number;
+  finished_at?: number;
+  total?: number;
+  done?: number;
+  current?: string | null;
+  estimate_seconds?: number;
+  error?: string;
+};
+
+export type KeyframeListing = {
+  run: KeyframeRun;
+  keyframes: Record<string, FactoryKeyframe[]>;
+  gpu: { holder: string | null; imagegen_loaded: string[] };
+  costs: { switch_seconds: number; per_keyframe_seconds: number };
+};
+
+export async function projectKeyframes(id: string): Promise<KeyframeListing> {
+  return (await call(`/projects/${id}/keyframes`)) as KeyframeListing;
+}
+
+/** Start the batch for the whole project; the host runs it and the listing reports progress. */
+export async function runKeyframes(id: string): Promise<{ run: KeyframeRun }> {
+  return (await call(`/projects/${id}/keyframes/run`, json({}))) as { run: KeyframeRun };
+}
+
+export async function stopKeyframes(id: string): Promise<{ run: KeyframeRun }> {
+  return (await call(`/projects/${id}/keyframes/stop`, json({}))) as { run: KeyframeRun };
+}
+
+/** The keyframe becomes the shot's picture: promoted to an asset, set as image_id and pinned. */
+export async function approveKeyframe(keyframeId: string): Promise<FactoryPlan> {
+  return plan(await call(`/keyframes/${keyframeId}/approve`, json({})));
+}
+
+export async function rejectKeyframe(keyframeId: string, reason: string): Promise<FactoryPlan> {
+  return plan(await call(`/keyframes/${keyframeId}/reject`, json({ reason })));
+}
+
 export async function disagreeOpinion(takeId: string): Promise<FactoryPlan> {
   return plan(await call(`/takes/${takeId}/disagree`, json({})));
 }
