@@ -113,7 +113,16 @@ WO = [
 "2. local_backend.py：job succeeded 後自動送判，結果寫進 take.scores（B1 的 takes 表）；判分失敗只標「未判分」不影響 job 狀態。\n"
 "3. infra/systemd/ltx-judge.service 只建檔，enable 需核准。\n"
 "4. tests/test_judge_service.py：合成圖（同色塊 vs 不同色塊）驗方向正確；真模型整合測試單獨標記。",
- extra="額外檢查：同一張圖對自己 CJ face 接近 1.0；nvidia-smi 顯示服務常駐記憶體約 2 GB 以內。\n"),
+ extra="**方向驗證要用 vision venv 跑**：預設的 LTX venv 沒有 cv2 也沒有那些模型，會靜靜 skip 掉 5 個測試 —— "
+"而那 5 個正是「同一張圖對自己接近 1.0、不同角色明顯低」這條驗收：\n"
+"  HF_HOME=/opt/studio/models/hf TORCH_HOME=/opt/studio/models/torch LTX_JUDGE_INTEGRATION=1 \\\n"
+"  PYTHONPATH=tests /opt/studio/venvs/vision/bin/python -m unittest tests.test_judge_service\n"
+"必跑自檢那行仍用 LTX venv 跑全套（後端判分測試需要 psycopg，vision venv 沒有）。兩個直譯器各跑一半，合起來才是全部。\n"
+"色塊沒有臉，所以走 DINOv2 而非 facenet，回應的 method_per_frame 會這樣寫；要驗 facenet 那條路得用真人像。\n"
+"**不要啟用 ltx-judge.service**：unit 檔還在分支上，enable 一個指向未合併檔案的 unit 會得到持續失敗的服務（OP-BACKUP01 就是這樣）。"
+"驗收只跑 `systemd-analyze --user verify infra/systemd/ltx-judge.service`，**要求輸出為空**（規則 5c：格式錯只印警告，exit code 仍是 0）。\n"
+"服務只回數字、不判通過是刻意的，門檻是 C4 的事：回應裡沒有 pass／fail 不是缺漏。\n"
+"nvidia-smi 看服務常駐記憶體。\n"),
  dict(id="C2", title="Take 模型", phase="C", size="S", tests=PYDB + " && " + JS, body=
 "1. 以 B1 的 takes 表為基礙：verdict 狀態機 pending → accepted／rejected／overridden；shot.accepted_take_id；「修改／重做」（既有 reopenFactoryShot）改為建立新 take；退回必填 reason，reason 自動以「避免：…」接到下一 take 的 prompt 末尾，累積不覆蓋，用戶可改。\n"
 "2. 既有的成品刪除（回收區）→ 該 take 標 deleted，鏡與其他 take 不受影響。\n"
