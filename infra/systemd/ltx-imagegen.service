@@ -1,0 +1,30 @@
+# Image generation (Qwen-Image-Edit-2509, Z-Image-Turbo) for keyframes. Install with:
+#   cp infra/systemd/ltx-imagegen.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now ltx-imagegen.service
+# Not enabled by the sync script: activating a unit is a system-level change.
+#
+# Verify before trusting it - systemd-analyze reports a bad line but still exits 0:
+#   systemd-analyze --user verify infra/systemd/ltx-imagegen.service   # must print nothing
+[Unit]
+Description=LTX Local Studio image generation (Qwen-Image-Edit, Z-Image)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/kwayrdc/LTX Local Studio
+# Quoted: Environment= splits an unquoted value on whitespace, and this path has a space in it.
+Environment="LTX_SITE_ROOT=/home/kwayrdc/LTX Local Studio"
+# Weights are already in the studio cache; without these the first request would download 80 GB.
+Environment=HF_HOME=/opt/studio/models/hf
+Environment=HF_HUB_OFFLINE=1
+Environment=TORCH_HOME=/opt/studio/models/torch
+# Resident model is released after this long without a request, and earlier when ltx-api asks.
+Environment=LTX_IMAGEGEN_IDLE_MINUTES=10
+ExecStart=/opt/studio/venvs/imagegen/bin/python "/home/kwayrdc/LTX Local Studio/services/imagegen/server.py"
+Restart=on-failure
+RestartSec=5
+Environment=LTX_IMAGEGEN_HOST=127.0.0.1
+Environment=LTX_IMAGEGEN_PORT=8792
+
+[Install]
+WantedBy=default.target
