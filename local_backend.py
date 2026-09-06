@@ -70,6 +70,18 @@ AUDIO_CACHE_DIR = SITE_ROOT / "data/worker/audio-cache"
 # never called on the scheduler's thread - the queue must not wait on RAFT.
 JUDGE_SERVICE = os.environ.get("LTX_JUDGE_SERVICE", "http://127.0.0.1:8791")
 JUDGE_TIMEOUT = int(os.environ.get("LTX_JUDGE_TIMEOUT", "900"))
+# D1: the imagegen service and the lease that keeps it and LTX off the GPU at the same time.
+IMAGEGEN_SERVICE = os.environ.get("LTX_IMAGEGEN_SERVICE", "http://127.0.0.1:8792")
+import gpu_lease  # noqa: E402 - grouped with the settings it reads
+
+
+def ltx_job_active():
+    with LOCK:
+        return any(job["status"] in {"queued", "running"} and job.get("media_type", "video") == "video"
+                   for job in JOBS.values())
+
+
+GPU_LEASE = gpu_lease.GpuLease(IMAGEGEN_SERVICE, ltx_job_active)
 # Alignment against the studio's own LRC sheets sits about 0.9 s ahead of the printed times.
 # Whether that is stable-ts running early or the sheets being written late is unresolved
 # (docs/GB10_SETUP.md), so it is published as a correctable constant rather than folded in.
@@ -243,6 +255,13 @@ def job_environment(payload):
         env["LTX_IMAGE"] = str(asset_path(asset_by_id(payload["image_id"])))
         env["LTX_IMAGE_FRAME"] = "0"
         env["LTX_IMAGE_STRENGTH"] = str(payload.get("image_strength", 0.8))
+    for slot in (2, 3):
+        env.pop(f"LTX_IMAGE_{slot}", None)
+        reference = (payload.get("parameters") or {}).get(f"reference_{slot}")
+        if reference:
+            # Resolved here, from an id the owner check at admission already passed; the adapter's
+            # client never sees an id, only this path.
+            env[f"LTX_IMAGE_{slot}"] = str(asset_path(asset_by_id(reference)))
     if payload.get("offload"):
         env["LTX_OFFLOAD"] = "cpu"
     else:
@@ -343,9 +362,21 @@ def run_job(job_id: str, payload: dict[str, Any], *, resume: bool = False) -> No
         if return_code or not target.is_file():
             raise JobFailure("generation_failed", "\n".join(recent[-5:]) or f"Generator exited with code {return_code}", retryable=True)
 
+    lease_tenant = None
     try:
         check_abort(job, deadline)
         adapter = model_registry.get(payload["model"])
+        # Video means LTX; image means the imagegen service. Text adapters hold no GPU.
+        if adapter.requires_cuda and adapter.media_type in ("video", "image"):
+            lease_tenant = "ltx" if adapter.media_type == "video" else "imagegen"
+            with LOCK:
+                job.update(phase="gpu_lease", message="等待 GPU 交棒 / Waiting for the GPU")
+                record_job(job)
+            try:
+                GPU_LEASE.acquire(lease_tenant)
+            except gpu_lease.LeaseRefused as exc:
+                lease_tenant = None
+                raise JobFailure(exc.code, str(exc), retryable=True)
         if resume:
             if payload.get("render_mode") != "sequence" or not work_path.is_dir() or work_path.is_symlink():
                 raise JobFailure("resume_unavailable", "Only an existing sequence workspace can be resumed.")
@@ -462,6 +493,8 @@ def run_job(job_id: str, payload: dict[str, Any], *, resume: bool = False) -> No
     except Exception as exc:  # noqa: BLE001
         failure = exc if isinstance(exc, JobFailure) else JobFailure("worker_error", str(exc))
     finally:
+        if lease_tenant is not None:
+            GPU_LEASE.release(lease_tenant)
         watchdog_done.set()
         if watchdog is not None:
             watchdog.join(timeout=11)
@@ -638,7 +671,9 @@ def submit_job(payload, *, key=None, request_hash=None, external=None, requested
         if any(job["status"] in {"queued", "running"} for job in JOBS.values()):
             return 409, {"error": "GPU busy; retry this request later with the same idempotency key", "code": "worker_busy", "retry_after_seconds": 5}
         reference_ids = [*character_consistency.reference_ids(payload.get("character"), payload.get("image_id")),
-                         payload.get("timeline", {}).get("audio_id")]
+                         payload.get("timeline", {}).get("audio_id"),
+                         *(str(v) for k, v in (payload.get("parameters") or {}).items()
+                           if k.startswith("reference_") and v)]
         for reference_id in dict.fromkeys(reference_ids):
             # Serialize final reference validation with deletion and admission.
             if not reference_id:
@@ -1123,6 +1158,12 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         path = urlparse(self.path).path
+        if path == "/api/internal/gpu-lease":
+            if self.client_address[0] not in ("127.0.0.1", "::1"):
+                self.send_json(403, {"error": "Loopback only"})
+                return
+            self.send_json(200, GPU_LEASE.describe())
+            return
         if path == "/api/internal/active-jobs":
             # For host maintenance (git-sync asks before restarting the API). Unauthenticated but
             # loopback-only, and it discloses a single count -- never job contents or owners.

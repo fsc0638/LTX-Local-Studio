@@ -78,8 +78,9 @@ class MediaAdapter:
         image_id = raw.get("image_id")
         if image_id is not None and not self.accepts_image:
             raise ValueError("Selected adapter does not accept reference images")
-        if mode == "i2v" and not image_id:
-            raise ValueError("image_id is required for i2v")
+        # i2v and edit both start from a picture; an edit with nothing to edit is not a request.
+        if mode in ("i2v", "edit") and not image_id:
+            raise ValueError(f"image_id is required for {mode}")
         if image_id is not None and (not isinstance(image_id, str) or not re.fullmatch(r"[a-f0-9]{32}", image_id)):
             raise ValueError("image_id must be an uploaded asset ID")
         payload = {"model": self.id, "media_type": self.media_type, "mode": mode, "prompt": prompt.strip(),
@@ -120,7 +121,11 @@ def load_installed():
     for name in filter(None, (value.strip() for value in os.environ.get("LTX_MODEL_ADAPTERS", "").split(","))):
         if not re.fullmatch(r"local_adapters\.[a-z][a-z0-9_]*", name):
             raise ValueError("Adapters must be trusted local_adapters modules, not paths or URLs")
-        register(importlib.import_module(name).ADAPTER)
+        module = importlib.import_module(name)
+        register(module.ADAPTER)
+        # A module may ship a family (local_adapters.imagegen registers two models).
+        for extra in getattr(module, "EXTRA_ADAPTERS", ()):
+            register(extra)
 
 
 def get(model_id):
