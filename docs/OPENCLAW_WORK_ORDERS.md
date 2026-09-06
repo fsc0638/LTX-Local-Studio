@@ -374,6 +374,7 @@ accepted_take_id 唯一是**部分唯一索引**，測試用直接 SQL 違反它
 背景任務：【工單 C4 · 驗收】
 專案目錄 "/home/kwayrdc/LTX Local Studio"（主 checkout，只能讀、不切分支）。git fetch origin；到 worktree ~/LTX-worktrees/wo-c4 驗收（沒有就 git worktree add ~/LTX-worktrees/wo-c4 wo/c4 並 ln -s 主 checkout 的 node_modules；分支不存在就回報並停止）。這是驗收不是開發：不修改程式與文件；只允許為了讓測試跑起來準備測試資料庫或暫存目錄，且做完要清掉。
 依 docs/PRODUCTION_ROADMAP.md「C4」節的驗收清單逐條執行，每條回報 PASS 或 FAIL 並附證據（指令、輸出摘要、數字、路徑）。另外必跑並附結果：node --test tests/*.test.mjs && npx --no-install tsc --noEmit -p tsconfig.json。
+可機驗的標的：`node --test tests/calibration.test.mjs tests/review.test.mjs`（手寫 fixture 報告的匯入、note-only metric 不寫、第二份小報告不抹掉第一份、DINO fixture 同一個 median 在臉線紅、在 dino 線綠）；LTX venv 跑 tests/test_factory_review.py （review_rules 的同一組 fixture）。`bible.thresholds` 現在是 normalizeFactoryBible 白名單內的鍵——匯入後存檔不會被丟掉，這條也驗。
 **架構先建、素材後補（規則 9）**：calibration/ 目前不存在，這不擋工單。要做完的是結構——Bible 的 `thresholds` 欄位（含 `cj_dino`、`strict.*`、`calibrated`、`report` 摘要）、「匯入校準報告」UI（讀腳本輸出的 JSON，解析 `metrics[].thresholds.fpr_05/fpr_01`；`face_facenet` 只有 note 時只寫 `cj_dino` 並說明臉部仍未校準）、review_rules.py 與 lib/review.ts 依 `method_per_frame` 選 `cj` 或 `cj_dino`、無臉圖（`missing_faces`）在 UI 列出。用一份**手寫的 fixture 報告**（形狀見 docs/work-orders/C4.md）驗匯入與分線；真素材的校準跑分寫進「待素材測試」。
 素材到了才做的：主 checkout 的 calibration/（已 gitignore）放 ≥2 角色、每個 ≥10 張，用 vision venv 跑 infra/gb10/tools/calibrate_embeddings.py（HF_HOME=/opt/studio/models/hf TORCH_HOME=/opt/studio/models/torch），匯入後 04 的「未校準」banner 才會消失。**驗收時這一條回報「待素材」，不判 FAIL；不要自己生圖或抓圖湊數。**
 任何 FAIL 不要自己修：寫出重現步驟、你懷疑的檔案與行號。最後一行只能是「C4 可合併」或「C4 退回」。
