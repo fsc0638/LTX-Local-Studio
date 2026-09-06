@@ -279,7 +279,14 @@
 背景任務：【工單 C1 · 驗收】
 專案目錄 "/home/kwayrdc/LTX Local Studio"（主 checkout，只能讀、不切分支）。git fetch origin；到 worktree ~/LTX-worktrees/wo-c1 驗收（沒有就 git worktree add ~/LTX-worktrees/wo-c1 wo/c1 並 ln -s 主 checkout 的 node_modules；分支不存在就回報並停止）。這是驗收不是開發：不修改程式與文件；只允許為了讓測試跑起來準備測試資料庫或暫存目錄，且做完要清掉。
 依 docs/PRODUCTION_ROADMAP.md「C1」節的驗收清單逐條執行，每條回報 PASS 或 FAIL 並附證據（指令、輸出摘要、數字、路徑）。另外必跑並附結果：LTX_TEST_DATABASE_URL=postgresql:///ltx_studio_test?host=/var/run/postgresql PYTHONPATH=tests /home/kwayrdc/Documents/Codex/2026-08-28/new-chat-2/work/ltx-2.3/LTX-2/.venv/bin/python -m unittest discover -s tests -p 'test_*.py'。
-額外檢查：同一張圖對自己 CJ face 接近 1.0；nvidia-smi 顯示服務常駐記憶體約 2 GB 以內。
+**方向驗證要用 vision venv 跑**：預設的 LTX venv 沒有 cv2 也沒有那些模型，會靜靜 skip 掉 5 個測試 —— 而那 5 個正是「同一張圖對自己接近 1.0、不同角色明顯低」這條驗收：
+  HF_HOME=/opt/studio/models/hf TORCH_HOME=/opt/studio/models/torch LTX_JUDGE_INTEGRATION=1 \
+  PYTHONPATH=tests /opt/studio/venvs/vision/bin/python -m unittest tests.test_judge_service
+必跑自檢那行仍用 LTX venv 跑全套（後端判分測試需要 psycopg，vision venv 沒有）。兩個直譯器各跑一半，合起來才是全部。
+色塊沒有臉，所以走 DINOv2 而非 facenet，回應的 method_per_frame 會這樣寫；要驗 facenet 那條路得用真人像。
+**不要啟用 ltx-judge.service**：unit 檔還在分支上，enable 一個指向未合併檔案的 unit 會得到持續失敗的服務（OP-BACKUP01 就是這樣）。驗收只跑 `systemd-analyze --user verify infra/systemd/ltx-judge.service`，**要求輸出為空**（規則 5c：格式錯只印警告，exit code 仍是 0）。
+服務只回數字、不判通過是刻意的，門檻是 C4 的事：回應裡沒有 pass／fail 不是缺漏。
+nvidia-smi 看服務常駐記憶體。
 任何 FAIL 不要自己修：寫出重現步驟、你懷疑的檔案與行號。最後一行只能是「C1 可合併」或「C1 退回」。
 ```
 
