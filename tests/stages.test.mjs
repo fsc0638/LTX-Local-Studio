@@ -128,3 +128,10 @@ test('keyframes are done when every shot starts from an approved one', () => {
   const progress = planProgress(snapshot({ hasBible: true, total: 3, keyframed: 3 }));
   assert.equal(progress.statuses.keyframes, 'done');
 });
+
+test('post is idle and skipped over: assembly follows review directly', () => {
+  assert.ok(!UNAVAILABLE_STAGES.includes('post'));
+  const progress = planProgress(snapshot({ hasBible: true, total: 3, completed: 3, accepted: 3, status: 'completed' }));
+  assert.equal(progress.statuses.post, 'idle');
+  assert.equal(progress.current, 'assembly');
+});

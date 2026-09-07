@@ -42,6 +42,13 @@ export type FactoryTake = {
     disagreed_by?: string;
     disagreed_at?: number;
   } | null;
+  /** Set when this take is a post version of another (D3): the op, its parameters, the source. */
+  post?: {
+    op: 'upscale' | 'clean' | 'interpolate';
+    source_take_id: string;
+    parameters?: Record<string, unknown>;
+    failed?: boolean;
+  } | null;
   /** Present on the project-level listing: the lines and lights in force for this take. */
   thresholds?: import('./review').Thresholds;
   lights?: Record<import('./review').LightKey, import('./review').Light>;
@@ -217,6 +224,23 @@ export async function approveKeyframe(keyframeId: string): Promise<FactoryPlan> 
 
 export async function rejectKeyframe(keyframeId: string, reason: string): Promise<FactoryPlan> {
   return plan(await call(`/keyframes/${keyframeId}/reject`, json({ reason })));
+}
+
+export type PostListing = {
+  versions: Record<string, FactoryTake[]>;
+  service: { available: boolean; rife_available: boolean; ops: string[] };
+};
+
+export async function projectPost(id: string): Promise<PostListing> {
+  return (await call(`/projects/${id}/post`)) as PostListing;
+}
+
+/** Start a post job on a take: upscale, clean under a mask asset, or interpolate. */
+export async function postTake(
+  takeId: string,
+  body: { op: 'upscale'; scale: 2 | 4 } | { op: 'clean'; mask_image_id: string } | { op: 'interpolate'; target_fps: number },
+): Promise<{ job: { id: string }; post: NonNullable<FactoryTake['post']> }> {
+  return (await call(`/takes/${takeId}/post`, json(body))) as { job: { id: string }; post: NonNullable<FactoryTake['post']> };
 }
 
 export async function disagreeOpinion(takeId: string): Promise<FactoryPlan> {

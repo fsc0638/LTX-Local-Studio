@@ -947,6 +947,15 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
             takes = FACTORY.takes(match.group(1), owner)
             self.send_json(200, {"takes": takes}) if takes is not None else self.send_json(404, {"error": "Shot not found", "code": "shot_not_found"})
             return True
+        match = re.fullmatch(r"/api/v1/factory/projects/([0-9a-fA-F-]{36})/post", path)
+        if match:
+            grouped = FACTORY.project_takes(match.group(1), owner)
+            if grouped is None:
+                self.send_json(404, {"error": "Project not found", "code": "project_not_found"})
+                return True
+            self.send_json(200, {"versions": {shot: [t for t in takes if t.get("post")] for shot, takes in grouped.items()},
+                                 "service": post_service_status()})
+            return True
         match = re.fullmatch(r"/api/v1/factory/projects/([0-9a-fA-F-]{36})/keyframes", path)
         if match:
             listing = FACTORY.list_keyframes(match.group(1), owner)
@@ -1910,6 +1919,17 @@ def keyframe_batch(project_id, owner):
     state["finished_at"] = time.time()
     FACTORY.set_keyframe_run(project_id, state)
     KEYFRAME_RUNS.pop(str(project_id), None)
+
+
+def post_service_status():
+    """What the post service can do right now. Down means nothing, which the page shows as such."""
+    try:
+        with urllib.request.urlopen(f"{POST_SERVICE}/health", timeout=2) as response:
+            health = json.load(response)
+        return {"available": True, "rife_available": bool(health.get("rife_available")),
+                "ops": health.get("ops") or []}
+    except (OSError, ValueError, urllib.error.URLError):
+        return {"available": False, "rife_available": False, "ops": []}
 
 
 def post_request(context, op, options):

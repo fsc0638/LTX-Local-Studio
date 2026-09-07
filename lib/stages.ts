@@ -53,8 +53,8 @@ export const STAGE_KEYS: StageKey[] = [
   'assembly',
 ];
 
-/** Post needs the post adapter (D3). Keyframes arrived in D2, review in C3. */
-export const UNAVAILABLE_STAGES: StageKey[] = ['post'];
+/** Every stage is implemented now; the list stays so a future stage can be marked before it lands. */
+export const UNAVAILABLE_STAGES: StageKey[] = [];
 
 export type StageOwner = 'user' | 'worker' | 'none';
 
@@ -95,7 +95,8 @@ function baseStatuses(plan: PlanSnapshot): Record<StageKey, StageStatus> {
       : plan.total > 0 && plan.accepted === plan.total
         ? 'done'
         : 'idle',
-    post: 'disabled',
+    // Post is optional after review: never 'you are here' on its own, never required for assembly.
+    post: 'idle',
     assembly: plan.status === 'completed' ? 'done' : 'idle',
   };
 }
@@ -108,13 +109,13 @@ export function planProgress(plan: PlanSnapshot): PlanProgress {
   const statuses = baseStatuses(plan);
 
   // "You are here" is the first stage that is neither finished nor out of scope this phase.
-  // Keyframes are optional: an idle keyframe stage is skipped over, and only asks to be current
-  // while a candidate is waiting on a person.
+  // Keyframes and post are optional: idle, they are skipped over. Keyframes asks to be current
+  // only while a candidate is waiting on a person; post never does.
   const pending = STAGE_KEYS.find(
     (key) =>
       statuses[key] !== 'done' &&
       statuses[key] !== 'disabled' &&
-      !(key === 'keyframes' && statuses[key] === 'idle'),
+      !((key === 'keyframes' || key === 'post') && statuses[key] === 'idle'),
   );
   const current = pending ?? 'assembly';
   if (pending && statuses[pending] === 'idle') statuses[pending] = 'active';
