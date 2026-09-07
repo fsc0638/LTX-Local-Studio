@@ -490,6 +490,9 @@ keyframes 階段是**可略過的**：idle 不會成為「你在這裡」，只�
 背景任務：【工單 D4 · 驗收】
 專案目錄 "/home/kwayrdc/LTX Local Studio"（主 checkout，只能讀、不切分支）。git fetch origin；到 worktree ~/LTX-worktrees/wo-d4 驗收（沒有就 git worktree add ~/LTX-worktrees/wo-d4 wo/d4 並 ln -s 主 checkout 的 node_modules；分支不存在就回報並停止）。這是驗收不是開發：不修改程式與文件；只允許為了讓測試跑起來準備測試資料庫或暫存目錄，且做完要清掉。
 依 docs/PRODUCTION_ROADMAP.md「D4」節的驗收清單逐條執行，每條回報 PASS 或 FAIL 並附證據（指令、輸出摘要、數字、路徑）。另外必跑並附結果：LTX_TEST_DATABASE_URL=postgresql:///ltx_studio_test?host=/var/run/postgresql PYTHONPATH=tests /home/kwayrdc/Documents/Codex/2026-08-28/new-chat-2/work/ltx-2.3/LTX-2/.venv/bin/python -m unittest discover -s tests -p 'test_*.py' && node --test tests/*.test.mjs && npx --no-install tsc --noEmit -p tsconfig.json。
+可機驗：LTX venv 跑 tests/test_station_scheduler.py（純規則）與 tests/test_workstation.py（真 store 驅動 scheduler_pick）——「12 張關鍵格＋12 鏡 LTX 恰好切換 1 次」在兩層都有；`/api/v1/factory/workstation` 與 `/projects/{id}/budget` 的回應形狀、預算只警告不擋（超預算的專案仍能 /run）也在裡面。
+**「預估總時數誤差 < 20%」是真跑的量測**：需要有 runtime_seconds 歷史的真 job，回報「待實測」不判 FAIL。沒歷史時估算用 docs/GB10_SETUP.md／D1 量測的預設值，回應的 assumed_models 會列出來——看到 assumed 不是 FAIL，是誠實。
+工站頁需要登入看，照 D4.md 紀錄回報，不要自己起服務。
 額外檢查：混合 12 張關鍵格 + 12 鏡 LTX 的佇列恰好切換 1 次。
 任何 FAIL 不要自己修：寫出重現步驟、你懷疑的檔案與行號。最後一行只能是「D4 可合併」或「D4 退回」。
 ```
