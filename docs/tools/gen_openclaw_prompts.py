@@ -151,7 +151,7 @@ WO = [
  dict(id="D3", title="後製 adapter VX", phase="D", size="M", tests=PYDB, body=
 "1. 先檢查 /opt/studio/tools/rife/train_log 是否有權重；沒有就回報阿寶並跳過 RIFE、只做 ESRGAN 與 LaMa。\n"
 "2. 對核准的 take 提供三個 post job：補幀（RIFE 到目標 FPS）、放大（Real-ESRGAN ×4 或沿用 LTX x2）、清理（LaMa，用戶畫遮罩）；輸入是本機 take 檔而非上傳；輸出成新 take 版本；完成後自動過 MQ。",
- extra=""),
+ extra="可機驗：LTX venv 跑 tests/test_post_adapter.py——真 post 服務模組的 LTX_POST_FAKE=1 模式加**真 ffmpeg** 畫的 24 fps 片：放大後幾何加倍、幀數與 fps 不變、QC 過、MQ 分數落在新 take、鏡狀態不動；清理要自己的遮罩；他人 take 404；不收路徑；不佔 GPU 租約。`systemd-analyze --user verify infra/systemd/ltx-post.service` 輸出須為空。\n**RIFE 權重不在主機**（/opt/studio/tools/rife/train_log 不存在）：「24 fps 補到 48 fps」回報「待素材」不判 FAIL；服務對 interpolate 回 503 rife_weights_missing、job 失敗、新 take 帶原因——那是正確行為。「清理後 CJ 不低於清理前」需要真模型與有臉素材，回報「待實測」。不要自己起服務、不要 enable unit、不要下載權重。\n後製 adapter 是 media_type video 但 gpu_tenant=none：看到它不走租約不是缺漏，規格說裁判、音訊、後製不受限。\n"),
  dict(id="D4", title="工站排程與 LP 預算", phase="D", size="M", tests=PYDB + " && " + JS, body=
 "1. 排程器：待跑 job 依工站分群、同工站連續做、做完交棒（用 D1 租約）。\n"
 "2. 工站頁：誰坐 GPU、佇列、切換 ETA。\n"

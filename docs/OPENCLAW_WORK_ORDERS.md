@@ -462,6 +462,9 @@ keyframes 階段是**可略過的**：idle 不會成為「你在這裡」，只�
 背景任務：【工單 D3 · 驗收】
 專案目錄 "/home/kwayrdc/LTX Local Studio"（主 checkout，只能讀、不切分支）。git fetch origin；到 worktree ~/LTX-worktrees/wo-d3 驗收（沒有就 git worktree add ~/LTX-worktrees/wo-d3 wo/d3 並 ln -s 主 checkout 的 node_modules；分支不存在就回報並停止）。這是驗收不是開發：不修改程式與文件；只允許為了讓測試跑起來準備測試資料庫或暫存目錄，且做完要清掉。
 依 docs/PRODUCTION_ROADMAP.md「D3」節的驗收清單逐條執行，每條回報 PASS 或 FAIL 並附證據（指令、輸出摘要、數字、路徑）。另外必跑並附結果：LTX_TEST_DATABASE_URL=postgresql:///ltx_studio_test?host=/var/run/postgresql PYTHONPATH=tests /home/kwayrdc/Documents/Codex/2026-08-28/new-chat-2/work/ltx-2.3/LTX-2/.venv/bin/python -m unittest discover -s tests -p 'test_*.py'。
+可機驗：LTX venv 跑 tests/test_post_adapter.py——真 post 服務模組的 LTX_POST_FAKE=1 模式加**真 ffmpeg** 畫的 24 fps 片：放大後幾何加倍、幀數與 fps 不變、QC 過、MQ 分數落在新 take、鏡狀態不動；清理要自己的遮罩；他人 take 404；不收路徑；不佔 GPU 租約。`systemd-analyze --user verify infra/systemd/ltx-post.service` 輸出須為空。
+**RIFE 權重不在主機**（/opt/studio/tools/rife/train_log 不存在）：「24 fps 補到 48 fps」回報「待素材」不判 FAIL；服務對 interpolate 回 503 rife_weights_missing、job 失敗、新 take 帶原因——那是正確行為。「清理後 CJ 不低於清理前」需要真模型與有臉素材，回報「待實測」。不要自己起服務、不要 enable unit、不要下載權重。
+後製 adapter 是 media_type video 但 gpu_tenant=none：看到它不走租約不是缺漏，規格說裁判、音訊、後製不受限。
 任何 FAIL 不要自己修：寫出重現步驟、你懷疑的檔案與行號。最後一行只能是「D3 可合併」或「D3 退回」。
 ```
 
