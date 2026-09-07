@@ -76,6 +76,7 @@ POST_SERVICE = os.environ.get("LTX_POST_SERVICE", "http://127.0.0.1:8793")
 POST_MODEL = "post-vx"
 import gpu_lease  # noqa: E402 - grouped with the settings it reads
 import review_rules  # noqa: E402 - lights for keyframes; the judge's thresholds live there
+import station_scheduler  # noqa: E402 - which station a job needs, and what a plan costs
 
 
 def ltx_job_active():
@@ -946,6 +947,14 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
         if match:
             takes = FACTORY.takes(match.group(1), owner)
             self.send_json(200, {"takes": takes}) if takes is not None else self.send_json(404, {"error": "Shot not found", "code": "shot_not_found"})
+            return True
+        if path == "/api/v1/factory/workstation":
+            self.send_json(200, workstation_view(owner))
+            return True
+        match = re.fullmatch(r"/api/v1/factory/projects/([0-9a-fA-F-]{36})/budget", path)
+        if match:
+            view = budget_view(match.group(1), owner)
+            self.send_json(200, view) if view is not None else self.send_json(404, {"error": "Project not found", "code": "project_not_found"})
             return True
         match = re.fullmatch(r"/api/v1/factory/projects/([0-9a-fA-F-]{36})/post", path)
         if match:
@@ -2117,12 +2126,126 @@ def factory_collect(shot_row, take_job_id):
                         reason=str(reason)[:300], pause_project=True)
 
 
+def runtime_averages(models):
+    """Rolling means from the job store for the models named, only where history exists."""
+    averages = {}
+    if STORE is None:
+        return averages
+    for model in sorted(set(models)):
+        try:
+            value = STORE.average_runtime(model)
+        except (OSError, psycopg.Error):
+            value = None
+        if value:
+            averages[model] = value
+    return averages
+
+
+def workstation_view(owner):
+    """Who has the GPU, what waits for each station, what is running, and what a switch costs."""
+    lease = GPU_LEASE.describe()
+    station = gpu_station_now()
+    queued = {"ltx": 0, "imagegen": 0, "none": 0}
+    models_queued = FACTORY.queued_models(owner if owner != SERVICE_OWNER else None)
+    for model, count in models_queued.items():
+        queued[station_scheduler.station_of(model, model_registry.ADAPTERS)] += count
+    current = FACTORY.inflight_any()
+    job = (JOBS.get(current["job_id"]) if current and current.get("job_id") else None) or {}
+    averages = runtime_averages(list(models_queued) + ([current["request"].get("model", "ltx23-distilled")] if current else []))
+    # Draining what waits for the station on the GPU is how long until a switch could happen.
+    drain = 0.0
+    for model, count in models_queued.items():
+        if station_scheduler.station_of(model, model_registry.ADAPTERS) == station:
+            drain += count * averages.get(model, station_scheduler.DEFAULT_RUNTIME.get(model, 60.0))
+    return {
+        "gpu": {"station": station, "holder": lease["holder"], "imagegen_loaded": lease["imagegen_loaded"],
+                "ltx_active": lease["ltx_active"]},
+        "queue": queued,
+        "current": ({"project_id": str(current["project_id"]), "project_title": current["project_title"],
+                     "shot_id": str(current["id"]), "shot_title": current["title"],
+                     "model": (current["request"] or {}).get("model", "ltx23-distilled"),
+                     "station": station_scheduler.station_of((current["request"] or {}).get("model", "ltx23-distilled"), model_registry.ADAPTERS),
+                     "progress": job.get("progress"), "phase": job.get("phase"), "started_at": job.get("started_at")}
+                    if current else None),
+        "switch": {"imagegen_load_seconds": station_scheduler.SWITCH_SECONDS["imagegen"],
+                   "drain_seconds": round(drain, 1)},
+        "averages": averages,
+        "defaults": station_scheduler.DEFAULT_RUNTIME,
+    }
+
+
+def budget_view(project_id, owner):
+    """What the rest of a plan will cost against what it has spent, with over-budget as warnings."""
+    plan = FACTORY.get_project(project_id, owner)
+    if plan is None:
+        return None
+    remaining = FACTORY.remaining_models(project_id)
+    usage = (FACTORY.draft_context_usage(project_id) if hasattr(FACTORY, "draft_context_usage") else None) or {}
+    tokens = int(usage.get("total_tokens") or 0)
+    estimate = station_scheduler.estimate(remaining, gpu_station_now(), runtime_averages(remaining), tokens)
+    budget = (plan.get("bible") or {}).get("budget") or {}
+    return {"estimate": estimate,
+            "actual": {"gpu_seconds": FACTORY.project_runtime_seconds(project_id), "openai_tokens": tokens},
+            "budget": budget, "warnings": station_scheduler.budget_warnings(estimate, budget),
+            "remaining_shots": len(remaining), "total_shots": len(plan["shots"])}
+
+
+def gpu_station_now():
+    """The station on the GPU: the lease holder while a job runs, else whichever model is resident."""
+    holder = GPU_LEASE.holder
+    if holder in ("ltx", "imagegen"):
+        return holder
+    return "imagegen" if GPU_LEASE.imagegen_loaded() else None
+
+
+def scheduler_pick(projects=None):
+    """Which shot runs next across every running project, or None.
+
+    One candidate per project - its next queued shot in position order - and the station rule
+    decides between them: the station on the GPU first, so a switch is paid once and serves
+    everything waiting for it; otherwise the station with the most queued work. Returns
+    (project, shot) without sending anything, so the rule can be tested against the real store.
+    """
+    projects = FACTORY.running_projects() if projects is None else projects
+    queued, models_by_station = {}, {}
+    for model, count in FACTORY.queued_models().items():
+        station = station_scheduler.station_of(model, model_registry.ADAPTERS)
+        queued[station] = queued.get(station, 0) + count
+        models_by_station.setdefault(station, []).append(model)
+    holder = gpu_station_now()
+    # The station to keep the GPU on: whatever holds it, else the one with the most waiting. Each
+    # project offers its next shot *for that station* when it has one, so a plan that mixes
+    # keyframes and shots is drained one station at a time rather than in plan order.
+    preferred = holder if holder in queued else max(queued, key=queued.get, default=None)
+    candidates, by_project = [], {}
+    for project in projects:
+        shot = FACTORY.next_queued_shot_for(project["id"], models_by_station.get(preferred, [])) if preferred else None
+        if shot is None:
+            shot = FACTORY.next_queued_shot(project["id"])
+        if shot is None:
+            continue
+        model = (shot.get("request") or {}).get("model") or "ltx23-distilled"
+        candidates.append({"project_id": project["id"], "shot": shot,
+                           "station": station_scheduler.station_of(model, model_registry.ADAPTERS)})
+        by_project[project["id"]] = project
+    chosen = station_scheduler.choose_next(candidates, holder, queued)
+    if chosen is None:
+        return None
+    return by_project[chosen["project_id"]], chosen["shot"]
+
+
 def factory_scheduler():
-    """One GPU job at a time, in shot order, per running project. The state lives in PostgreSQL,
-    so closing every browser changes nothing and a restart resumes from the same place."""
+    """One GPU job at a time across every running project, grouped by workstation.
+
+    The state lives in PostgreSQL, so closing every browser changes nothing and a restart resumes
+    from the same place. Grouping is what keeps a plan of twelve keyframes and twelve shots to one
+    model switch instead of twenty-three (D4).
+    """
     while not STOPPING:
         try:
-            for project in FACTORY.running_projects():
+            projects = FACTORY.running_projects()
+            busy = False
+            for project in projects:
                 if STOPPING:
                     return
                 with FACTORY.connect() as db:
@@ -2134,13 +2257,13 @@ def factory_scheduler():
                     if row["job_id"]:
                         factory_collect(row, row["job_id"])
                 if inflight:
-                    continue  # this project already owns the GPU slot
-                shot = FACTORY.next_queued_shot(project["id"])
-                if shot is None:
+                    busy = True
+                if FACTORY.next_queued_shot(project["id"]) is None and not inflight:
                     FACTORY.finish_if_done(project["id"])
-                    continue
-                if not factory_send(project, shot):
-                    continue
+            if not busy:
+                picked = scheduler_pick(projects)
+                if picked is not None:
+                    factory_send(*picked)
         except (OSError, ValueError, psycopg.Error) as exc:
             print(f"Factory scheduler paused on a store error: {str(exc)[:160]}", flush=True)
         for _ in range(4):

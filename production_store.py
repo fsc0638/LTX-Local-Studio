@@ -97,7 +97,23 @@ class ProductionStore:
             row = db.execute("SELECT snapshot FROM jobs WHERE snapshot->>'filename'=%s", (filename,)).fetchone()
         return row["snapshot"] if row else None
 
+    def average_runtime(self, model, limit=20):
+        """Mean runtime_seconds of the last `limit` succeeded jobs of a model, or None.
+
+        Twenty is enough to follow a change in the machine and few enough to forget a bad week.
+        Used by the D4 estimate, which says when it had to fall back to a documented default.
+        """
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT (snapshot->>'runtime_seconds')::double precision AS seconds FROM jobs "
+                "WHERE snapshot->>'model'=%s AND snapshot->>'status'='succeeded' "
+                "AND snapshot->>'runtime_seconds' IS NOT NULL AND snapshot->>'deleted_at' IS NULL "
+                "ORDER BY updated_at DESC LIMIT %s", (model, int(limit))).fetchall()
+        values = [float(r["seconds"]) for r in rows if r["seconds"] is not None and r["seconds"] > 0]
+        return round(sum(values) / len(values), 2) if values else None
+
     def recent_count(self, owner_id, since):
+
         with self.connect() as db:
             # created_at is a JSON number; ->> yields text, so cast before comparing.
             return db.execute(

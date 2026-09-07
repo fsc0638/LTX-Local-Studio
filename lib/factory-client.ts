@@ -243,6 +243,38 @@ export async function postTake(
   return (await call(`/takes/${takeId}/post`, json(body))) as { job: { id: string }; post: NonNullable<FactoryTake['post']> };
 }
 
+export type Station = 'ltx' | 'imagegen' | 'none';
+export type WorkstationView = {
+  gpu: { station: Station | null; holder: string | null; imagegen_loaded: string[]; ltx_active: boolean };
+  queue: Record<Station, number>;
+  current: {
+    project_id: string; project_title: string; shot_id: string; shot_title: string;
+    model: string; station: Station; progress?: number; phase?: string; started_at?: number;
+  } | null;
+  switch: { imagegen_load_seconds: number; drain_seconds: number };
+  averages: Record<string, number>;
+  defaults: Record<string, number>;
+};
+export type BudgetView = {
+  estimate: {
+    generate_seconds: number; switches: number; switch_seconds: number; total_seconds: number;
+    openai_tokens: number; assumed_models: string[]; measured_models: string[];
+  };
+  actual: { gpu_seconds: number; openai_tokens: number };
+  budget: { gpu_seconds?: number; openai_tokens?: number };
+  warnings: { kind: 'gpu_seconds' | 'openai_tokens'; limit: number; estimate: number }[];
+  remaining_shots: number;
+  total_shots: number;
+};
+
+export async function workstation(): Promise<WorkstationView> {
+  return (await call('/workstation')) as WorkstationView;
+}
+
+export async function projectBudget(id: string): Promise<BudgetView> {
+  return (await call(`/projects/${id}/budget`)) as BudgetView;
+}
+
 export async function disagreeOpinion(takeId: string): Promise<FactoryPlan> {
   return plan(await call(`/takes/${takeId}/disagree`, json({})));
 }

@@ -280,6 +280,23 @@ class FactoryStore:
                 (project_id,)).fetchone()
             return dict(row) if row else None
 
+    def next_queued_shot_for(self, project_id, models):
+        """The next queued shot whose model is one of `models`, in position order; None if none.
+
+        This is what lets the scheduler keep the GPU on one station inside a plan that mixes
+        keyframes and shots, instead of following the plan's order and switching at every step.
+        """
+        if not models:
+            return None
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT s.* FROM shots s JOIN projects p ON p.id=s.project_id "
+                "WHERE s.project_id=%s AND p.status='running' AND s.status='queued' "
+                "AND COALESCE(s.request->>'model','ltx23-distilled') = ANY(%s) "
+                "ORDER BY s.position LIMIT 1 FOR UPDATE OF s SKIP LOCKED",
+                (project_id, list(models))).fetchone()
+            return dict(row) if row else None
+
     def running_projects(self):
         with self.connect() as db:
             return [dict(r) for r in db.execute(
@@ -392,6 +409,11 @@ class FactoryStore:
         after = next((n for n in neighbours if n["position"] > row["position"]), None)
         return {"shot": row, "previous": before, "next": after,
                 "bible": row["bible"] or {}, "usage": row["draft_usage"] or {}}
+
+    def draft_context_usage(self, project_id):
+        with self.connect() as db:
+            row = db.execute("SELECT draft_usage FROM projects WHERE id=%s", (project_id,)).fetchone()
+        return (row or {}).get("draft_usage") or {}
 
     def add_draft_usage(self, project_id, tokens):
         """Add a call's tokens to the project's running total and return the new total.
@@ -724,6 +746,50 @@ class FactoryStore:
             db.execute("UPDATE keyframes SET verdict='rejected', reason=%s WHERE id=%s",
                        (reason.strip()[:300], row["id"]))
         return row["project_id"]
+
+    # ---------- workstation (D4) ----------
+
+    def queued_models(self, owner_id=None):
+        """Queued shots of running projects, counted by model. Owner-scoped for the page,
+        global for the scheduler."""
+        where = "p.status='running' AND s.status='queued'"
+        values = ()
+        if owner_id is not None:
+            where += " AND p.owner_id=%s"
+            values = (owner_id,)
+        with self.connect() as db:
+            rows = db.execute(
+                f"SELECT COALESCE(s.request->>'model','ltx23-distilled') AS model, count(*) AS n "
+                f"FROM shots s JOIN projects p ON p.id=s.project_id WHERE {where} GROUP BY 1", values).fetchall()
+        return {r["model"]: int(r["n"]) for r in rows}
+
+    def inflight_any(self):
+        """Any shot on the GPU in any running project: the slot is taken."""
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT s.id, s.project_id, s.title, s.request, s.updated_at, t.job_id, p.title AS project_title "
+                "FROM shots s JOIN projects p ON p.id=s.project_id "
+                "LEFT JOIN LATERAL (SELECT job_id FROM takes WHERE shot_id=s.id ORDER BY created_at DESC LIMIT 1) t ON true "
+                "WHERE p.status='running' AND s.status IN ('validating','submitting','running') "
+                "ORDER BY s.updated_at LIMIT 1").fetchone()
+        return dict(row) if row else None
+
+    def remaining_models(self, project_id):
+        """Models of the shots a project still has to run, in position order."""
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT COALESCE(request->>'model','ltx23-distilled') AS model FROM shots "
+                "WHERE project_id=%s AND status NOT IN ('succeeded') ORDER BY position", (project_id,)).fetchall()
+        return [r["model"] for r in rows]
+
+    def project_runtime_seconds(self, project_id):
+        """GPU seconds the project has actually spent: runtime_seconds of every take's job."""
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT COALESCE(sum((j.snapshot->>'runtime_seconds')::double precision), 0) AS seconds "
+                "FROM takes t JOIN shots s ON s.id=t.shot_id JOIN jobs j ON j.id=t.job_id "
+                "WHERE s.project_id=%s AND j.snapshot->>'runtime_seconds' IS NOT NULL", (project_id,)).fetchone()
+        return round(float(row["seconds"] or 0), 1)
 
     # ---------- run control ----------
 

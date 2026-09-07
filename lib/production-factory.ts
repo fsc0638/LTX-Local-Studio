@@ -29,6 +29,8 @@ export type FactoryBible = {
   lyric_offset_seconds: number;
   /** Judge thresholds (C3/C4). Absent means the placeholder defaults; see lib/review.ts. */
   thresholds?: import('./calibration').BibleThresholds;
+  /** The line producer's ceiling (D4). Over budget is a warning, never a stop. */
+  budget?: { gpu_seconds?: number; openai_tokens?: number };
 };
 
 export type FactoryRunState = 'draft' | 'running' | 'paused' | 'completed';
@@ -160,6 +162,7 @@ export function normalizeFactoryBible(value: unknown): FactoryBible {
         'directing',
         'lyric_offset_seconds',
         'thresholds',
+        'budget',
       ].includes(key),
   );
   if (extra.length)
@@ -219,6 +222,7 @@ export function normalizeFactoryBible(value: unknown): FactoryBible {
     ...(raw.thresholds
       ? { thresholds: record(raw.thresholds, 'Bible thresholds') }
       : {}),
+    ...(raw.budget ? { budget: record(raw.budget, 'Bible budget') } : {}),
     lyric_offset_seconds:
       typeof raw.lyric_offset_seconds === 'number' &&
       Number.isFinite(raw.lyric_offset_seconds)
