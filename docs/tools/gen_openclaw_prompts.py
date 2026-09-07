@@ -156,7 +156,7 @@ WO = [
 "1. 排程器：待跑 job 依工站分群、同工站連續做、做完交棒（用 D1 租約）。\n"
 "2. 工站頁：誰坐 GPU、佇列、切換 ETA。\n"
 "3. LP 預算＝Σ 每鏡 generate 秒 + 切換次數 × 載入秒 + OpenAI usage；數字來自 docs/GB10_SETUP.md 與 jobs.runtime_seconds 滾動平均；超預算是警告不擋。",
- extra="額外檢查：混合 12 張關鍵格 + 12 鏡 LTX 的佇列恰好切換 1 次。\n"),
+ extra="可機驗：LTX venv 跑 tests/test_station_scheduler.py（純規則）與 tests/test_workstation.py（真 store 驅動 scheduler_pick）——「12 張關鍵格＋12 鏡 LTX 恰好切換 1 次」在兩層都有；`/api/v1/factory/workstation` 與 `/projects/{id}/budget` 的回應形狀、預算只警告不擋（超預算的專案仍能 /run）也在裡面。\n**「預估總時數誤差 < 20%」是真跑的量測**：需要有 runtime_seconds 歷史的真 job，回報「待實測」不判 FAIL。沒歷史時估算用 docs/GB10_SETUP.md／D1 量測的預設值，回應的 assumed_models 會列出來——看到 assumed 不是 FAIL，是誠實。\n工站頁需要登入看，照 D4.md 紀錄回報，不要自己起服務。\n額外檢查：混合 12 張關鍵格 + 12 鏡 LTX 的佇列恰好切換 1 次。\n"),
  dict(id="D5", title="組片與 EDL", phase="D", size="S", tests=PYDB + " && " + JS, body=
 "1. 06 組片：只取每鏡 accepted_take_id，依拍點排時間軸，原曲連續鋪底（既有 sequence 組片）；任一鏡無 accepted take → 按鈕停用並列出哪幾鏡。\n"
 "2. 匯出 MP4 + shot manifest／EDL JSON：每鏡 prompt、seed、參照指紋、模型版本、take 裁決；manifest 能還原每鏡完整 request（與 A1 匯出格式相容）。",
