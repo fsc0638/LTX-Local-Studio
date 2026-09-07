@@ -120,7 +120,8 @@ def _take_json(r):
             "outputUrl": r["output_url"], "posterUrl": r["poster_url"], "scores": r["scores"],
             "verdict": r["verdict"], "reason": r["reason"], "createdAt": r["created_at"],
             "deletedAt": r["deleted_at"], "overriddenBy": r.get("overridden_by"),
-            "overriddenAt": r.get("overridden_at"), "opinion": r.get("opinion")}
+            "overriddenAt": r.get("overridden_at"), "opinion": r.get("opinion"),
+            "post": r.get("post")}
 
 
 def shot_json(row, take=None):
@@ -577,6 +578,36 @@ class FactoryStore:
                 db.execute("UPDATE shots SET accepted_take_id=NULL, updated_at=%s "
                            "WHERE id=%s AND accepted_take_id=%s", (now, row["shot_id"], row["id"]))
         return len(rows)
+
+    # ---------- post versions (D3) ----------
+
+    def take_file(self, take_id):
+        """The output filename of a take, for the job runner. No owner: admission checked it."""
+        try:
+            take_id = _identifier(take_id, "take id")
+        except FactoryError:
+            return None
+        with self.connect() as db:
+            row = db.execute("SELECT output_url FROM takes WHERE id=%s AND deleted_at IS NULL", (take_id,)).fetchone()
+        if not row or not row["output_url"]:
+            return None
+        return str(row["output_url"]).rsplit("/", 1)[-1]
+
+    def record_post_take(self, shot_id, *, job_id, post, output_url=None, poster_url=None, reason=None):
+        """A new take that is a post version of another. The shot is not touched.
+
+        record_take moves the shot's status because it records a generation the line is waiting
+        on. A post version is made from a take the shot already accepted; flipping the shot back
+        to running would make the review page think the shot is still being shot.
+        """
+        take_id = str(uuid.uuid4())
+        with self.connect() as db:
+            if not db.execute("SELECT 1 FROM shots WHERE id=%s", (shot_id,)).fetchone():
+                return None
+            db.execute("INSERT INTO takes(id,shot_id,job_id,output_url,poster_url,reason,post,created_at) "
+                       "VALUES(%s,%s,%s,%s,%s,%s,%s,%s)",
+                       (take_id, shot_id, job_id, output_url, poster_url, reason, Jsonb(post), time.time()))
+        return take_id
 
     # ---------- keyframes (D2) ----------
 

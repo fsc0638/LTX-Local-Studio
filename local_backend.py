@@ -72,6 +72,8 @@ JUDGE_SERVICE = os.environ.get("LTX_JUDGE_SERVICE", "http://127.0.0.1:8791")
 JUDGE_TIMEOUT = int(os.environ.get("LTX_JUDGE_TIMEOUT", "900"))
 # D1: the imagegen service and the lease that keeps it and LTX off the GPU at the same time.
 IMAGEGEN_SERVICE = os.environ.get("LTX_IMAGEGEN_SERVICE", "http://127.0.0.1:8792")
+POST_SERVICE = os.environ.get("LTX_POST_SERVICE", "http://127.0.0.1:8793")
+POST_MODEL = "post-vx"
 import gpu_lease  # noqa: E402 - grouped with the settings it reads
 import review_rules  # noqa: E402 - lights for keyframes; the judge's thresholds live there
 
@@ -269,6 +271,17 @@ def job_environment(payload):
         env["LTX_IMAGE"] = str(asset_path(asset_by_id(payload["image_id"])))
         env["LTX_IMAGE_FRAME"] = "0"
         env["LTX_IMAGE_STRENGTH"] = str(payload.get("image_strength", 0.8))
+    for key in ("LTX_POST_INPUT", "LTX_POST_MASK"):
+        env.pop(key, None)
+    if payload.get("model") == POST_MODEL:
+        parameters = payload.get("parameters") or {}
+        # The take id was owner-checked at admission; only its private file reaches the client.
+        source = FACTORY.take_file(parameters.get("take_id")) if FACTORY else None
+        if source is None:
+            raise ValueError("post job source take is missing")
+        env["LTX_POST_INPUT"] = str(output_location(source))
+        if parameters.get("mask_image_id"):
+            env["LTX_POST_MASK"] = str(asset_path(asset_by_id(parameters["mask_image_id"])))
     for slot in (2, 3):
         env.pop(f"LTX_IMAGE_{slot}", None)
         reference = (payload.get("parameters") or {}).get(f"reference_{slot}")
@@ -380,9 +393,11 @@ def run_job(job_id: str, payload: dict[str, Any], *, resume: bool = False) -> No
     try:
         check_abort(job, deadline)
         adapter = model_registry.get(payload["model"])
-        # Video means LTX; image means the imagegen service. Text adapters hold no GPU.
-        if adapter.requires_cuda and adapter.media_type in ("video", "image"):
-            lease_tenant = "ltx" if adapter.media_type == "video" else "imagegen"
+        # Video means LTX; image means the imagegen service; an adapter may say otherwise (the
+        # post tools are sized to run beside either and hold no lease). Text holds no GPU.
+        declared = adapter.gpu_tenant or ("ltx" if adapter.media_type == "video" else "imagegen" if adapter.media_type == "image" else "none")
+        if adapter.requires_cuda and declared in ("ltx", "imagegen"):
+            lease_tenant = declared
             with LOCK:
                 job.update(phase="gpu_lease", message="等待 GPU 交棒 / Waiting for the GPU")
                 record_job(job)
@@ -687,7 +702,12 @@ def submit_job(payload, *, key=None, request_hash=None, external=None, requested
         reference_ids = [*character_consistency.reference_ids(payload.get("character"), payload.get("image_id")),
                          payload.get("timeline", {}).get("audio_id"),
                          *(str(v) for k, v in (payload.get("parameters") or {}).items()
-                           if k.startswith("reference_") and v)]
+                           if (k.startswith("reference_") or k == "mask_image_id") and v)]
+        if payload.get("model") == POST_MODEL:
+            take_id = (payload.get("parameters") or {}).get("take_id")
+            context = FACTORY.take_context(take_id, owner_id or SERVICE_OWNER) if FACTORY else None
+            if context is None or not context.get("output_url"):
+                raise ValueError("Source take is not available to this account")
         for reference_id in dict.fromkeys(reference_ids):
             # Serialize final reference validation with deletion and admission.
             if not reference_id:
@@ -987,6 +1007,35 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
             thread.start()
             self.send_json(202, {"run": {"status": "running", "total": len(plan["shots"]),
                                          "estimate_seconds": KEYFRAME_SWITCH_SECONDS + KEYFRAME_SECONDS * len(plan["shots"])}})
+            return True
+        match = re.fullmatch(r"/api/v1/factory/takes/([0-9a-fA-F-]{36})/post", path)
+        if match:
+            context = FACTORY.take_context(match.group(1), owner)
+            if context is None:
+                self.send_json(404, {"error": "Take not found", "code": "take_not_found"})
+                return True
+            if context.get("deleted_at") or not context.get("output_url"):
+                self.send_json(400, {"error": "This take has no output to process", "code": "take_unfinished"})
+                return True
+            body = self.factory_body()
+            op = body.get("op")
+            try:
+                raw = post_request(context, op, body)
+                payload, external, requested = worker.parse_request(raw, parse_payload)
+            except (ValueError, TypeError) as exc:
+                self.send_json(400, {"error": str(exc)[:300], "code": "invalid_post"})
+                return True
+            from user_auth import digest
+            key = digest(f"user:{owner}:post:{context['id']}:{op}:{json.dumps(body, sort_keys=True)}")
+            status, result = submit_job(payload, key=key, external=external, requested=requested,
+                                        owner_id=None if owner == SERVICE_OWNER else owner)
+            if status not in (200, 202) or "id" not in result:
+                self.send_json(status if status >= 400 else 502, result)
+                return True
+            post = {"op": op, "source_take_id": str(context["id"]), "parameters": {k: v for k, v in payload["parameters"].items()
+                    if k in ("op", "scale", "target_fps", "mask_image_id", "width", "height", "frames", "fps")}}
+            start_post_watch(str(context["shot_id"]), result["id"], post)
+            self.send_json(202, {"job": result, "post": post})
             return True
         match = re.fullmatch(r"/api/v1/factory/keyframes/([0-9a-fA-F-]{36})/(approve|reject)", path)
         if match:
@@ -1861,6 +1910,55 @@ def keyframe_batch(project_id, owner):
     state["finished_at"] = time.time()
     FACTORY.set_keyframe_run(project_id, state)
     KEYFRAME_RUNS.pop(str(project_id), None)
+
+
+def post_request(context, op, options):
+    """Build the post job's request from the source take. The output geometry is known from the
+    take, so the technical check can compare the result to it - twice the width for an upscale,
+    twice the frames for an interpolation, otherwise the same."""
+    job = JOBS.get(context.get("job_id")) or (STORE.get(context.get("job_id")) if STORE and context.get("job_id") else None)
+    measured = (job or {}).get("measured_media") or {}
+    width, height = int(measured.get("width") or 0), int(measured.get("height") or 0)
+    frames, fps = int(measured.get("frames") or 0), int(round(float(measured.get("fps") or 0)))
+    if not (width and height and frames and fps):
+        raise ValueError("The source take has no measured geometry to check the result against")
+    parameters = {"op": op, "take_id": str(context["id"]), "audio": bool((job or {}).get("audio"))}
+    if op == "upscale":
+        scale = int(options.get("scale", 2))
+        parameters.update(scale=scale, width=width * scale, height=height * scale, frames=frames, fps=fps)
+    elif op == "clean":
+        mask = options.get("mask_image_id")
+        if not isinstance(mask, str) or not re.fullmatch(r"[a-f0-9]{32}", mask):
+            raise ValueError("clean needs mask_image_id, an uploaded mask asset")
+        parameters.update(mask_image_id=mask, width=width, height=height, frames=frames, fps=fps)
+    elif op == "interpolate":
+        target = int(options.get("target_fps", fps * 2))
+        factor = max(1, round(target / fps))
+        parameters.update(target_fps=target, width=width, height=height, frames=frames * factor, fps=fps * factor)
+    else:
+        raise ValueError("op must be upscale, clean or interpolate")
+    return {"model": POST_MODEL, "mode": "post", "prompt": f"{op} of take {str(context['id'])[:8]}",
+            "parameters": parameters,
+            "external": {"project_id": str(context["project_id"]), "asset_id": str(context["project_id"]),
+                         "shot_id": str(context["shot_id"]), "request_id": f"post-{str(context['id'])[:8]}-{op}"}}
+
+
+def post_watch(shot_id, job_id, post):
+    """Turn a finished post job into a new take of the shot, then hand it to the judge (MQ)."""
+    job = keyframe_wait(job_id, float(os.environ.get("LTX_POST_WAIT_SECONDS", "7200")))
+    if job and job["status"] == "succeeded":
+        take_id = FACTORY.record_post_take(shot_id, job_id=job_id, post=post, output_url=job.get("output_url"),
+                                           poster_url=job.get("poster_url"))
+        if take_id:
+            score_take(shot_id, job_id, job.get("output_url"))
+        return take_id
+    reason = ((job or {}).get("error") or {}).get("code") or (job or {}).get("status") or "timeout"
+    FACTORY.record_post_take(shot_id, job_id=job_id, post={**post, "failed": True}, reason=str(reason)[:300])
+    return None
+
+
+def start_post_watch(shot_id, job_id, post):
+    threading.Thread(target=post_watch, args=(shot_id, job_id, post), name=f"post-{job_id[:8]}", daemon=True).start()
 
 
 def record_succeeded_take(shot_id, job):

@@ -26,6 +26,15 @@ class MediaAdapter:
     requires_cuda: bool = True
     description: str = ""
     accepts_image: bool = False
+    # Which GPU tenant a job of this adapter is, for the lease: "ltx", "imagegen", or "none" for
+    # tools sized to run beside either (the post tools). Empty means "by media type".
+    gpu_tenant: str = ""
+    # The largest frame this adapter may produce. LTX generation is capped at 1536; a post tool
+    # that upscales an LTX frame by four must be allowed past it.
+    max_dimension: int = 1536
+    # The most frames this adapter may produce; 0 means the worker's own limit. Interpolation
+    # doubles a take's frame count, so the post adapter sets its own.
+    max_frames: int = 0
 
     @property
     def extension(self):
@@ -90,7 +99,7 @@ class MediaAdapter:
         if self.media_type == "video":
             if any(type(payload.get(key)) is not int or payload[key] <= 0 for key in ("width", "height", "frames", "fps")):
                 raise ValueError("Video adapters must resolve width, height, frames and fps")
-            if payload["frames"] > MAX_FRAMES or payload["width"] > 1536 or payload["height"] > 1536 or payload["fps"] > 60:
+            if payload["frames"] > (self.max_frames or MAX_FRAMES) or payload["width"] > self.max_dimension or payload["height"] > self.max_dimension or payload["fps"] > 60:
                 raise ValueError("Video adapter exceeds worker resource limits")
             payload["audio"] = values.get("audio", False)
         return payload
