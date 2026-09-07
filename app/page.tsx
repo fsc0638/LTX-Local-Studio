@@ -77,6 +77,7 @@ import { BreakdownEditor } from '@/components/breakdown-editor';
 import { ReviewBoard } from '@/components/review-board';
 import { KeyframesBoard } from '@/components/keyframes-board';
 import { PostBoard } from '@/components/post-board';
+import { WorkstationPanel } from '@/components/workstation-panel';
 import {
   breakdownCues,
   planBreakdown,
@@ -2553,6 +2554,14 @@ function Studio() {
               eyebrow={ui.envEyebrow}
               title={ui.envTitle}
               note={ui.envNote}
+            />
+            <WorkstationPanel
+              plan={plan}
+              locale={locale}
+              onPlanChange={(next) => {
+                setPlan(next);
+                setHostVersion((version) => version + 1);
+              }}
             />
             <p className="mb-4 border border-border bg-white p-4 text-xs">
               {transfer.gpu}:{' '}
