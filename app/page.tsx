@@ -75,6 +75,7 @@ import { StageRail, stageCopy, type RailKey } from '@/components/stage-rail';
 import { BreakdownEditor } from '@/components/breakdown-editor';
 import { ReviewBoard } from '@/components/review-board';
 import { KeyframesBoard } from '@/components/keyframes-board';
+import { PostBoard } from '@/components/post-board';
 import {
   breakdownCues,
   planBreakdown,
@@ -210,6 +211,8 @@ const translations = {
     reviewTitle: '審每一鏡的 take',
     reviewNote: '三個裁判只亮燈、不否決：紅燈下你仍可採用，但會記錄是誰、何時推翻。門檻在校準前是暫定值。',
     unavailablePost: '需要後製 adapter：補幀、放大、清理（D 期）。',
+    postTitle: '把核准的 take 再加工',
+    postNote: '放大（Real-ESRGAN）、清理（LaMa，塗遮罩）、補幀（RIFE）。每次加工都是同一鏡的新版本，完成後自動經過動態裁判。',
     backToBoard: '回狀態板',
     ready: '已就緒',
     connecting: '連線中',
@@ -373,6 +376,8 @@ const translations = {
     reviewTitle: 'Review each shot\u2019s takes',
     reviewNote: 'The three judges light up; they do not veto. You can accept under a red light, and who did so and when is recorded. Thresholds are placeholders until calibrated.',
     unavailablePost: 'Needs the post adapters: interpolation, upscaling, cleanup (phase D).',
+    postTitle: 'Work on the accepted takes',
+    postNote: 'Upscale (Real-ESRGAN), clean under a painted mask (LaMa), interpolate (RIFE). Each is a new version of the same shot and goes through the motion judge when it finishes.',
     backToBoard: 'Back to the board',
     ready: 'READY',
     connecting: 'CONNECTING',
@@ -537,6 +542,8 @@ const translations = {
     reviewTitle: '各ショットのテイクをレビュー',
     reviewNote: '3つの判定はランプを点けるだけで拒否はしません。赤でも採用できますが、誰がいつ覆したかは記録されます。しきい値は校正前は暫定値です。',
     unavailablePost: '仕上げアダプター（補間・拡大・除去）が必要です（フェーズD）。',
+    postTitle: '採用テイクを仕上げる',
+    postNote: '拡大（Real-ESRGAN）、マスクでクリーン（LaMa）、補間（RIFE）。いずれも同じショットの新しいバージョンになり、完了後に動き判定を通ります。',
     backToBoard: 'ボードに戻る',
     ready: '準備完了',
     connecting: '接続中',
@@ -1331,6 +1338,17 @@ function Studio() {
               }}
               onAttention={setKeyframesAttention}
             />
+          </section>
+        )}
+
+        {tab === 'post' && (
+          <section>
+            <SectionTitle
+              eyebrow={`${stageIndexOf('post')} / ${stageNames.post}`}
+              title={ui.postTitle}
+              note={ui.postNote}
+            />
+            <PostBoard plan={plan} locale={locale} />
           </section>
         )}
 

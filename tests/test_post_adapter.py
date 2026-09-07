@@ -70,6 +70,7 @@ class PostAdapterTests(unittest.TestCase):
         self.url = f"http://127.0.0.1:{self.http.server_port}"
         self.factory = FactoryStore()
         for item in (patch.dict(os.environ, {"LTX_POST_SERVICE": self.url}),
+                     patch.object(backend, "POST_SERVICE", self.url),
                      patch.object(backend, "FACTORY", self.factory),
                      patch.object(backend, "RUNTIME", {"cuda_available": True, "device": "test"}),
                      patch.object(backend, "GPU_LEASE", gpu_lease.GpuLease("http://127.0.0.1:9", backend.ltx_job_active, evict_timeout=1, poll=0.05)),
@@ -199,6 +200,20 @@ class PostAdapterTests(unittest.TestCase):
         plan, shot, take = self.source_take()
         self.post(take["id"], op="upscale", scale=2)
         self.assertEqual([h[1] for h in backend.GPU_LEASE.history], [], "post tools are not lease tenants")
+
+    def test_the_listing_groups_post_versions_and_reports_the_service(self):
+        plan, shot, take = self.source_take()
+        self.post(take["id"], op="upscale", scale=2)
+        status, _, body = self.api("GET", f"/api/v1/factory/projects/{plan['id']}/post")
+        self.assertEqual(status, 200, body)
+        listing = json.loads(body)
+        versions = listing["versions"][shot["id"]]
+        self.assertEqual(len(versions), 1, "the source take is not a version; the upscale is")
+        self.assertEqual(versions[0]["post"]["op"], "upscale")
+        self.assertTrue(listing["service"]["available"])
+        self.assertFalse(listing["service"]["rife_available"])
+        other_cookie, other_csrf = self.account("dave")
+        self.assertEqual(self.call("GET", f"/api/v1/factory/projects/{plan['id']}/post", cookie=other_cookie, csrf=other_csrf)[0], 404)
 
     def test_the_service_refuses_paths_outside_its_roots(self):
         with self.assertRaisesRegex(ValueError, "must be inside"):
