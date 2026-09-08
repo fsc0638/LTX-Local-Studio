@@ -10,6 +10,7 @@ import {
   Clock3,
   Code2,
   Cpu,
+  ExternalLink,
   FileImage,
   FileVideo,
   FolderOpen,
@@ -174,11 +175,14 @@ type Locale = 'zh-TW' | 'en' | 'ja';
 // Browser traffic stays same-origin. Only the server knows the worker address.
 const API_BASE = '';
 const MEDIA_BASE = '';
+const OPENCLAW_URL =
+  process.env.NEXT_PUBLIC_OPENCLAW_URL || '/openclaw';
 
 const translations = {
   'zh-TW': {
     topStrip: '本機生成 · 檔案保留在此裝置 · NVIDIA GB10',
     console: 'GB10 控制台',
+    openClaw: '開啟 OpenClaw',
     createTab: '沙盒',
     factoryTab: '拍攝',
     assetsTab: '素材庫',
@@ -344,6 +348,7 @@ const translations = {
   en: {
     topStrip: 'Local generation · Files stay on this device · NVIDIA GB10',
     console: 'GB10 Console',
+    openClaw: 'Open OpenClaw',
     createTab: 'SANDBOX',
     factoryTab: 'GENERATION',
     assetsTab: 'MEDIA',
@@ -510,6 +515,7 @@ const translations = {
   ja: {
     topStrip: 'ローカル生成 · ファイルはこのデバイスに保存 · NVIDIA GB10',
     console: 'GB10 コンソール',
+    openClaw: 'OpenClaw を開く',
     createTab: 'サンドボックス',
     factoryTab: '生成',
     assetsTab: '素材ライブラリ',
@@ -1276,6 +1282,16 @@ function Studio() {
             </div>
           </button>
           <div className="flex items-center gap-4">
+            <a
+              href={OPENCLAW_URL}
+              target="_blank"
+              rel="noreferrer"
+              aria-label={ui.openClaw}
+              className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-xs font-semibold transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+            >
+              <span className="hidden sm:inline">OpenClaw</span>
+              <ExternalLink className="size-3.5" aria-hidden="true" />
+            </a>
             <Select
               value={locale}
               onValueChange={(value) => setLocale(value as Locale)}
