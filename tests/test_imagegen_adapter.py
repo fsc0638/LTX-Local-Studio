@@ -214,6 +214,40 @@ class ImagegenAdapterTests(unittest.TestCase):
         self.assertIn("holder", state)
         self.assertIn("imagegen_loaded", state)
 
+    # ---- active-jobs: two callers, two questions ----
+
+    def queued(self, job_id, media_type):
+        job = {"id": job_id, "status": "queued", "media_type": media_type, "created_at": 1.0,
+               "owner_id": "0" * 32}
+        backend.record_job(job)
+
+    def active_jobs(self):
+        status, _, body = self.call("GET", "/api/internal/active-jobs")
+        self.assertEqual(status, 200, body)
+        return json.loads(body)
+
+    def test_active_jobs_counts_every_job_but_reports_the_video_tenant_apart(self):
+        self.assertEqual(self.active_jobs(), {"count": 0, "ltx": 0})
+        self.queued("aaaaaaaaaaaa", "image")
+        # git-sync must still see it: one job is in flight and the API is not safe to restart.
+        self.assertEqual(self.active_jobs(), {"count": 1, "ltx": 0})
+        self.queued("bbbbbbbbbbbb", "video")
+        self.assertEqual(self.active_jobs(), {"count": 2, "ltx": 1})
+
+    def test_an_image_job_does_not_make_the_service_refuse_its_own_model(self):
+        """The regression: the service read `count`, so a running image job counted itself and
+        the load was refused with "An LTX job is active" while no LTX job existed."""
+        with patch.object(self.service, "API_URL", f"http://127.0.0.1:{self.server.server_port}"):
+            self.assertFalse(self.service.ltx_jobs_active())
+            self.queued("cccccccccccc", "image")
+            self.assertFalse(self.service.ltx_jobs_active(), "an image job is not an LTX job")
+            self.queued("dddddddddddd", "video")
+            self.assertTrue(self.service.ltx_jobs_active())
+
+    def test_an_api_that_cannot_be_asked_is_treated_as_busy(self):
+        with patch.object(self.service, "API_URL", "http://127.0.0.1:1"):
+            self.assertTrue(self.service.ltx_jobs_active())
+
 
 if __name__ == "__main__":
     unittest.main()
