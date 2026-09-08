@@ -89,12 +89,19 @@ def unload(reason):
 
 def ltx_jobs_active():
     """Ask ltx-api. Unreachable means unknown, and unknown is treated as busy: the cost of a
-    wrong "free" is an OOM, the cost of a wrong "busy" is a retry."""
+    wrong "free" is an OOM, the cost of a wrong "busy" is a retry.
+
+    Read `ltx`, never `count`: `count` is every job in flight, and an image job asking this
+    question is itself one of them. Counting itself is how the service comes to refuse the model
+    its own job is waiting for. An API too old to answer `ltx` cannot tell the tenants apart, so
+    it lands in the same unknown-is-busy branch as one that does not answer at all.
+    """
     import urllib.request
 
     try:
         with urllib.request.urlopen(f"{API_URL}/api/internal/active-jobs", timeout=5) as response:
-            return int(json.load(response).get("count", 0)) > 0
+            ltx = json.load(response).get("ltx")
+        return True if ltx is None else int(ltx) > 0
     except (OSError, ValueError):
         return True
 

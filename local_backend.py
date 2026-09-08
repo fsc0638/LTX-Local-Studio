@@ -1293,8 +1293,11 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
             self.send_json(200, GPU_LEASE.describe())
             return
         if path == "/api/internal/active-jobs":
-            # For host maintenance (git-sync asks before restarting the API). Unauthenticated but
-            # loopback-only, and it discloses a single count -- never job contents or owners.
+            # Two callers, two questions. Host maintenance (git-sync asks before restarting the
+            # API) wants `count`: is anything at all in flight. The imagegen service wants `ltx`:
+            # is the *video* tenant holding the GPU -- an image job must not count itself, or the
+            # service refuses to load the very model that job is waiting for. Unauthenticated but
+            # loopback-only, and it discloses two counts -- never job contents or owners.
             if self.client_address[0] not in ("127.0.0.1", "::1"):
                 self.send_json(403, {"error": "Loopback only"})
                 return
@@ -1302,9 +1305,11 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
                 if STORE is None:
                     raise psycopg.OperationalError()
                 with STORE.connect() as db:
-                    count = db.execute("SELECT count(*) AS total FROM jobs WHERE "
-                                       "snapshot->>'status' IN ('queued','running')").fetchone()["total"]
-                self.send_json(200, {"count": count})
+                    row = db.execute(
+                        "SELECT count(*) AS total, count(*) FILTER ("
+                        "WHERE coalesce(snapshot->>'media_type', 'video') = 'video') AS ltx "
+                        "FROM jobs WHERE snapshot->>'status' IN ('queued','running')").fetchone()
+                self.send_json(200, {"count": row["total"], "ltx": row["ltx"]})
             except (OSError, psycopg.Error):
                 self.send_json(503, {"error": "Job store unavailable"})
             return
