@@ -78,6 +78,7 @@ import { ReviewBoard } from '@/components/review-board';
 import { KeyframesBoard } from '@/components/keyframes-board';
 import { PostBoard } from '@/components/post-board';
 import { WorkstationPanel } from '@/components/workstation-panel';
+import { AssemblyPanel } from '@/components/assembly-panel';
 import {
   breakdownCues,
   planBreakdown,
@@ -2444,6 +2445,7 @@ function Studio() {
               title={ui.outputsTitle}
               note={ui.outputsNote}
             />
+            <AssemblyPanel plan={plan} locale={locale} onGoReview={() => setTab('review')} />
             <div className="grid gap-6 xl:grid-cols-2">
               {liveOutputs.map((item, index) => (
                 <article
