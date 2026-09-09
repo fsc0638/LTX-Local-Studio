@@ -1087,6 +1087,7 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
                 return True
             from user_auth import digest
             key = digest(f"user:{owner}:post:{context['id']}:{op}:{json.dumps(body, sort_keys=True)}")
+            key = post_attempt_key(key)
             status, result = submit_job(payload, key=key, external=external, requested=requested,
                                         owner_id=None if owner == SERVICE_OWNER else owner)
             if status not in (200, 202) or "id" not in result:
@@ -1094,6 +1095,11 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
                 return True
             post = {"op": op, "source_take_id": str(context["id"]), "parameters": {k: v for k, v in payload["parameters"].items()
                     if k in ("op", "scale", "target_fps", "mask_image_id", "width", "height", "frames", "fps")}}
+            if result.get("idempotent_replay"):
+                # The same finished attempt again: its take already exists, so no second watcher
+                # and no second take. The person gets the job they already have.
+                self.send_json(200, {"job": result, "post": post})
+                return True
             start_post_watch(str(context["shot_id"]), result["id"], post)
             self.send_json(202, {"job": result, "post": post})
             return True
@@ -2021,6 +2027,23 @@ def post_request(context, op, options):
             "parameters": parameters,
             "external": {"project_id": str(context["project_id"]), "asset_id": str(context["project_id"]),
                          "shot_id": str(context["shot_id"]), "request_id": f"post-{str(context['id'])[:8]}-{op}"}}
+
+
+def post_attempt_key(key):
+    """A finished post job replays on the same key, so pressing "upscale" twice is one upscale.
+    A *failed* attempt must not: the tools get fixed and the person asks again with the same
+    take and the same options. Each failed attempt therefore rotates the key once more."""
+    while STORE is not None:
+        previous = STORE.by_key(key)
+        if previous is None:
+            return key
+        saved = previous[0]
+        current = JOBS.get(saved["id"], saved)
+        if current.get("status") != "failed":
+            return key
+        from user_auth import digest
+        key = digest(f"{key}:after:{saved['id']}")
+    return key
 
 
 def post_watch(shot_id, job_id, post):
