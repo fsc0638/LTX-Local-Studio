@@ -10,6 +10,7 @@ import os
 import re
 import signal
 import shutil
+import datetime
 import subprocess
 import threading
 import time
@@ -951,6 +952,11 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
         if path == "/api/v1/factory/workstation":
             self.send_json(200, workstation_view(owner))
             return True
+        match = re.fullmatch(r"/api/v1/factory/projects/([0-9a-fA-F-]{36})/assembly", path)
+        if match:
+            view = assembly_view(match.group(1), owner)
+            self.send_json(200, view) if view is not None else self.send_json(404, {"error": "Project not found", "code": "project_not_found"})
+            return True
         match = re.fullmatch(r"/api/v1/factory/projects/([0-9a-fA-F-]{36})/budget", path)
         if match:
             view = budget_view(match.group(1), owner)
@@ -1000,6 +1006,37 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
         match = re.fullmatch(r"/api/v1/factory/takes/([0-9a-fA-F-]{36})/opinion", path)
         if match:
             self.factory_opinion(match.group(1), owner)
+            return True
+        match = re.fullmatch(r"/api/v1/factory/projects/([0-9a-fA-F-]{36})/assemble", path)
+        if match:
+            project_id = match.group(1)
+            project, rows = FACTORY.accepted_takes(project_id, owner)
+            if project is None:
+                self.send_json(404, {"error": "Project not found", "code": "project_not_found"})
+                return True
+            readiness = assembly_readiness(rows)
+            if not readiness["ready"]:
+                self.send_json(400, {"error": "Every shot needs an accepted take before the cut",
+                                     "code": "shots_without_take", "missing": readiness["missing"]})
+                return True
+            if FACTORY.assembly(project_id).get("status") == "running":
+                self.send_json(409, {"error": "A cut is already being made", "code": "assembly_running"})
+                return True
+            if STORE is None:
+                self.send_json(503, {"error": "Durable job store unavailable", "code": "store_unavailable"})
+                return True
+            job_id = uuid.uuid4().hex[:12]
+            filename = f"ltx-cut-{time.strftime('%Y%m%d-%H%M%S')}-{job_id}.mp4"
+            job = {"id": job_id, "status": "running", "progress": 5, "phase": "assembly", "model": "assembly",
+                   "prompt": f"cut of {project['title']}", "created_at": time.time(), "started_at": time.time(),
+                   "filename": filename, "output_url": f"/generated/{filename}", "device": RUNTIME.get("device"),
+                   "owner_id": None if owner == SERVICE_OWNER else owner, "media_type": "video", "content_type": "video/mp4",
+                   "external": {"project_id": str(project_id), "asset_id": str(project_id), "shot_id": "cut", "request_id": f"cut-{job_id}"},
+                   "message": "組片中 / Assembling", "contract_version": worker.CONTRACT_VERSION}
+            STORE.record(job)
+            JOBS[job_id] = job
+            start_assembly(project_id, owner, job)
+            self.send_json(202, {"job": public_job(job)})
             return True
         match = re.fullmatch(r"/api/v1/factory/projects/([0-9a-fA-F-]{36})/keyframes/(run|stop)", path)
         if match:
@@ -1993,6 +2030,160 @@ def post_watch(shot_id, job_id, post):
 
 def start_post_watch(shot_id, job_id, post):
     threading.Thread(target=post_watch, args=(shot_id, job_id, post), name=f"post-{job_id[:8]}", daemon=True).start()
+
+
+def assembly_readiness(rows):
+    """Shots without an accepted take, in plan order. The cut takes exactly one take per shot."""
+    missing = []
+    for index, row in enumerate(rows):
+        if not row.get("take_id") or row.get("take_deleted_at") or not row.get("take_output_url"):
+            missing.append({"index": index, "id": str(row["id"]), "title": row["title"]})
+    return {"ready": bool(rows) and not missing, "missing": missing, "total": len(rows)}
+
+
+def assembly_manifest(project, rows, job, geometry, total_frames, audio):
+    """The EDL: the A1 plan as it stands, and per shot the take that went into the cut.
+
+    The top level is the work-order format parseFactoryImport reads, and each shot carries only
+    title, request and pinned - the importer refuses unknown shot fields - so the take's detail
+    lives in `edl`, index-aligned with `shots`. Importing the manifest restores every request.
+    """
+    bible = project.get("bible") or {}
+    fps = geometry["fps"]
+    edl, cursor = [], 0
+    for index, row in enumerate(rows):
+        snapshot = JOBS.get(row["take_job_id"]) or (STORE.get(row["take_job_id"]) if STORE and row.get("take_job_id") else None) or {}
+        frames = int(((snapshot.get("measured_media") or {}).get("frames")) or 0)
+        request = row.get("request") or {}
+        edl.append({
+            "index": index, "shot_id": str(row["id"]), "title": row["title"],
+            "take_id": str(row["take_id"]), "job_id": row.get("take_job_id"),
+            "model": snapshot.get("model") or request.get("model") or "ltx23-distilled",
+            "seed": snapshot.get("seed", request.get("seed")),
+            "prompt": snapshot.get("prompt") or request.get("prompt"),
+            "verdict": row.get("take_verdict"), "overridden_by": row.get("overridden_by"),
+            "overridden_at": row.get("overridden_at"), "scores": row.get("take_scores"),
+            "post": row.get("take_post"), "provenance": snapshot.get("provenance"),
+            "artifact_sha256": snapshot.get("artifact_sha256"), "output_url": row.get("take_output_url"),
+            "start_seconds": round(cursor / fps, 4), "end_seconds": round((cursor + frames) / fps, 4),
+            "frames": frames,
+        })
+        cursor += frames
+    return {
+        "format": "ltx-production-factory", "version": 2, "id": str(project["id"]),
+        "title": project["title"], "bible": bible,
+        "shots": [{"title": r["title"], "request": r.get("request") or {}, "pinned": r.get("pinned") or []} for r in rows],
+        "edl": edl,
+        "audio": audio,
+        "assembled": {"job_id": job["id"], "output_url": job["output_url"], "frames": total_frames, "fps": fps,
+                      "width": geometry["width"], "height": geometry["height"],
+                      "seconds": round(total_frames / fps, 3)},
+        "exported_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    }
+
+
+def assemble_project(project_id, owner, job):
+    """Cut the accepted takes into one MP4 on the Bible's music, as a job the owner holds."""
+    started = time.time()
+    state = {"status": "running", "job_id": job["id"], "started_at": started}
+    FACTORY.set_assembly(project_id, state)
+    work = WORK_DIR / job["id"]
+    try:
+        project, rows = FACTORY.accepted_takes(project_id, owner)
+        readiness = assembly_readiness(rows)
+        if not readiness["ready"]:
+            raise ValueError("shots_without_take")
+        segments, geometry, total = [], None, 0
+        for row in rows:
+            snapshot = JOBS.get(row["take_job_id"]) or (STORE.get(row["take_job_id"]) if STORE else None) or {}
+            measured = snapshot.get("measured_media") or {}
+            frames, fps = int(measured.get("frames") or 0), int(round(float(measured.get("fps") or 0)))
+            width, height = int(measured.get("width") or 0), int(measured.get("height") or 0)
+            if not (frames and fps and width and height):
+                raise ValueError(f"take of shot {row['title']} has no measured geometry")
+            this = {"fps": fps, "width": width, "height": height}
+            if geometry is None:
+                geometry = this
+            elif this != geometry:
+                # The assembler refuses a size change mid-cut; say which shot before it does.
+                raise ValueError(f"shot {row['title']} is {width}x{height}@{fps}, the cut is "
+                                 f"{geometry['width']}x{geometry['height']}@{geometry['fps']}")
+            path = output_location(str(row["take_output_url"]).rsplit("/", 1)[-1])
+            if not path.is_file():
+                raise ValueError(f"output of shot {row['title']} is missing")
+            segments.append({"path": str(path), "keep_frames": frames})
+            total += frames
+        music = ((project.get("bible") or {}).get("music") or {})
+        audio = {"audio_id": None, "audio_start_seconds": 0}
+        audio_path = None
+        if music.get("audio_id"):
+            audio_path = asset_path(asset_by_id(str(music["audio_id"])))
+            audio = {"audio_id": str(music["audio_id"]), "audio_start_seconds": float(music.get("audio_start_seconds") or 0),
+                     "fingerprint": file_fingerprint(audio_path, digest=True)}
+        work.mkdir(parents=True, exist_ok=True, mode=0o700)
+        manifest = work / "sequence.json"
+        manifest.write_text(json.dumps({"segments": segments, "fps": geometry["fps"], "width": geometry["width"],
+                                        "height": geometry["height"], "audio": bool(audio_path),
+                                        "audio_path": str(audio_path) if audio_path else None,
+                                        "audio_start_seconds": audio["audio_start_seconds"]}), encoding="utf-8")
+        output = work / job["filename"]
+        result = subprocess.run([str(LTX_PYTHON), str(SITE_ROOT / "scripts/sequence_media.py"), "assemble",
+                                 str(manifest), str(output)], capture_output=True, text=True, timeout=1800, check=False)
+        if result.returncode != 0 or not output.is_file():
+            raise ValueError("assembler failed: " + (result.stderr or result.stdout)[-300:])
+        expected = json.dumps({"width": geometry["width"], "height": geometry["height"], "frames": total,
+                               "fps": geometry["fps"], "audio": bool(audio_path)})
+        checked = subprocess.run([str(LTX_PYTHON), str(SITE_ROOT / "scripts/check_output.py"), str(output), expected],
+                                 capture_output=True, text=True, timeout=600, check=False)
+        report = json.loads(checked.stdout) if checked.returncode == 0 and checked.stdout else {"quality_control": {"passed": False, "errors": ["check_failed"]}}
+        if not report.get("quality_control", {}).get("passed"):
+            raise ValueError("cut failed technical validation: " + ", ".join(report.get("quality_control", {}).get("errors", [])))
+        poster = output.with_suffix(".jpg")
+        subprocess.run([str(LTX_PYTHON), str(POSTER_SCRIPT), str(output), str(poster)], capture_output=True, timeout=60, check=False)
+        with LOCK:
+            job.update(report)
+            job.update(status="succeeded", phase="complete", progress=100, finished_at=time.time(),
+                       size_bytes=output.stat().st_size, runtime_seconds=round(time.time() - started, 2),
+                       artifact_sha256=file_fingerprint(output, digest=True)["sha256"],
+                       message="組片完成，已通過技術驗證。")
+            if poster.is_file():
+                job["poster_url"] = f"/generated/{poster.name}"
+            output.replace(OUTPUT_DIR / output.name)
+            if poster.is_file():
+                poster.replace(OUTPUT_DIR / poster.name)
+            (OUTPUT_DIR / output.name).with_suffix(".json").write_text(json.dumps(public_job(job), ensure_ascii=False, indent=2), encoding="utf-8")
+            record_job(job)
+        edl = assembly_manifest(project, rows, job, geometry, total, audio)
+        (OUTPUT_DIR / output.name).with_suffix(".manifest.json").write_text(json.dumps(edl, ensure_ascii=False, indent=2), encoding="utf-8")
+        state.update(status="done", finished_at=time.time(), output_url=job["output_url"], poster_url=job.get("poster_url"),
+                     frames=total, seconds=round(total / geometry["fps"], 3))
+    except Exception as exc:  # noqa: BLE001 - the state must say why the cut failed
+        with LOCK:
+            job.update(status="failed", finished_at=time.time(), error={"code": "assembly_failed", "message": str(exc)[:300]},
+                       message=str(exc)[:300])
+            record_job(job)
+        state.update(status="failed", finished_at=time.time(), error=str(exc)[:300])
+    FACTORY.set_assembly(project_id, state)
+
+
+def start_assembly(project_id, owner, job):
+    threading.Thread(target=assemble_project, args=(project_id, owner, job), name=f"cut-{job['id']}", daemon=True).start()
+
+
+def assembly_view(project_id, owner):
+    project, rows = FACTORY.accepted_takes(project_id, owner)
+    if project is None:
+        return None
+    state = FACTORY.assembly(project_id)
+    manifest = None
+    if state.get("status") == "done" and state.get("output_url"):
+        path = (OUTPUT_DIR / str(state["output_url"]).rsplit("/", 1)[-1]).with_suffix(".manifest.json")
+        if path.is_file():
+            try:
+                manifest = json.loads(path.read_text(encoding="utf-8"))
+            except ValueError:
+                manifest = None
+    return {"readiness": assembly_readiness(rows), "assembly": state, "manifest": manifest}
 
 
 def record_succeeded_take(shot_id, job):

@@ -275,6 +275,24 @@ export async function projectBudget(id: string): Promise<BudgetView> {
   return (await call(`/projects/${id}/budget`)) as BudgetView;
 }
 
+export type AssemblyView = {
+  readiness: { ready: boolean; missing: { index: number; id: string; title: string }[]; total: number };
+  assembly: {
+    status?: 'running' | 'done' | 'failed'; job_id?: string; started_at?: number; finished_at?: number;
+    output_url?: string; poster_url?: string; frames?: number; seconds?: number; error?: string;
+  };
+  manifest: Record<string, unknown> | null;
+};
+
+export async function projectAssembly(id: string): Promise<AssemblyView> {
+  return (await call(`/projects/${id}/assembly`)) as AssemblyView;
+}
+
+/** Cut the accepted takes into one MP4 on the Bible's music. Refused while any shot lacks one. */
+export async function assembleProject(id: string): Promise<{ job: { id: string } }> {
+  return (await call(`/projects/${id}/assemble`, json({}))) as { job: { id: string } };
+}
+
 export async function disagreeOpinion(takeId: string): Promise<FactoryPlan> {
   return plan(await call(`/takes/${takeId}/disagree`, json({})));
 }

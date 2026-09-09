@@ -791,6 +791,34 @@ class FactoryStore:
                 "WHERE s.project_id=%s AND j.snapshot->>'runtime_seconds' IS NOT NULL", (project_id,)).fetchone()
         return round(float(row["seconds"] or 0), 1)
 
+    # ---------- assembly (D5) ----------
+
+    def accepted_takes(self, project_id, owner_id):
+        """Every shot in order with its accepted take (or None), plus the project row."""
+        project_id = _identifier(project_id, "project id")
+        with self.connect() as db:
+            project = db.execute("SELECT * FROM projects WHERE id=%s AND owner_id=%s",
+                                 (project_id, owner_id)).fetchone()
+            if not project:
+                return None, []
+            rows = db.execute(
+                """SELECT s.*, t.id AS take_id, t.job_id AS take_job_id, t.output_url AS take_output_url,
+                          t.verdict AS take_verdict, t.overridden_by, t.overridden_at, t.scores AS take_scores,
+                          t.post AS take_post, t.deleted_at AS take_deleted_at
+                     FROM shots s LEFT JOIN takes t ON t.id = s.accepted_take_id
+                    WHERE s.project_id=%s ORDER BY s.position""", (project_id,)).fetchall()
+        return dict(project), [dict(r) for r in rows]
+
+    def set_assembly(self, project_id, state):
+        with self.connect() as db:
+            db.execute("UPDATE projects SET assembly=%s, updated_at=%s WHERE id=%s",
+                       (Jsonb(state), time.time(), project_id))
+
+    def assembly(self, project_id):
+        with self.connect() as db:
+            row = db.execute("SELECT assembly FROM projects WHERE id=%s", (project_id,)).fetchone()
+        return (row or {}).get("assembly") or {}
+
     # ---------- run control ----------
 
     def start(self, project_id, owner_id):
