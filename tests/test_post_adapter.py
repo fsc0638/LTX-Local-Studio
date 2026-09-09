@@ -159,6 +159,28 @@ class PostAdapterTests(unittest.TestCase):
         self.assertEqual(new["scores"]["motion"]["method"], "raft_large")
         self.assertEqual(self.factory.get_project(plan["id"], self.owner)["shots"][0]["status"], "succeeded")
 
+    def test_a_failed_post_attempt_is_not_replayed_but_a_finished_one_is(self):
+        """After the tools are fixed the person asks again with the same take and options; the
+        request must run again instead of replaying the failed job. A finished job still replays."""
+        plan, shot, take = self.source_take()
+        def broken(*args, **kwargs):
+            raise RuntimeError("upscaler broken")
+        with patch.object(self.service, "op_upscale", broken):
+            status, _, body = self.post(take["id"], op="upscale", scale=2)
+        self.assertEqual(status, 202, body)
+        first = [t for t in self.factory.takes(shot["id"], self.owner) if t["id"] != take["id"]][0]
+        self.assertEqual(backend.JOBS[first["jobId"]]["status"], "failed")
+        status, _, body = self.post(take["id"], op="upscale", scale=2)
+        self.assertEqual(status, 202, body)
+        again = [t for t in self.factory.takes(shot["id"], self.owner) if t["id"] not in (take["id"], first["id"])]
+        self.assertEqual(len(again), 1, "a new attempt, not a replay of the failed one")
+        self.assertNotEqual(again[0]["jobId"], first["jobId"])
+        self.assertEqual(backend.JOBS[again[0]["jobId"]]["status"], "succeeded")
+        status, _, body = self.post(take["id"], op="upscale", scale=2)
+        self.assertEqual(status, 200, body)
+        self.assertEqual(json.loads(body)["job"]["id"], again[0]["jobId"], "a finished attempt replays the same job")
+        self.assertEqual(len(self.factory.takes(shot["id"], self.owner)), 3, "no fourth take")
+
     def test_upscale_keeps_every_frame_when_the_audio_is_a_frame_short(self):
         """The real worker writes 49 frames at 24 fps with a 2.01 s audio track; muxing with -shortest
         cut the upscale to 48 frames and the technical check refused it (frame_count_mismatch)."""
