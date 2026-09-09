@@ -235,6 +235,34 @@ class KeyframeTests(unittest.TestCase):
         self.assertEqual(after["verdict"], "approved")
         self.assertEqual(after["assetId"], asset_id)
 
+    def test_an_approved_shot_still_passes_the_worker_contract(self):
+        """keyframe_id stays on the stored request for the UI, but the worker refuses unknown
+        fields: sending the shot must strip it and carry the keyframe picture as image_id."""
+        plan, refs = self.project([{"title": "A", "request": {"prompt": "x"}}])
+        listing = self.run_batch(plan)
+        keyframe = listing["keyframes"][plan["shots"][0]["id"]][0]
+        self.assertEqual(self.api("POST", f"/api/v1/factory/keyframes/{keyframe['id']}/approve", {})[0], 200)
+        self.assertEqual(self.api("POST", f"/api/v1/factory/projects/{plan['id']}/run", {})[0], 200)
+        mine = [p for p in self.factory.running_projects() if str(p["id"]) == plan["id"]]
+        picked = backend.scheduler_pick(projects=mine)
+        self.assertIsNotNone(picked, "the approved shot is queued and pickable")
+        project, shot = picked
+        self.assertEqual(shot["request"]["keyframe_id"], keyframe["id"])
+        sent, real_submit = {}, backend.submit_job
+        def spy_submit(payload, **kwargs):
+            sent.update(payload)
+            return real_submit(payload, **kwargs)
+        with patch.object(backend, "submit_job", spy_submit):
+            backend.factory_send(project, shot)
+        takes = self.factory.project_takes(plan["id"], self.owner)
+        takes = takes.get("takes", takes)
+        take = takes[str(shot["id"])][-1]
+        self.assertIsNone(take.get("reason"), "the worker contract must not refuse the shot")
+        self.assertTrue(take.get("jobId"), "the shot was handed to the worker")
+        self.assertEqual(sent.get("image_id"), shot["request"]["image_id"], "the keyframe picture is what the shot starts from")
+        self.assertNotIn("keyframe_id", sent)
+        self.assertEqual(sent.get("mode"), "i2v")
+
     def test_approving_another_candidate_supersedes_the_first(self):
         plan, _ = self.project([{"title": "A", "request": {"prompt": "x", "seed": 3}}])
         self.judge_script = [RED, GREEN]

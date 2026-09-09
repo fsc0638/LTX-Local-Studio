@@ -2268,6 +2268,11 @@ def factory_send(project, shot):
     FACTORY.set_shot_status(shot["id"], "validating")
     try:
         raw = dict(shot["request"])
+        # keyframe_id is factory bookkeeping (the UI reads it as "from a keyframe"); the worker
+        # contract refuses unknown fields, so it never travels. The picture itself is image_id.
+        raw.pop("keyframe_id", None)
+        if raw.get("image_id") and not raw.get("mode"):
+            raw["mode"] = "i2v"  # an imported shot may name its picture without spelling the mode
         # The worker records where a job came from; upstream never supplies these itself. These
         # must match [\w.:-]{1,120}, so they are ids -- a project title would carry spaces.
         # asset_id names the song when the Bible has one, which is what makes a job traceable back
