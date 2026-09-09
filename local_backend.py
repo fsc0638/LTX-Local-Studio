@@ -408,6 +408,11 @@ def run_job(job_id: str, payload: dict[str, Any], *, resume: bool = False) -> No
             except gpu_lease.LeaseRefused as exc:
                 lease_tenant = None
                 raise JobFailure(exc.code, str(exc), retryable=True)
+            with LOCK:
+                # The lease is a moment, not a phase: once held, the job is generating. Leaving
+                # "gpu_lease" here had every image job report it for its whole run.
+                job.update(phase="generation", message="生成中 / Generating")
+                record_job(job)
         if resume:
             if payload.get("render_mode") != "sequence" or not work_path.is_dir() or work_path.is_symlink():
                 raise JobFailure("resume_unavailable", "Only an existing sequence workspace can be resumed.")
