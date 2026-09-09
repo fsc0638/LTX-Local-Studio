@@ -119,7 +119,9 @@ def extract_frames(path, folder):
 def encode(frames_folder, fps, output, audio_source):
     command = [FFMPEG, "-v", "error", "-y", "-framerate", f"{fps:.6f}", "-i", str(frames_folder / "f%06d.png")]
     if audio_source:
-        command += ["-i", str(audio_source), "-map", "0:v:0", "-map", "1:a:0?", "-c:a", "aac", "-shortest"]
+        # No -shortest: the worker's audio track can run a frame shorter than its video, and the
+        # technical check counts frames, so the video decides the length and the audio is muxed as is.
+        command += ["-i", str(audio_source), "-map", "0:v:0", "-map", "1:a:0?", "-c:a", "aac"]
     command += ["-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "16", "-r", f"{fps:.6f}", "-movflags", "+faststart", str(output)]
     subprocess.run(command, check=True, timeout=3600)
 

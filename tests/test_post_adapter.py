@@ -95,7 +95,7 @@ class PostAdapterTests(unittest.TestCase):
     def api(self, method, path, payload=None, **headers):
         return self.call(method, path, payload, cookie=self.cookie, csrf=self.csrf, **headers)
 
-    def source_take(self, owner=None):
+    def source_take(self, owner=None, frames=24, audio_seconds=None):
         """A real one-second clip as a succeeded take on a shot the owner has."""
         owner = owner or self.owner
         plan = self.factory.create_project(owner, {"title": "MV"})
@@ -105,11 +105,15 @@ class PostAdapterTests(unittest.TestCase):
         filename = f"ltx-ui-test-{job_id}.mp4"
         path = Path(backend.OUTPUT_DIR) / filename
         path.parent.mkdir(parents=True, exist_ok=True)
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=320x180:rate=24",
-                        "-t", "1", "-pix_fmt", "yuv420p", str(path)], check=True, timeout=60)
+        draw = ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=320x180:rate=24"]
+        if audio_seconds is not None:
+            # The worker's audio can be shorter than its video; the post tools must keep every frame.
+            draw += ["-t", f"{audio_seconds:.3f}", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+                     "-map", "0:v", "-map", "1:a", "-c:a", "aac"]
+        subprocess.run(draw + ["-frames:v", str(frames), "-pix_fmt", "yuv420p", str(path)], check=True, timeout=60)
         job = {"id": job_id, "status": "succeeded", "filename": filename, "output_url": f"/generated/{filename}",
-               "created_at": time.time(), "owner_id": owner, "audio": False, "media_type": "video",
-               "measured_media": {"width": 320, "height": 180, "fps": 24.0, "frames": 24}}
+               "created_at": time.time(), "owner_id": owner, "audio": audio_seconds is not None, "media_type": "video",
+               "measured_media": {"width": 320, "height": 180, "fps": 24.0, "frames": frames}}
         ProductionStore().record(job)
         backend.JOBS[job_id] = job
         self.factory.record_take(shot["id"], job_id=job_id, status="succeeded", output_url=job["output_url"])
@@ -154,6 +158,18 @@ class PostAdapterTests(unittest.TestCase):
         # The judge saw it: MQ numbers on the new take, and the shot's status did not move.
         self.assertEqual(new["scores"]["motion"]["method"], "raft_large")
         self.assertEqual(self.factory.get_project(plan["id"], self.owner)["shots"][0]["status"], "succeeded")
+
+    def test_upscale_keeps_every_frame_when_the_audio_is_a_frame_short(self):
+        """The real worker writes 49 frames at 24 fps with a 2.01 s audio track; muxing with -shortest
+        cut the upscale to 48 frames and the technical check refused it (frame_count_mismatch)."""
+        plan, shot, take = self.source_take(frames=49, audio_seconds=2.01)
+        status, _, body = self.post(take["id"], op="upscale", scale=2)
+        self.assertEqual(status, 202, body)
+        new = [t for t in self.factory.takes(shot["id"], self.owner) if t["id"] != take["id"]][0]
+        job = backend.JOBS[new["jobId"]]
+        self.assertTrue(job["quality_control"]["passed"], job["quality_control"])
+        self.assertEqual(job["status"], "succeeded", job.get("error"))
+        self.assertEqual(job["measured_media"]["frames"], 49)
 
     def test_clean_needs_a_mask_the_caller_owns_and_keeps_the_geometry(self):
         plan, shot, take = self.source_take()
