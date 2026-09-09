@@ -2273,6 +2273,12 @@ def factory_send(project, shot):
         raw.pop("keyframe_id", None)
         if raw.get("image_id") and not raw.get("mode"):
             raw["mode"] = "i2v"  # an imported shot may name its picture without spelling the mode
+        if not any(k in raw for k in ("aspect_ratio", "width", "height")):
+            # One cut, one geometry: a shot that says nothing about size follows the Bible's aspect,
+            # like its keyframes do. Otherwise t2v shots fall to the worker default (768x512) while
+            # shots starting from a keyframe take the picture's size, and the assembler refuses the mix.
+            output = (project.get("bible") or {}).get("output") or {}
+            raw["aspect_ratio"] = str(output.get("aspect_ratio") or "16:9")
         # The worker records where a job came from; upstream never supplies these itself. These
         # must match [\w.:-]{1,120}, so they are ids -- a project title would carry spaces.
         # asset_id names the song when the Bible has one, which is what makes a job traceable back

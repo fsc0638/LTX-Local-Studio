@@ -263,6 +263,37 @@ class KeyframeTests(unittest.TestCase):
         self.assertNotIn("keyframe_id", sent)
         self.assertEqual(sent.get("mode"), "i2v")
 
+    def test_a_plain_shot_and_a_keyframe_shot_share_the_cuts_geometry(self):
+        """The assembler refuses a cut of mixed sizes. A keyframe shot takes its picture's size (the
+        Bible's aspect); a shot that says nothing about size must land on the same geometry, not the
+        worker's 768x512 default. A shot that spells its own size is left alone."""
+        plan, refs = self.project([{"title": "A", "request": {"prompt": "x"}},
+                                   {"title": "B", "request": {"prompt": "y"}},
+                                   {"title": "C", "request": {"prompt": "z", "width": 512, "height": 320}}])
+        listing = self.run_batch(plan)
+        first = listing["keyframes"][plan["shots"][0]["id"]][0]
+        self.assertEqual(self.api("POST", f"/api/v1/factory/keyframes/{first['id']}/approve", {})[0], 200)
+        for other in (plan["shots"][1]["id"], plan["shots"][2]["id"]):
+            for k in listing["keyframes"][other]:
+                self.api("POST", f"/api/v1/factory/keyframes/{k['id']}/reject", {"reason": "plain shot"})
+        self.assertEqual(self.api("POST", f"/api/v1/factory/projects/{plan['id']}/run", {})[0], 200)
+        project = [p for p in self.factory.running_projects() if str(p["id"]) == plan["id"]][0]
+        sent, real_submit = {}, backend.submit_job
+        def spy_submit(payload, **kwargs):
+            sent[kwargs["external"]["shot_id"]] = payload
+            return real_submit(payload, **kwargs)
+        with patch.object(backend, "submit_job", spy_submit):
+            for _ in plan["shots"]:
+                picked = backend.scheduler_pick(projects=[project])
+                if picked is None:
+                    break
+                backend.factory_send(*picked)
+        a, b, c = (sent[s["id"]] for s in plan["shots"])
+        self.assertEqual(a["mode"], "i2v")
+        self.assertEqual((a["width"], a["height"]), (b["width"], b["height"]), "plain shot follows the keyframe shot")
+        self.assertNotEqual((b["width"], b["height"]), (768, 512), "not the worker default")
+        self.assertEqual((c["width"], c["height"]), (512, 320), "an explicit size is respected")
+
     def test_approving_another_candidate_supersedes_the_first(self):
         plan, _ = self.project([{"title": "A", "request": {"prompt": "x", "seed": 3}}])
         self.judge_script = [RED, GREEN]
