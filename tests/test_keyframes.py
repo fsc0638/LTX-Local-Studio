@@ -11,6 +11,7 @@ import os
 import threading
 import time
 import unittest
+import unittest.mock
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
@@ -291,7 +292,7 @@ class ServiceOwnerTests(unittest.TestCase):
                    "request": {"prompt": "x"}, "title": "S"}
         with patch.object(backend, "submit_job", fake_submit), \
              patch.object(backend, "keyframe_wait", return_value={"status": "failed", "error": {"code": "stub"}}), \
-             patch.object(backend.FACTORY, "update_keyframe", lambda *a, **k: None), \
+             patch.object(backend, "FACTORY", unittest.mock.MagicMock()), \
              patch.object(backend.worker, "parse_request", lambda raw, pp: (raw, raw.get("external"), None)):
             with self.assertRaises(ValueError):
                 backend.keyframe_generate({"id": "p", "bible": {}}, {"id": "s", "request": {"prompt": "x"}, "title": "S"},
