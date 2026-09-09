@@ -276,3 +276,28 @@ class LightRuleTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ServiceOwnerTests(unittest.TestCase):
+    """A service-owned project must reach admission with owner None, like every other path."""
+
+    def test_the_service_owner_is_not_passed_as_an_account(self):
+        seen = {}
+
+        def fake_submit(payload, **kwargs):
+            seen.update(kwargs)
+            return 202, {"id": "abcdef012345"}
+        context = {"id": "11111111-1111-1111-1111-111111111111", "project_id": "p", "bible": {},
+                   "request": {"prompt": "x"}, "title": "S"}
+        with patch.object(backend, "submit_job", fake_submit), \
+             patch.object(backend, "keyframe_wait", return_value={"status": "failed", "error": {"code": "stub"}}), \
+             patch.object(backend.FACTORY, "update_keyframe", lambda *a, **k: None), \
+             patch.object(backend.worker, "parse_request", lambda raw, pp: (raw, raw.get("external"), None)):
+            with self.assertRaises(ValueError):
+                backend.keyframe_generate({"id": "p", "bible": {}}, {"id": "s", "request": {"prompt": "x"}, "title": "S"},
+                                          backend.SERVICE_OWNER, "kf1", 1, "a" * 32, "1280x720")
+            self.assertIsNone(seen.get("owner_id"))
+            with self.assertRaises(ValueError):
+                backend.keyframe_generate({"id": "p", "bible": {}}, {"id": "s", "request": {"prompt": "x"}, "title": "S"},
+                                          "user-1", "kf2", 1, "a" * 32, "1280x720")
+            self.assertEqual(seen.get("owner_id"), "user-1")

@@ -1885,7 +1885,11 @@ def keyframe_generate(project, shot, owner, keyframe_id, seed, reference, size):
     payload, external, requested = worker.parse_request(raw, parse_payload)
     # An LTX job may be on the GPU; keep the keyframe's place and try again rather than fail it.
     for _ in range(KEYFRAME_BUSY_RETRIES):
-        status, result = submit_job(payload, key=key, external=external, requested=requested, owner_id=owner)
+        # The service owner is a tenant name, not an account: admission's asset check must see
+        # None for it, as factory_send and the post route already do. Passing the name refused
+        # every reference of a service-owned project.
+        status, result = submit_job(payload, key=key, external=external, requested=requested,
+                                    owner_id=None if owner == SERVICE_OWNER else owner)
         if status == 409 and result.get("code") == "worker_busy":
             time.sleep(KEYFRAME_BUSY_SLEEP)
             continue
