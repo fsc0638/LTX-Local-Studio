@@ -160,7 +160,7 @@ WO = [
  dict(id="D5", title="組片與 EDL", phase="D", size="S", tests=PYDB + " && " + JS, body=
 "1. 06 組片：只取每鏡 accepted_take_id，依拍點排時間軸，原曲連續鋪底（既有 sequence 組片）；任一鏡無 accepted take → 按鈕停用並列出哪幾鏡。\n"
 "2. 匯出 MP4 + shot manifest／EDL JSON：每鏡 prompt、seed、參照指紋、模型版本、take 裁決；manifest 能還原每鏡完整 request（與 A1 匯出格式相容）。",
- extra=""),
+ extra="可機驗：LTX venv 跑 tests/test_assembly.py——真 ffmpeg 畫的 take、真 assembler、真技術檢查：只取 accepted take、依鏡序、幀數＝Σ 各 take、原曲從 Bible 起點鋪底（合成 WAV）、他人帳號 404。「任一鏡無 accepted take → 400 shots_without_take 並列出」與「manifest 每鏡只有 title/request/pinned（A1 可匯入）、edl 記 take/seed/參照指紋/模型/裁決」都在裡面。\n06 頁面外觀需要登入，照 D5.md 紀錄回報；不要在正式站按「組片」（會真的產出一支 job）。\n"),
 ]
 
 SETUP = (
