@@ -724,6 +724,8 @@ class FactoryStore:
             request = dict(row["request"] or {})
             request["image_id"] = asset_id
             request["keyframe_id"] = str(row["id"])
+            # A shot that starts from a picture is an i2v shot; the worker contract insists on it.
+            request["mode"] = "i2v"
             pinned = list(row["pinned"] or [])
             if "image_id" not in pinned:
                 pinned.append("image_id")
