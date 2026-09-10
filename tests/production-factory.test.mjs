@@ -48,10 +48,14 @@ test('factory imports standard job requests and exports only portable plan data'
 });
 
 test('legacy distilled profile migrates to the versioned compatibility profile', () => {
+  const request = normalizeFactoryRequest({
+    prompt:'Test shot',profile:'distilled',primary_action:'Turns to camera',
+  });
   assert.equal(
-    normalizeFactoryRequest({prompt:'Test shot',profile:'distilled'}).profile,
+    request.profile,
     'compat-v1',
   );
+  assert.equal('primary_action' in request, false);
   assert.equal(
     normalizeFactoryBible({output:{profile:'distilled'},lyric_offset_seconds:-0.9}).output.profile,
     'compat-v1',

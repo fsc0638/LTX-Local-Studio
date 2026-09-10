@@ -141,10 +141,11 @@ export function normalizeFactoryRequest(value: unknown): FactoryRequest {
   ) {
     throw new Error('Every shot requires a prompt of 1–4000 characters');
   }
-  const migrated =
-    raw.profile === 'distilled'
-      ? { ...raw, profile: 'compat-v1' }
-      : raw;
+  const migrated = { ...raw };
+  // `primary_action` was display-only metadata from the drafting response. Older clients stored
+  // it inside the portable worker request even though the worker contract never accepted it.
+  delete migrated.primary_action;
+  if (migrated.profile === 'distilled') migrated.profile = 'compat-v1';
   const encoded = JSON.stringify(migrated);
   if (encoded.length > 128_000) {
     throw new Error('A shot request cannot exceed 128000 JSON characters');
