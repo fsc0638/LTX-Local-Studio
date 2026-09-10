@@ -306,11 +306,11 @@ export async function rejectTake(takeId: string, reason: string): Promise<Factor
 }
 
 export async function runProject(id: string): Promise<FactoryPlan> {
-  return plan(await call(`/projects/${id}/run`, { method: 'POST' }));
+  return plan(await call(`/projects/${id}/run`, json({})));
 }
 
 export async function pauseProject(id: string): Promise<FactoryPlan> {
-  return plan(await call(`/projects/${id}/pause`, { method: 'POST' }));
+  return plan(await call(`/projects/${id}/pause`, json({})));
 }
 
 export async function listTakes(shotId: string): Promise<FactoryTake[]> {
