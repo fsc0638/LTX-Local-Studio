@@ -239,11 +239,20 @@ class KeyframeTests(unittest.TestCase):
 
     def test_an_approved_shot_still_passes_the_worker_contract(self):
         """keyframe_id stays on the stored request for the UI, but the worker refuses unknown
-        fields: sending the shot must strip it and carry the keyframe picture as image_id."""
-        plan, refs = self.project([{"title": "A", "request": {"prompt": "x"}}])
+        fields. The approved image also replaces its source view in character.references."""
+        plan, original_references = self.project([{"title": "A", "request": {"prompt": "x"}}])
+        shot = plan["shots"][0]
+        shot["request"]["character"] = plan["bible"]["character"]
+        plan = self.factory.replace_shots(plan["id"], self.owner, [shot])
         listing = self.run_batch(plan)
         keyframe = listing["keyframes"][plan["shots"][0]["id"]][0]
         self.assertEqual(self.api("POST", f"/api/v1/factory/keyframes/{keyframe['id']}/approve", {})[0], 200)
+        approved = self.factory.get_project(plan["id"], self.owner)["shots"][0]
+        references = approved["request"]["character"]["references"]
+        self.assertIn(approved["request"]["image_id"], [reference["image_id"] for reference in references])
+        self.assertNotIn(keyframe["referenceId"], [reference["image_id"] for reference in references])
+        self.assertEqual([reference["view"] for reference in references], ["front", "left_three_quarter"])
+        self.assertEqual(references[1], original_references[1], "the other camera views stay intact")
         self.assertEqual(self.api("POST", f"/api/v1/factory/projects/{plan['id']}/run", {})[0], 200)
         mine = [p for p in self.factory.running_projects() if str(p["id"]) == plan["id"]]
         picked = backend.scheduler_pick(projects=mine)
@@ -265,6 +274,35 @@ class KeyframeTests(unittest.TestCase):
         self.assertNotIn("keyframe_id", sent)
         self.assertNotIn("primary_action", sent)
         self.assertEqual(sent.get("mode"), "i2v")
+
+    def test_a_legacy_keyframe_repairs_its_character_reference_before_admission(self):
+        plan, _ = self.project([{"title": "A", "request": {"prompt": "x"}}])
+        listing = self.run_batch(plan)
+        keyframe = listing["keyframes"][plan["shots"][0]["id"]][0]
+        self.assertEqual(self.api("POST", f"/api/v1/factory/keyframes/{keyframe['id']}/approve", {})[0], 200)
+        legacy = self.factory.get_project(plan["id"], self.owner)["shots"][0]
+        legacy["request"]["character"] = plan["bible"]["character"]
+        plan = self.factory.replace_shots(plan["id"], self.owner, [legacy])
+        self.assertNotIn(
+            legacy["request"]["image_id"],
+            [reference["image_id"] for reference in legacy["request"]["character"]["references"]],
+        )
+        self.assertEqual(self.api("POST", f"/api/v1/factory/projects/{plan['id']}/run", {})[0], 200)
+        project = [p for p in self.factory.running_projects() if str(p["id"]) == plan["id"]][0]
+        picked = backend.scheduler_pick(projects=[project])
+        self.assertIsNotNone(picked)
+        sent, real_submit = {}, backend.submit_job
+
+        def spy_submit(payload, **kwargs):
+            sent.update(payload)
+            return real_submit(payload, **kwargs)
+
+        with patch.object(backend, "submit_job", spy_submit):
+            self.assertTrue(backend.factory_send(*picked))
+        self.assertIn(
+            sent["image_id"],
+            [reference["image_id"] for reference in sent["character"]["references"]],
+        )
 
     def test_a_plain_shot_and_a_keyframe_shot_share_the_cuts_geometry(self):
         """The assembler refuses a cut of mixed sizes. A keyframe shot takes its picture's size (the
