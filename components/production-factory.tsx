@@ -719,7 +719,6 @@ export function ProductionFactory({
       request: {
         ...current.request,
         prompt: draft.prompt,
-        primary_action: draft.primary_action,
       },
     }));
     setDrafts((current) => {

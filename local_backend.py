@@ -2296,9 +2296,11 @@ def factory_send(project, shot):
     FACTORY.set_shot_status(shot["id"], "validating")
     try:
         raw = dict(shot["request"])
-        # keyframe_id is factory bookkeeping (the UI reads it as "from a keyframe"); the worker
-        # contract refuses unknown fields, so it never travels. The picture itself is image_id.
-        raw.pop("keyframe_id", None)
+        # These are factory bookkeeping (the UI reads keyframe_id as "from a keyframe" and the
+        # drafting UI may show primary_action). The worker contract refuses unknown fields, so
+        # neither travels. The picture itself is image_id; the action is already in the prompt.
+        for metadata_field in ("keyframe_id", "primary_action"):
+            raw.pop(metadata_field, None)
         if raw.get("image_id") and not raw.get("mode"):
             raw["mode"] = "i2v"  # an imported shot may name its picture without spelling the mode
         if not any(k in raw for k in ("aspect_ratio", "width", "height")):

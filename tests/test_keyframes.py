@@ -217,7 +217,9 @@ class KeyframeTests(unittest.TestCase):
         self.assertEqual(status, 409, body)
 
     def test_approval_promotes_the_picture_to_an_asset_and_pins_it_on_the_shot(self):
-        plan, refs = self.project([{"title": "A", "request": {"prompt": "x"}}])
+        plan, refs = self.project([{"title": "A", "request": {
+            "prompt": "x", "primary_action": "Turns to camera",
+        }}])
         listing = self.run_batch(plan)
         keyframe = listing["keyframes"][plan["shots"][0]["id"]][0]
         status, _, body = self.api("POST", f"/api/v1/factory/keyframes/{keyframe['id']}/approve", {})
@@ -261,6 +263,7 @@ class KeyframeTests(unittest.TestCase):
         self.assertTrue(take.get("jobId"), "the shot was handed to the worker")
         self.assertEqual(sent.get("image_id"), shot["request"]["image_id"], "the keyframe picture is what the shot starts from")
         self.assertNotIn("keyframe_id", sent)
+        self.assertNotIn("primary_action", sent)
         self.assertEqual(sent.get("mode"), "i2v")
 
     def test_a_plain_shot_and_a_keyframe_shot_share_the_cuts_geometry(self):
