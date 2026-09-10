@@ -1,6 +1,12 @@
 export const FACTORY_FORMAT = 'ltx-production-factory';
 export const FACTORY_VERSION = 2;
 export const MAX_FACTORY_SHOTS = 100;
+export const FACTORY_PROFILE_FALLBACKS = [
+  'compat-v1',
+  'preview-v1',
+  'landscape-v1',
+  'portrait-v1',
+] as const;
 
 export type FactoryCharacter = {
   name: string;
@@ -135,7 +141,11 @@ export function normalizeFactoryRequest(value: unknown): FactoryRequest {
   ) {
     throw new Error('Every shot requires a prompt of 1–4000 characters');
   }
-  const encoded = JSON.stringify(raw);
+  const migrated =
+    raw.profile === 'distilled'
+      ? { ...raw, profile: 'compat-v1' }
+      : raw;
+  const encoded = JSON.stringify(migrated);
   if (encoded.length > 128_000) {
     throw new Error('A shot request cannot exceed 128000 JSON characters');
   }
@@ -212,10 +222,12 @@ export function normalizeFactoryBible(value: unknown): FactoryBible {
   ) {
     throw new Error('Bible music is invalid');
   }
+  const output = clone(raw.output ? record(raw.output, 'Bible output') : {});
+  if (output.profile === 'distilled') output.profile = 'compat-v1';
   const bible = clone({
     ...(character ? { character } : {}),
     ...(musicRaw ? { music: musicRaw } : {}),
-    output: raw.output ? record(raw.output, 'Bible output') : {},
+    output,
     ...(raw.directing
       ? { directing: record(raw.directing, 'Bible directing') }
       : {}),

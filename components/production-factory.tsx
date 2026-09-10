@@ -37,6 +37,7 @@ import type { Asset } from '@/components/media-library';
 import { serviceFetch } from '@/lib/service-session';
 import * as factory from '@/lib/factory-client';
 import {
+  FACTORY_PROFILE_FALLBACKS,
   MAX_FACTORY_SHOTS,
   activeFactoryShot,
   bibleFromRequest,
@@ -115,6 +116,7 @@ const copy = {
     music: '音樂母帶',
     noMusic: '不使用音樂',
     output: '輸出規格',
+    profile: '生成設定檔',
     inherited: '繼承',
     overridden: '此鏡覆寫',
     restore: '還原繼承',
@@ -193,6 +195,7 @@ const copy = {
     music: 'Music master',
     noMusic: 'No music',
     output: 'Output defaults',
+    profile: 'Generation profile',
     inherited: 'Inherited',
     overridden: 'Shot override',
     restore: 'Restore inheritance',
@@ -276,6 +279,7 @@ const copy = {
     music: '音楽マスター',
     noMusic: '音楽なし',
     output: '出力設定',
+    profile: '生成プロファイル',
     inherited: '継承',
     overridden: 'ショット上書き',
     restore: '継承に戻す',
@@ -581,6 +585,7 @@ export function ProductionFactory({
   section = 'all',
   draftAvailable = false,
   hostVersion = 0,
+  profiles = [...FACTORY_PROFILE_FALLBACKS],
 }: {
   locale: Locale;
   online: boolean;
@@ -593,6 +598,8 @@ export function ProductionFactory({
    * next save from 03 would write the old one back over it.
    */
   hostVersion?: number;
+  /** Versioned worker profiles reported by /api/v1/capabilities. */
+  profiles?: string[];
   incoming: FactoryIncoming | null;
   onIncomingConsumed: () => void;
   /** Lets the page derive stage status and the board from the same plan this component owns. */
@@ -1274,7 +1281,7 @@ export function ProductionFactory({
                 {text.output}
               </h3>
               <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                {(['model', 'aspect_ratio', 'profile'] as const).map(
+                {(['model', 'aspect_ratio'] as const).map(
                   (field) => (
                     <label key={field} className="text-[10px] font-bold">
                       {field}
@@ -1295,6 +1302,34 @@ export function ProductionFactory({
                     </label>
                   ),
                 )}
+                <label className="text-[10px] font-bold">
+                  {text.profile}
+                  <Select
+                    disabled={!editable}
+                    value={plan.bible.output.profile || 'compat-v1'}
+                    onValueChange={(value) => {
+                      if (!value) return;
+                      updateBible((bible) => ({
+                        ...bible,
+                        output: { ...bible.output, profile: value },
+                      }));
+                    }}
+                  >
+                    <SelectTrigger className="mt-2 w-full rounded-none">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(profiles.length
+                        ? profiles
+                        : [...FACTORY_PROFILE_FALLBACKS]
+                      ).map((profile) => (
+                        <SelectItem key={profile} value={profile}>
+                          {profile}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </label>
                 <label className="text-[10px] font-bold">
                   fps
                   <Input

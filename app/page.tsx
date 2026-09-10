@@ -2276,6 +2276,7 @@ function Studio() {
             onIncomingConsumed={() => setFactoryIncoming(null)}
             onPlanChange={setPlan}
             draftAvailable={capabilities?.draft_available === true}
+            profiles={Object.keys(capabilities?.profiles || {})}
             hostVersion={hostVersion}
             section={tab === 'shoot' ? 'queue' : 'bible'}
           />
