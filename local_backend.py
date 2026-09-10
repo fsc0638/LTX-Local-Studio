@@ -2296,6 +2296,16 @@ def factory_send(project, shot):
     FACTORY.set_shot_status(shot["id"], "validating")
     try:
         raw = dict(shot["request"])
+        keyframe_id = raw.get("keyframe_id")
+        if keyframe_id and raw.get("image_id") and raw.get("character"):
+            # D2 originally promoted the approved picture without replacing the source view in
+            # character.references. Repair those already-saved requests at the admission boundary;
+            # new approvals are stored in this valid shape by FactoryStore.approve_keyframe.
+            approved = FACTORY.keyframe_context(keyframe_id, project["owner_id"])
+            if approved and approved.get("asset_id") == raw["image_id"]:
+                raw = factory_store.promote_character_reference(
+                    raw, raw["image_id"], approved.get("reference_id")
+                )
         # These are factory bookkeeping (the UI reads keyframe_id as "from a keyframe" and the
         # drafting UI may show primary_action). The worker contract refuses unknown fields, so
         # neither travels. The picture itself is image_id; the action is already in the prompt.

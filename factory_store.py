@@ -75,6 +75,28 @@ def _pinned(value):
     return sorted(set(value))
 
 
+def promote_character_reference(request, asset_id, source_reference_id):
+    """Replace the source view with its approved keyframe in a shot request.
+
+    Character-locked i2v requests require their primary image to be one of the character
+    references. A generated keyframe inherits the view of the reference used to create it, so
+    replacing that entry preserves the other camera views and keeps the worker contract valid.
+    """
+    promoted = json.loads(json.dumps(request, ensure_ascii=False))
+    character = promoted.get("character")
+    references = character.get("references") if isinstance(character, dict) else None
+    if not isinstance(references, list) or any(
+        isinstance(reference, dict) and reference.get("image_id") == asset_id
+        for reference in references
+    ):
+        return promoted
+    for reference in references:
+        if isinstance(reference, dict) and reference.get("image_id") == source_reference_id:
+            reference["image_id"] = asset_id
+            break
+    return promoted
+
+
 def _bible(value):
     if value is None:
         return {}
@@ -721,7 +743,9 @@ class FactoryStore:
                 return None
             if row["verdict"] == "failed" or not row["output_url"]:
                 raise FactoryError("keyframe_unfinished", "Only a generated keyframe can be approved")
-            request = dict(row["request"] or {})
+            request = promote_character_reference(
+                dict(row["request"] or {}), asset_id, row["reference_id"]
+            )
             request["image_id"] = asset_id
             request["keyframe_id"] = str(row["id"])
             # A shot that starts from a picture is an i2v shot; the worker contract insists on it.
