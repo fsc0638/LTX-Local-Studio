@@ -1,6 +1,8 @@
 export type VideoCapabilities = {
   limits: { max_frames: number; fps_min: number; fps_max: number };
   aspect_ratios: Record<string, { width: number; height: number }>;
+  profiles?: Record<string, Record<string, unknown>>;
+  default_profile?: string;
   sequence?: { supported: boolean; max_seconds: number; max_segments: number; audio_conditioning: string; precise_lip_sync: boolean };
   directing?: Record<string, Record<string, { label: Record<string, string>; prompt: string }>>;
   character_consistency?: { supported: boolean; max_references: number; views: string[]; strategy: string; visual_review_required: boolean };

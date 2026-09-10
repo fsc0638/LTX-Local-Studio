@@ -8,6 +8,8 @@ import {
   createFactoryPlan,
   createFactoryShot,
   nextQueuedShot,
+  normalizeFactoryBible,
+  normalizeFactoryRequest,
   parseFactoryImport,
   pinFactoryField,
   projectBible,
@@ -43,6 +45,17 @@ test('factory imports standard job requests and exports only portable plan data'
   assert.equal(exported.shots[0].request.prompt, 'Opening shot');
   assert.equal('status' in exported.shots[0], false);
   assert.equal('jobId' in exported.shots[0], false);
+});
+
+test('legacy distilled profile migrates to the versioned compatibility profile', () => {
+  assert.equal(
+    normalizeFactoryRequest({prompt:'Test shot',profile:'distilled'}).profile,
+    'compat-v1',
+  );
+  assert.equal(
+    normalizeFactoryBible({output:{profile:'distilled'},lyric_offset_seconds:-0.9}).output.profile,
+    'compat-v1',
+  );
 });
 
 const bible = {
