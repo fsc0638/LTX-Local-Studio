@@ -43,6 +43,8 @@ import {
   parseTimelineImport,
   serializeShotPlan,
 } from '@/lib/timeline-import';
+import { syncFactoryMusicToTimeline } from '@/lib/factory-timeline';
+import type { FactoryMusic } from '@/lib/production-factory';
 
 type Locale = 'zh-TW' | 'en' | 'ja';
 export type Directing = Record<string, string>;
@@ -329,6 +331,7 @@ export function TimelineControls({
   onChange,
   request,
   onDuration,
+  factoryMusic,
 }: {
   locale: Locale;
   catalog: VideoCapabilities['directing'];
@@ -336,6 +339,8 @@ export function TimelineControls({
   onChange: Dispatch<SetStateAction<TimelineDraft>>;
   request: Record<string, unknown>;
   onDuration: (seconds: number) => void;
+  /** Music selected in stage 00. Stage 01 must edit and analyse that same source. */
+  factoryMusic?: FactoryMusic;
 }) {
   const text = mvCopy[locale];
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -357,6 +362,11 @@ export function TimelineControls({
   const [lyricDrafts, setLyricDrafts] = useState<Record<number, string>>({});
   const [selectedRows, setSelectedRows] = useState<number[]>([]);
   const [notice, setNotice] = useState('');
+  const factoryAudioId = factoryMusic?.audio_id;
+  const factoryAudioStart = factoryMusic?.audio_start_seconds;
+  const factoryAudioMode = factoryMusic?.audio_mode;
+  const factoryLrc = factoryMusic?.lrc;
+  const factoryLrcTimebase = factoryMusic?.lrc_timebase;
   const fingerprint = JSON.stringify(request);
   const lrcRows = parseLrcRows(value.lrc);
   useEffect(() => {
@@ -366,14 +376,51 @@ export function TimelineControls({
         if (!result.ok) throw new Error();
         return result.json() as Promise<{ assets: Asset[] }>;
       })
-      .then((data) =>
-        setAssets(data.assets.filter((asset) => asset.kind === 'audio')),
-      )
+      .then((data) => {
+        const audioAssets = data.assets.filter((asset) => asset.kind === 'audio');
+        setAssets(audioAssets);
+        if (
+          !factoryAudioId ||
+          factoryAudioStart === undefined ||
+          factoryAudioMode === undefined ||
+          factoryLrc === undefined ||
+          factoryLrcTimebase === undefined
+        )
+          return;
+        const asset = audioAssets.find((item) => item.id === factoryAudioId);
+        if (!asset) return;
+        onChange((current) =>
+          syncFactoryMusicToTimeline(
+            current,
+            {
+              audio_id: factoryAudioId,
+              audio_start_seconds: factoryAudioStart,
+              audio_mode: factoryAudioMode,
+              lrc: factoryLrc,
+              lrc_timebase: factoryLrcTimebase,
+            },
+            asset,
+          ),
+        );
+        setLrcBaseline(factoryLrc);
+        setLyricDrafts({});
+        setSelectedRows([]);
+        setNotice('');
+        setError('');
+      })
       .catch(() => {
         if (!abort.signal.aborted) setError(text.error);
       });
     return () => abort.abort();
-  }, [text.error]);
+  }, [
+    factoryAudioId,
+    factoryAudioStart,
+    factoryAudioMode,
+    factoryLrc,
+    factoryLrcTimebase,
+    onChange,
+    text.error,
+  ]);
   const uploadMusic = async (file?: File) => {
     if (!file) return;
     setPending(true);

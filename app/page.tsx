@@ -874,12 +874,15 @@ function Studio() {
       };
       const measured = data?.beats ?? {};
       const rows = parseLrcRows(timeline.lrc);
+      const bibleLyricOffset = plan?.bible.lyric_offset_seconds;
       const result = planBreakdown({
         durationSeconds: Number(measured.duration_seconds) || 0,
         beats: Array.isArray(measured.beats) ? measured.beats : [],
         sections: Array.isArray(measured.sections) ? measured.sections : [],
         lyrics: rows,
-        lyricOffsetSeconds: Number(data?.lyric_offset_seconds) || 0,
+        lyricOffsetSeconds: Number.isFinite(bibleLyricOffset)
+          ? bibleLyricOffset
+          : Number(data?.lyric_offset_seconds) || 0,
         segmentSeconds: timeline.segmentSeconds,
         directing: plan?.bible.directing ?? {},
       });
@@ -1476,6 +1479,7 @@ function Studio() {
               onChange={setTimeline}
               request={generationRequest}
               onDuration={(value) => setSeconds(String(value))}
+              factoryMusic={plan?.bible.music}
             />
           </section>
         )}
