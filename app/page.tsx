@@ -88,13 +88,14 @@ import {
 } from '@/lib/breakdown';
 import { parseLrcRows } from '@/lib/lrc-editor';
 import { StatusBoard, progressOf } from '@/components/status-board';
-import type { FactoryPlan } from '@/lib/production-factory';
+import type { FactoryPlan, FactoryRequest } from '@/lib/production-factory';
 import { STAGE_KEYS, UNAVAILABLE_STAGES, type StageKey } from '@/lib/stages';
-import { bibleFromRequest } from '@/lib/production-factory';
+import { bibleFromRequest, projectBible } from '@/lib/production-factory';
 import {
   applyDirectorSuggestions,
   type DirectorAnalysis,
 } from '@/lib/director-analysis';
+import { buildStoryboardExportRequest } from '@/lib/storyboard-export';
 
 const initialPrompt =
   '電影感近景，一位穿著深色外套的女性站在潮濕的台北街口。鏡頭緩慢向前推進，霓虹燈在積水中形成珊瑚紅與青綠色倒影，微風帶動髮絲，自然環境音，細緻膠片顆粒。';
@@ -829,6 +830,7 @@ function Studio() {
   const [directing, setDirecting] = useState<Directing>({});
   const [timeline, setTimeline] = useState<TimelineDraft>({ ...emptyTimeline });
   const [breakdown, setBreakdown] = useState<{
+    source: string;
     shots: BreakdownShot[];
     lyrics: BreakdownLyric[];
     beats: number[];
@@ -847,6 +849,23 @@ function Studio() {
   const [directorNotice, setDirectorNotice] = useState<
     'none' | 'failed' | 'budget' | 'unavailable'
   >('none');
+  const [storyboardPrompt, setStoryboardPrompt] = useState('');
+  const storyboardSource = [
+    plan?.id || '',
+    plan?.bible.music?.audio_id || '',
+    String(plan?.bible.music?.audio_start_seconds ?? ''),
+    plan?.bible.music?.lrc || '',
+  ].join('\u0000');
+  const previousStoryboardSource = useRef(storyboardSource);
+
+  useEffect(() => {
+    if (previousStoryboardSource.current === storyboardSource) return;
+    previousStoryboardSource.current = storyboardSource;
+    setBreakdown(null);
+    setDirectorAnalysis(null);
+    setDirectorNotice('none');
+    setStoryboardPrompt('');
+  }, [storyboardSource]);
 
   const applyDirector = (shotIds?: Set<string>) => {
     if (!breakdown || !directorAnalysis) return;
@@ -941,10 +960,11 @@ function Studio() {
         lyric_offset_seconds?: number;
       };
       const measured = data?.beats ?? {};
+      const measuredDuration = Number(measured.duration_seconds) || 0;
       const rows = parseLrcRows(timeline.lrc);
       const bibleLyricOffset = plan?.bible.lyric_offset_seconds;
       const result = planBreakdown({
-        durationSeconds: Number(measured.duration_seconds) || 0,
+        durationSeconds: measuredDuration,
         beats: Array.isArray(measured.beats) ? measured.beats : [],
         sections: Array.isArray(measured.sections) ? measured.sections : [],
         lyrics: rows,
@@ -955,11 +975,12 @@ function Studio() {
         directing: plan?.bible.directing ?? {},
       });
       setBreakdown({
+        source: storyboardSource,
         shots: result.shots,
         lyrics: result.shots.flatMap((shot) => shot.lyrics),
         beats: Array.isArray(measured.beats) ? measured.beats : [],
         sections: Array.isArray(measured.sections) ? measured.sections : [],
-        durationSeconds: Number(measured.duration_seconds) || 0,
+        durationSeconds: measuredDuration,
         beatSeconds: result.beatSeconds,
         energy: Array.isArray(measured.energy_db) ? measured.energy_db : [],
         energyHopSeconds: Number(measured.energy_hop_seconds) || 0.1,
@@ -967,6 +988,7 @@ function Studio() {
       setDirectorAnalysis(null);
       setDirectorNotice('none');
       setTimeline((current) => ({ ...current, cues: breakdownCues(result.shots) }));
+      setSeconds(String(Math.round(measuredDuration * 1000) / 1000));
       setBreakdownNotice('applied');
     } catch {
       setBreakdownNotice('failed');
@@ -1130,6 +1152,31 @@ function Studio() {
         }
       : {}),
   };
+  const storyboardExportBlockedReason =
+    !breakdown?.shots.length ||
+      breakdown.source !== storyboardSource ||
+      timeline.cues.length !== breakdown.shots.length
+      ? directorCopy[locale].exportNeedsBreakdown
+      : !Number.isFinite(breakdown.durationSeconds) ||
+        breakdown.durationSeconds <= 0 || breakdown.durationSeconds > 180
+        ? directorCopy[locale].exportBadDuration
+        : !storyboardPrompt.trim()
+          ? directorCopy[locale].exportNeedsPrompt
+          : timeline.cues.some((cue) => !cue.action.trim())
+            ? directorCopy[locale].exportNeedsShotPrompts
+            : '';
+  let storyboardRequest: FactoryRequest | null = null;
+  if (!storyboardExportBlockedReason && breakdown) {
+    storyboardRequest = buildStoryboardExportRequest({
+      baseRequest: projectBible(
+        plan?.bible ?? bibleFromRequest(generationRequest),
+        generationRequest,
+      ),
+      timeline,
+      durationSeconds: breakdown.durationSeconds,
+      prompt: storyboardPrompt,
+    });
+  }
   const command = `POST /api/v1/jobs\n${JSON.stringify(generationRequest, null, 2)}`;
 
   useEffect(() => {
@@ -1559,8 +1606,24 @@ function Studio() {
                   locale={locale}
                   analysis={directorAnalysis}
                   onApplyAll={() => applyDirector()}
+                  onAdoptConcept={() =>
+                    setStoryboardPrompt(directorAnalysis.song.visual_concept)
+                  }
                 />
               ) : null}
+
+              <label className="block text-xs font-semibold">
+                {directorCopy[locale].overallPrompt}
+                <Textarea
+                  value={storyboardPrompt}
+                  onChange={(event) => setStoryboardPrompt(event.target.value)}
+                  maxLength={4000}
+                  className="mt-2 min-h-28 resize-y rounded-none bg-white text-sm leading-6"
+                />
+                <span className="mt-1 block text-[10px] font-normal leading-5 text-muted-foreground">
+                  {directorCopy[locale].overallPromptHint}
+                </span>
+              </label>
 
               {breakdown ? (
                 <BreakdownEditor
@@ -1599,9 +1662,11 @@ function Studio() {
               catalog={capabilities?.directing}
               value={timeline}
               onChange={setTimeline}
-              request={generationRequest}
+              request={storyboardRequest ?? generationRequest}
               onDuration={(value) => setSeconds(String(value))}
               factoryMusic={plan?.bible.music}
+              exportBlockedReason={storyboardExportBlockedReason}
+              exportReadyNote={directorCopy[locale].exportReady}
             />
           </section>
         )}

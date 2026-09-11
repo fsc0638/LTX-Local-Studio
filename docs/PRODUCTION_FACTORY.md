@@ -123,6 +123,8 @@
 每帳號在途鏡頭上限 `LTX_FACTORY_QUEUE_LIMIT`（預設 100），`/run` 時超過回 429。
 AI 導演分析與每鏡起草共用 `draft_usage`、`LTX_DRAFT_TOKEN_LIMIT` 及主機端 0600 OpenAI key；
 瀏覽器不取得 key。介面會在送出前明示完整 LRC 與分鏡將傳至 OpenAI，回應只作建議，需逐鏡或整批採用。
+01 分鏡的「匯出分鏡 JSON」只在自動分鏡已完成、歌曲總長有效、整體視覺提示詞已確認且每鏡皆有提示詞時啟用；
+輸出採用音訊分析的實測總長、目前完整 LRC／cues 與 Bible 鎖定，不沿用沙盒的 2 秒／示範 prompt 預設值。
 
 ### V3：審片與版本管理
 
