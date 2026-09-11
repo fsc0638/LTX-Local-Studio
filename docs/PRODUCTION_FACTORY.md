@@ -100,6 +100,7 @@
 | POST | `/projects/{id}/shots` | 整份取代鏡頭清單 |
 | POST | `/projects/{id}/run` | 排入所有未完成鏡頭並開始 |
 | POST | `/projects/{id}/pause` | 停止供料 |
+| POST | `/projects/{id}/director-draft` | 將企劃、完整 LRC 與 1–60 鏡送至主機設定的 OpenAI，回整首歌分析與逐鏡建議；不自動套用 |
 | GET | `/shots/{id}/takes` | 該鏡的所有 take，新到舊 |
 
 機器可讀的完整定義在 `/api/v1/openapi.json`（`FactoryPlan`／`FactoryShot`／`FactoryTake`）。
@@ -120,6 +121,8 @@
 租戶邊界是帳號 `owner_id`，在每個 store 方法內強制，不靠上層過濾。service 憑證沒有帳號，
 使用哨符 `@service`（真實 user id 是 32 位十六進位，不會碰撞）。
 每帳號在途鏡頭上限 `LTX_FACTORY_QUEUE_LIMIT`（預設 100），`/run` 時超過回 429。
+AI 導演分析與每鏡起草共用 `draft_usage`、`LTX_DRAFT_TOKEN_LIMIT` 及主機端 0600 OpenAI key；
+瀏覽器不取得 key。介面會在送出前明示完整 LRC 與分鏡將傳至 OpenAI，回應只作建議，需逐鏡或整批採用。
 
 ### V3：審片與版本管理
 

@@ -7,6 +7,7 @@ import {
   type BreakdownLyric,
   type BreakdownShot,
 } from '@/lib/breakdown';
+import type { DirectorShotSuggestion } from '@/lib/director-analysis';
 
 export type BreakdownLocale = 'zh-TW' | 'en' | 'ja';
 
@@ -32,6 +33,11 @@ export const breakdownCopy = {
     legendLyric: '歌詞',
     selected: '已選',
     total: '總長',
+    aiSuggestion: 'AI 導演建議',
+    applySuggestion: '採用此鏡提示詞',
+    scene: '場景', mood: '氣氛', atmosphere: '視覺氛圍', actionAdvice: '動作',
+    progression: '走向', emotion: '情緒', camera: '鏡頭拍法', breathingAdvice: '呼吸鏡頭',
+    prompt: '模型提示詞',
   },
   en: {
     title: 'Breakdown',
@@ -54,6 +60,11 @@ export const breakdownCopy = {
     legendLyric: 'Lyrics',
     selected: 'Selected',
     total: 'Total',
+    aiSuggestion: 'AI director suggestion',
+    applySuggestion: 'Apply this shot prompt',
+    scene: 'Scene', mood: 'Mood', atmosphere: 'Atmosphere', actionAdvice: 'Action',
+    progression: 'Direction', emotion: 'Emotion', camera: 'Camera', breathingAdvice: 'Breathing shot',
+    prompt: 'Model prompt',
   },
   ja: {
     title: '絵コンテ',
@@ -76,6 +87,11 @@ export const breakdownCopy = {
     legendLyric: '歌詞',
     selected: '選択中',
     total: '合計',
+    aiSuggestion: 'AI監督の提案',
+    applySuggestion: 'このプロンプトを採用',
+    scene: '場面', mood: 'ムード', atmosphere: '映像の雰囲気', actionAdvice: '動作',
+    progression: '展開', emotion: '感情', camera: '撮影方法', breathingAdvice: '間のカット',
+    prompt: 'モデル用プロンプト',
   },
 } as const;
 
@@ -112,6 +128,8 @@ export function BreakdownEditor({
   locale,
   onChange,
   onPreview,
+  directorSuggestions,
+  onApplySuggestion,
 }: {
   shots: BreakdownShot[];
   lyrics: BreakdownLyric[];
@@ -124,6 +142,8 @@ export function BreakdownEditor({
   locale: BreakdownLocale;
   onChange: (shots: BreakdownShot[]) => void;
   onPreview?: () => void;
+  directorSuggestions?: DirectorShotSuggestion[];
+  onApplySuggestion?: (shotId: string) => void;
 }) {
   const text = breakdownCopy[locale];
   const [selected, setSelected] = useState(0);
@@ -267,6 +287,7 @@ export function BreakdownEditor({
       <ol className="flex flex-col gap-2">
         {shots.map((shot, index) => {
           const active = index === selected;
+          const suggestion = directorSuggestions?.find((item) => item.shot_id === shot.id);
           return (
             <li
               key={shot.id}
@@ -308,6 +329,44 @@ export function BreakdownEditor({
                 <p className="px-3 pt-1 text-[12px] leading-relaxed">
                   {shot.lyrics.map((line) => line.text).join(' / ')}
                 </p>
+              ) : null}
+
+              {suggestion ? (
+                <details className="mx-3 mt-2 border border-[#bfe8e3] bg-[#f5fcfb] p-3" open={active}>
+                  <summary className="cursor-pointer text-[11px] font-bold text-[#11786f]">
+                    {text.aiSuggestion}
+                  </summary>
+                  <dl className="mt-3 grid gap-2 md:grid-cols-2">
+                    {([
+                      [text.scene, suggestion.scene],
+                      [text.mood, suggestion.mood],
+                      [text.atmosphere, suggestion.atmosphere],
+                      [text.actionAdvice, suggestion.action],
+                      [text.progression, suggestion.progression],
+                      [text.emotion, suggestion.emotion],
+                      [text.camera, suggestion.camera],
+                      [text.breathingAdvice, suggestion.breathing],
+                    ] as const).map(([label, value]) => (
+                      <div key={label}>
+                        <dt className="text-[9px] font-bold text-muted-foreground">{label}</dt>
+                        <dd className="mt-0.5 text-[11px] leading-5">{value}</dd>
+                      </div>
+                    ))}
+                    <div className="md:col-span-2">
+                      <dt className="text-[9px] font-bold text-muted-foreground">{text.prompt}</dt>
+                      <dd className="mt-0.5 font-mono text-[10px] leading-5">{suggestion.prompt}</dd>
+                    </div>
+                  </dl>
+                  {onApplySuggestion ? (
+                    <button
+                      type="button"
+                      onClick={() => onApplySuggestion(shot.id)}
+                      className="mt-3 rounded-sm bg-[#171918] px-3 py-1.5 text-[10px] font-bold text-white hover:bg-[#e85578]"
+                    >
+                      {text.applySuggestion}
+                    </button>
+                  ) : null}
+                </details>
               ) : null}
 
               <div className="flex flex-wrap items-center gap-2 px-3 py-2">

@@ -432,6 +432,18 @@ class FactoryStore:
         return {"shot": row, "previous": before, "next": after,
                 "bible": row["bible"] or {}, "usage": row["draft_usage"] or {}}
 
+    def director_context(self, project_id, owner_id):
+        """Owner-checked project context for one whole-song director analysis."""
+        with self.connect() as db:
+            row = db.execute(
+                """SELECT id, title, bible, draft_usage FROM projects
+                    WHERE id = %s AND owner_id = %s""",
+                (project_id, owner_id)).fetchone()
+        if row is None:
+            return None
+        return {"project_id": row["id"], "project_title": row["title"],
+                "bible": row["bible"] or {}, "usage": row["draft_usage"] or {}}
+
     def draft_context_usage(self, project_id):
         with self.connect() as db:
             row = db.execute("SELECT draft_usage FROM projects WHERE id=%s", (project_id,)).fetchone()
