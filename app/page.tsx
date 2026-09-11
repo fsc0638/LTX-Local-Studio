@@ -74,6 +74,7 @@ import {
 } from '@/components/production-factory';
 import { StageRail, stageCopy, type RailKey } from '@/components/stage-rail';
 import { BreakdownEditor } from '@/components/breakdown-editor';
+import { DirectorSummary, directorCopy } from '@/components/director-analysis';
 import { ReviewBoard } from '@/components/review-board';
 import { KeyframesBoard } from '@/components/keyframes-board';
 import { PostBoard } from '@/components/post-board';
@@ -90,6 +91,10 @@ import { StatusBoard, progressOf } from '@/components/status-board';
 import type { FactoryPlan } from '@/lib/production-factory';
 import { STAGE_KEYS, UNAVAILABLE_STAGES, type StageKey } from '@/lib/stages';
 import { bibleFromRequest } from '@/lib/production-factory';
+import {
+  applyDirectorSuggestions,
+  type DirectorAnalysis,
+} from '@/lib/director-analysis';
 
 const initialPrompt =
   '電影感近景，一位穿著深色外套的女性站在潮濕的台北街口。鏡頭緩慢向前推進，霓虹燈在積水中形成珊瑚紅與青綠色倒影，微風帶動髮絲，自然環境音，細緻膠片顆粒。';
@@ -837,6 +842,69 @@ function Studio() {
   const [breakdownNotice, setBreakdownNotice] = useState<
     'none' | 'applied' | 'unavailable' | 'failed'
   >('none');
+  const [directorAnalysis, setDirectorAnalysis] = useState<DirectorAnalysis | null>(null);
+  const [directorBusy, setDirectorBusy] = useState(false);
+  const [directorNotice, setDirectorNotice] = useState<
+    'none' | 'failed' | 'budget' | 'unavailable'
+  >('none');
+
+  const applyDirector = (shotIds?: Set<string>) => {
+    if (!breakdown || !directorAnalysis) return;
+    const shots = applyDirectorSuggestions(breakdown.shots, directorAnalysis.shots, shotIds);
+    setBreakdown({ ...breakdown, shots });
+    setTimeline((current) => ({ ...current, cues: breakdownCues(shots) }));
+  };
+
+  const runDirectorAnalysis = async () => {
+    if (!plan?.id || !breakdown?.shots.length || directorBusy) return;
+    setDirectorBusy(true);
+    setDirectorNotice('none');
+    try {
+      const response = await serviceFetch(
+        `/api/v1/factory/projects/${plan.id}/director-draft`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            locale,
+            audio_analysis: {
+              duration_seconds: breakdown.durationSeconds,
+              beat_seconds: breakdown.beatSeconds,
+              section_seconds: breakdown.sections,
+              energy_db: breakdown.energy,
+              energy_hop_seconds: breakdown.energyHopSeconds,
+            },
+            shots: breakdown.shots.map((shot) => ({
+              shot_id: shot.id,
+              start_seconds: shot.start,
+              end_seconds: shot.end,
+              kind: shot.kind,
+              lyrics: shot.lyrics.map((line) => line.text),
+            })),
+          }),
+        },
+      );
+      const result = (await response.json()) as {
+        analysis?: DirectorAnalysis;
+        code?: string;
+      };
+      if (!response.ok || !result.analysis) {
+        setDirectorNotice(
+          response.status === 429
+            ? 'budget'
+            : response.status === 503
+              ? 'unavailable'
+              : 'failed',
+        );
+        return;
+      }
+      setDirectorAnalysis(result.analysis);
+    } catch {
+      setDirectorNotice('failed');
+    } finally {
+      setDirectorBusy(false);
+    }
+  };
 
   /**
    * Ask the host for beats and sections, then cut the song. The cues go straight into the timeline
@@ -896,6 +964,8 @@ function Studio() {
         energy: Array.isArray(measured.energy_db) ? measured.energy_db : [],
         energyHopSeconds: Number(measured.energy_hop_seconds) || 0.1,
       });
+      setDirectorAnalysis(null);
+      setDirectorNotice('none');
       setTimeline((current) => ({ ...current, cues: breakdownCues(result.shots) }));
       setBreakdownNotice('applied');
     } catch {
@@ -1438,6 +1508,27 @@ function Studio() {
                 >
                   {breakdownBusy ? ui.breakdownBusy : ui.breakdownAuto}
                 </button>
+                <button
+                  type="button"
+                  onClick={() => void runDirectorAnalysis()}
+                  disabled={
+                    !breakdown?.shots.length ||
+                    directorBusy ||
+                    capabilities?.draft_available !== true
+                  }
+                  title={
+                    capabilities?.draft_available === false
+                      ? directorCopy[locale].unavailable
+                      : !breakdown?.shots.length
+                        ? directorCopy[locale].needsBreakdown
+                        : undefined
+                  }
+                  className="rounded-sm bg-[#171918] px-4 py-2 text-[12px] font-bold text-white hover:bg-[#e85578] disabled:opacity-45"
+                >
+                  {directorBusy
+                    ? directorCopy[locale].analyzing
+                    : directorCopy[locale].analyze}
+                </button>
                 <p className="text-[11px] text-muted-foreground">
                   {!timeline.music
                     ? ui.breakdownNeedsMusic
@@ -1450,6 +1541,26 @@ function Studio() {
                           : ''}
                 </p>
               </div>
+              <p className="text-[10px] leading-5 text-muted-foreground">
+                {directorCopy[locale].disclosure}
+              </p>
+              {directorNotice !== 'none' ? (
+                <p role="alert" className="text-[11px] text-red-700">
+                  {directorNotice === 'budget'
+                    ? directorCopy[locale].budget
+                    : directorNotice === 'unavailable'
+                      ? directorCopy[locale].unavailable
+                      : directorCopy[locale].failed}
+                </p>
+              ) : null}
+
+              {directorAnalysis ? (
+                <DirectorSummary
+                  locale={locale}
+                  analysis={directorAnalysis}
+                  onApplyAll={() => applyDirector()}
+                />
+              ) : null}
 
               {breakdown ? (
                 <BreakdownEditor
@@ -1462,7 +1573,18 @@ function Studio() {
                   energy={breakdown.energy}
                   energyHopSeconds={breakdown.energyHopSeconds}
                   locale={locale}
+                  directorSuggestions={directorAnalysis?.shots}
+                  onApplySuggestion={(shotId) => applyDirector(new Set([shotId]))}
                   onChange={(shots) => {
+                    const structureChanged =
+                      shots.length !== breakdown.shots.length ||
+                      shots.some(
+                        (shot, index) =>
+                          shot.id !== breakdown.shots[index]?.id ||
+                          shot.start !== breakdown.shots[index]?.start ||
+                          shot.end !== breakdown.shots[index]?.end,
+                      );
+                    if (structureChanged) setDirectorAnalysis(null);
                     setBreakdown((current) => (current ? { ...current, shots } : current));
                     // The cues are the breakdown's output, so every edit lands in the timeline
                     // immediately rather than behind an "apply" the user could forget to press.
