@@ -332,6 +332,8 @@ export function TimelineControls({
   request,
   onDuration,
   factoryMusic,
+  exportBlockedReason,
+  exportReadyNote,
 }: {
   locale: Locale;
   catalog: VideoCapabilities['directing'];
@@ -341,6 +343,9 @@ export function TimelineControls({
   onDuration: (seconds: number) => void;
   /** Music selected in stage 00. Stage 01 must edit and analyse that same source. */
   factoryMusic?: FactoryMusic;
+  /** Stage 01 refuses partial files; the sandbox keeps its existing unrestricted export. */
+  exportBlockedReason?: string;
+  exportReadyNote?: string;
 }) {
   const text = mvCopy[locale];
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -744,7 +749,8 @@ export function TimelineControls({
           <Button
             variant="outline"
             className="rounded-none text-xs"
-            disabled={pending || !value.enabled}
+            disabled={pending || !value.enabled || Boolean(exportBlockedReason)}
+            title={exportBlockedReason}
             onClick={exportJson}
           >
             <Download />
@@ -754,6 +760,13 @@ export function TimelineControls({
         <p className="text-[10px] leading-5 text-muted-foreground">
           {text.jsonHint}
         </p>
+        {exportBlockedReason ? (
+          <p role="alert" className="text-[10px] leading-5 text-amber-800">
+            {exportBlockedReason}
+          </p>
+        ) : exportReadyNote ? (
+          <p className="text-[10px] leading-5 text-[#11786f]">{exportReadyNote}</p>
+        ) : null}
         {notice && (
           <p className="text-[10px] leading-5 text-amber-800">{notice}</p>
         )}
