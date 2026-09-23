@@ -108,12 +108,12 @@ LYRIC_OFFSET_SECONDS = float(os.environ.get("LTX_LYRIC_OFFSET_SECONDS", "-0.9"))
 # reaches a response, a log line or the browser; the browser asks this API to draft, not OpenAI.
 OPENAI_KEY_FILE = Path(os.environ.get("LTX_OPENAI_KEY_FILE", "/opt/studio/secrets/openai"))
 OPENAI_ENDPOINT = os.environ.get("LTX_OPENAI_ENDPOINT", "https://api.openai.com/v1/responses")
-DRAFT_MODEL = os.environ.get("LTX_DRAFT_MODEL", "gpt-5.6")
+DRAFT_MODEL = os.environ.get("LTX_DRAFT_MODEL", "gpt-5.6-terra")
 DRAFT_EFFORT = os.environ.get("LTX_DRAFT_EFFORT", "medium")
 # Per project, not per account: a project is what a person budgets and abandons, and a runaway
 # loop should cost that project its allowance rather than every project the account owns.
 DRAFT_TOKEN_LIMIT = int(os.environ.get("LTX_DRAFT_TOKEN_LIMIT", "200000"))
-DRAFT_TIMEOUT = int(os.environ.get("LTX_DRAFT_TIMEOUT", "120"))
+DRAFT_TIMEOUT = int(os.environ.get("LTX_DRAFT_TIMEOUT", "300"))
 # Director analysis reads timing metadata and lyrics; it does not render one sequence. Keep its
 # input limit separate from the worker's 180-second generation cap so ordinary full songs work.
 DIRECTOR_MAX_SECONDS = 600

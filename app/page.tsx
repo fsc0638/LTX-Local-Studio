@@ -1561,7 +1561,7 @@ function Studio() {
                   {directorNotice === 'budget'
                     ? directorCopy[locale].budget
                     : directorNotice === 'unavailable'
-                      ? directorCopy[locale].unavailable
+                      ? directorCopy[locale].serviceUnavailable
                       : directorCopy[locale].failed}
                 </p>
               ) : null}
