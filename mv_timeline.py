@@ -73,8 +73,8 @@ def compose_prompt(prompt, directing, action="", lyrics=""):
     if lyrics:
         parts.append("Words for this shot: " + lyrics)
     result = " ".join(parts)
-    if len(result) > 6000:
-        raise ValueError("Combined shot prompt exceeds 6000 characters; shorten prompt or lyrics")
+    if len(result) > 8000:
+        raise ValueError("Combined shot prompt exceeds 8000 characters; shorten prompt or lyrics")
     return result
 
 

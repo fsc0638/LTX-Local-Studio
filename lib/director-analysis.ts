@@ -23,11 +23,37 @@ export type DirectorShotSuggestion = {
   progression: string;
   emotion: string;
   camera: string;
+  angle?: string;
   lighting: string;
   continuity: string;
   breathing: string;
   prompt: string;
 };
+
+const DIRECTOR_ANGLES = new Set([
+  'front', 'three_quarter', 'left_three_quarter', 'right_three_quarter', 'profile',
+  'left_profile', 'right_profile', 'back', 'low', 'high', 'over_shoulder',
+]);
+
+function directorAngle(suggestion: DirectorShotSuggestion): string | undefined {
+  const exact = suggestion.angle?.trim();
+  if (exact && DIRECTOR_ANGLES.has(exact)) return exact;
+  const camera = suggestion.camera?.toLowerCase() || '';
+  const aliases: [RegExp, string][] = [
+    [/left.*(?:profile|side)|(?:profile|side).*left/, 'left_profile'],
+    [/right.*(?:profile|side)|(?:profile|side).*right/, 'right_profile'],
+    [/left.*(?:three.quarter|3\/4)|(?:three.quarter|3\/4).*left/, 'left_three_quarter'],
+    [/right.*(?:three.quarter|3\/4)|(?:three.quarter|3\/4).*right/, 'right_three_quarter'],
+    [/over.the.shoulder|over shoulder/, 'over_shoulder'],
+    [/three.quarter|3\/4/, 'three_quarter'],
+    [/profile|side view/, 'profile'],
+    [/back view|from behind/, 'back'],
+    [/low.angle/, 'low'],
+    [/high.angle|overhead|bird.s.eye/, 'high'],
+    [/front|eye.level|head.on/, 'front'],
+  ];
+  return aliases.find(([pattern]) => pattern.test(camera))?.[1];
+}
 
 export type DirectorAnalysis = {
   song: DirectorSongAnalysis;
@@ -61,9 +87,14 @@ export function applyDirectorSuggestions(
     if (selectedIds && !selectedIds.has(shot.id)) return shot;
     const suggestion = byId.get(shot.id);
     if (!suggestion) return shot;
+    const angle = directorAngle(suggestion);
     return {
       ...shot,
-      cue: { ...shot.cue, action: suggestion.prompt.trim().slice(0, 4000) },
+      cue: {
+        ...shot.cue,
+        action: suggestion.prompt.trim().slice(0, 4000),
+        directing: { ...shot.cue.directing, ...(angle ? { angle } : {}) },
+      },
     };
   });
 }

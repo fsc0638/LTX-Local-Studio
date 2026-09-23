@@ -69,6 +69,8 @@ const bible = {
     description: 'Short silver hair and a red coat',
     references: [{ image_id: 'a'.repeat(32), view: 'front' }],
   },
+  visual_style: '2D cel animation with clean ink lines',
+  style_anchor: 'c'.repeat(32),
   music: {
     audio_id: 'b'.repeat(32),
     audio_start_seconds: 2.5,
@@ -93,6 +95,8 @@ test('Bible projects character, music, output and directing into a portable job 
     duration_seconds: 6,
   });
   assert.deepEqual(request.character, bible.character);
+  assert.equal(request.visual_style, bible.visual_style);
+  assert.equal(request.style_anchor, undefined);
   assert.equal(request.mode, 'i2v');
   assert.equal(request.image_id, bible.character.references[0].image_id);
   assert.deepEqual(request.timeline, bible.music);

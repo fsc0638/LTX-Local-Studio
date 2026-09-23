@@ -402,3 +402,24 @@ class ServiceOwnerTests(unittest.TestCase):
                 backend.keyframe_generate({"id": "p", "bible": {}}, {"id": "s", "request": {"prompt": "x"}, "title": "S"},
                                           "user-1", "kf2", 1, "a" * 32, "1280x720")
             self.assertEqual(seen.get("owner_id"), "user-1")
+
+    def test_keyframe_uses_the_style_lock_and_style_anchor_as_a_second_reference(self):
+        seen = {}
+
+        def fake_submit(payload, **kwargs):
+            seen.update(payload)
+            return 202, {"id": "abcdef012345"}
+
+        project = {"id": "p", "bible": {
+            "visual_style": "2D cel animation with clean ink outlines",
+            "style_anchor": "b" * 32,
+        }}
+        shot = {"id": "s", "request": {"prompt": "Mina turns toward camera"}, "title": "S"}
+        with patch.object(backend, "submit_job", fake_submit), \
+             patch.object(backend, "keyframe_wait", return_value={"status": "failed", "error": {"code": "stub"}}), \
+             patch.object(backend, "FACTORY", unittest.mock.MagicMock()), \
+             patch.object(backend.worker, "parse_request", lambda raw, pp: (raw, raw.get("external"), None)):
+            with self.assertRaises(ValueError):
+                backend.keyframe_generate(project, shot, backend.SERVICE_OWNER, "kf1", 1, "a" * 32, "1280x720")
+        self.assertIn(project["bible"]["visual_style"], seen["prompt"])
+        self.assertEqual(seen["parameters"]["reference_2"], "b" * 32)
