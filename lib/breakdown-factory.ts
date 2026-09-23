@@ -60,7 +60,9 @@ export function breakdownFactoryEntries(
       audio_start_seconds: rounded(sourceStart + shot.start),
       lrc: localLrc(shot),
       lrc_timebase: 'output',
-      cues: [{ time: 0, action, directing }],
+      // The shot action is already the request prompt. Keeping it in the local cue would append
+      // the same (potentially 4,000-character) direction twice when the worker composes its prompt.
+      cues: [{ time: 0, action: '', directing }],
     };
     return {
       title: `SHOT ${String(index + 1).padStart(2, '0')} · ${timestamp(shot.start)}–${timestamp(shot.end)}`,

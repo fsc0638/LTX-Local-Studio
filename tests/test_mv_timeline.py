@@ -85,9 +85,15 @@ class TimelineTests(unittest.TestCase):
         for extra in ({"duration_seconds": 181}, {"duration_seconds": float("nan")}, {"duration_seconds": True},
                       {"frames": 49}, {"segment_seconds": 1}, {"timeline": {"audio_path": "/etc/passwd"}},
                       {"timeline": {"cues": [{"time": 180}]}}, {"timeline": {"cues": [{"time": 0}, {"time": 0}]}},
+                      {"timeline": {"cues": [{"time": 0, "action": "x" * 4001}]}},
                       {"timeline": {"audio_mode": "condition"}}, {"directing": {"camera": "shell"}}):
             with self.assertRaises(ValueError, msg=str(extra)):
                 contract.parse_request({**base, **extra}, backend.parse_payload)
+        valid, _, _ = contract.parse_request(
+            {**base, "timeline": {"cues": [{"time": 0, "action": "x" * 4000}]}},
+            backend.parse_payload,
+        )
+        self.assertIn("x" * 4000, valid["segments"][0]["prompt"])
         with self.assertRaises(ValueError):
             contract.parse_request({"prompt": "single", "timeline": {}}, backend.parse_payload)
 

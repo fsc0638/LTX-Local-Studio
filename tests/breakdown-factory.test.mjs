@@ -56,10 +56,11 @@ test('a full-song breakdown becomes local factory shots without truncating the t
   assert.deepEqual(entries[1].request.timeline.cues, [
     {
       time: 0,
-      action: 'final close-up',
+      action: '',
       directing: { camera: 'locked', emotion: 'hope' },
     },
   ]);
+  assert.equal(entries[1].request.prompt, 'final close-up');
   assert.match(entries[1].request.timeline.lrc, /^\[01:37\.500\]last line$/);
   assert.equal(entries[1].startSeconds, 100);
   assert.deepEqual(entries[1].pinned, ['directing', 'timeline']);
@@ -67,6 +68,33 @@ test('a full-song breakdown becomes local factory shots without truncating the t
     entries.reduce((total, entry) => total + entry.request.duration_seconds, 0),
     198.88,
   );
+});
+
+test('a detailed director prompt is not duplicated into the local timeline cue', () => {
+  const action = 'x'.repeat(4000);
+  const entries = breakdownFactoryEntries(
+    {
+      prompt: 'base look',
+      duration_seconds: 2,
+      render_mode: 'sequence',
+      timeline: { audio_id: 'song-1' },
+    },
+    [
+      {
+        id: 'shot-0',
+        index: 0,
+        start: 0,
+        end: 10,
+        kind: 'lyric',
+        endedBy: 'end',
+        lyrics: [],
+        cue: { time: 0, action, directing: {} },
+      },
+    ],
+  );
+
+  assert.equal(entries[0].request.prompt, action);
+  assert.equal(entries[0].request.timeline.cues[0].action, '');
 });
 
 test('a 198.88 second song stays complete while every generated job remains locally valid', () => {

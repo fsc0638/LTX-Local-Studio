@@ -19,7 +19,9 @@ export const directorCopy = {
     genre: '歌曲類型',
     meaning: '歌詞意境',
     concept: '視覺概念',
+    story: '完整劇情線',
     arc: '情緒曲線',
+    continuity: '連戲規則',
     strategy: '製作人策略',
   },
   en: {
@@ -37,7 +39,9 @@ export const directorCopy = {
     genre: 'Song type',
     meaning: 'Lyrical meaning',
     concept: 'Visual concept',
+    story: 'Story outline',
     arc: 'Emotional arc',
+    continuity: 'Continuity rules',
     strategy: 'Producer strategy',
   },
   ja: {
@@ -55,7 +59,9 @@ export const directorCopy = {
     genre: '曲の種類',
     meaning: '歌詞の意味',
     concept: '映像コンセプト',
+    story: '物語全体',
     arc: '感情の流れ',
+    continuity: '連続性ルール',
     strategy: 'プロデューサー戦略',
   },
 } as const;
@@ -74,7 +80,9 @@ export function DirectorSummary({
     [text.genre, analysis.song.genre],
     [text.meaning, analysis.song.lyrical_meaning],
     [text.concept, analysis.song.visual_concept],
+    [text.story, analysis.song.story_outline],
     [text.arc, analysis.song.emotional_arc],
+    [text.continuity, analysis.song.continuity_rules],
     [text.strategy, analysis.song.producer_strategy],
   ];
   return (
