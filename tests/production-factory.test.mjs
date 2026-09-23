@@ -13,6 +13,7 @@ import {
   parseFactoryImport,
   pinFactoryField,
   projectBible,
+  projectBiblePreservingPins,
   reprojectShots,
   reopenFactoryShot,
   restoreFactoryPlan,
@@ -99,6 +100,34 @@ test('Bible projects character, music, output and directing into a portable job 
   assert.equal(request.render_mode, 'sequence');
   assert.equal(request.aspect_ratio, '16:9');
   assert.equal(request.duration_seconds, 6);
+});
+
+test('incoming breakdown shots inherit the character while preserving their local timeline', () => {
+  const localTimeline = {
+    audio_id: 'music-1',
+    audio_start_seconds: 120,
+    lrc: '[00:01.000]Local line',
+    lrc_timebase: 'output',
+    cues: [{ time: 0, action: 'Turn toward camera' }],
+  };
+  const request = projectBiblePreservingPins(
+    bible,
+    {
+      prompt: 'Turn toward camera',
+      mode: 't2v',
+      duration_seconds: 8,
+      timeline: localTimeline,
+      directing: { camera: 'push' },
+    },
+    ['timeline', 'directing'],
+  );
+
+  assert.deepEqual(request.character, bible.character);
+  assert.equal(request.mode, 'i2v');
+  assert.equal(request.image_id, bible.character.references[0].image_id);
+  assert.deepEqual(request.timeline, localTimeline);
+  assert.deepEqual(request.directing, { camera: 'push' });
+  assert.equal(request.aspect_ratio, '16:9');
 });
 
 test('pinned request fields survive Bible reprojection and unpin restores inheritance', () => {

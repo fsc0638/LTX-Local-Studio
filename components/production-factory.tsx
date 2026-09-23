@@ -50,6 +50,7 @@ import {
   parseFactoryImport,
   pinFactoryField,
   projectBible,
+  projectBiblePreservingPins,
   reprojectShots,
   reopenFactoryShot,
   serializeFactoryPlan,
@@ -821,9 +822,14 @@ export function ProductionFactory({
       if (current.shots.length >= MAX_FACTORY_SHOTS) return current;
       const entries = incoming.shots ?? [{ request: incoming.request }];
       const available = MAX_FACTORY_SHOTS - current.shots.length;
+      const sourceRequest = entries[0]?.request;
+      const bible = hasFactoryBible(current.bible)
+        ? current.bible
+        : incoming.bible ||
+          (sourceRequest ? bibleFromRequest(sourceRequest) : current.bible);
       const shots = entries.slice(0, available).map((entry, offset) => {
         const shot = createFactoryShot(
-          entry.request,
+          projectBiblePreservingPins(bible, entry.request, entry.pinned),
           crypto.randomUUID(),
           current.shots.length + offset,
           entry.title,
@@ -832,13 +838,9 @@ export function ProductionFactory({
         if (current.status === 'running') shot.status = 'queued';
         return shot;
       });
-      const sourceRequest = entries[0]?.request;
       return {
         ...current,
-        bible: hasFactoryBible(current.bible)
-          ? current.bible
-          : incoming.bible ||
-            (sourceRequest ? bibleFromRequest(sourceRequest) : current.bible),
+        bible,
         status: current.status === 'completed' ? 'paused' : current.status,
         shots: [...current.shots, ...shots],
       };

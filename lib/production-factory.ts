@@ -283,6 +283,21 @@ export function projectBible(
   return normalizeFactoryRequest(projected);
 }
 
+/** Apply the project Bible while keeping fields intentionally overridden by one shot. */
+export function projectBiblePreservingPins(
+  bibleValue: FactoryBible,
+  requestValue: FactoryRequest,
+  pinned: string[] = [],
+): FactoryRequest {
+  const source = normalizeFactoryRequest(requestValue);
+  const projected = projectBible(bibleValue, source);
+  for (const field of new Set(pinned)) {
+    if (field in source) projected[field] = clone(source[field]);
+    else delete projected[field];
+  }
+  return normalizeFactoryRequest(projected);
+}
+
 export function bibleFromRequest(requestValue: FactoryRequest): FactoryBible {
   const request = normalizeFactoryRequest(requestValue);
   const timeline =
