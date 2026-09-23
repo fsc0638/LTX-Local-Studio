@@ -114,6 +114,10 @@ DRAFT_EFFORT = os.environ.get("LTX_DRAFT_EFFORT", "medium")
 # loop should cost that project its allowance rather than every project the account owns.
 DRAFT_TOKEN_LIMIT = int(os.environ.get("LTX_DRAFT_TOKEN_LIMIT", "200000"))
 DRAFT_TIMEOUT = int(os.environ.get("LTX_DRAFT_TIMEOUT", "120"))
+# Director analysis reads timing metadata and lyrics; it does not render one sequence. Keep its
+# input limit separate from the worker's 180-second generation cap so ordinary full songs work.
+DIRECTOR_MAX_SECONDS = 600
+DIRECTOR_MAX_ENERGY_SAMPLES = 6000
 LOCK = threading.Lock()
 PROGRESS_RE = re.compile(r"(?<!\d)(\d{1,3})%")
 RUNTIME: dict[str, Any] = {}
@@ -1760,11 +1764,12 @@ def normalize_director_request(raw):
     numbers = (duration, beat, hop)
     if (any(isinstance(value, bool) or not isinstance(value, (int, float)) or
             not math.isfinite(value) for value in numbers) or
-            not 0 < duration <= 180 or not 0 < beat <= 180 or not 0 < hop <= 10 or
+            not 0 < duration <= DIRECTOR_MAX_SECONDS or not 0 < beat <= 180 or
+            not 0 < hop <= 10 or
             not isinstance(sections, list) or len(sections) > 100 or
             any(isinstance(value, bool) or not isinstance(value, (int, float)) or
                 not math.isfinite(value) or not 0 <= value <= duration for value in sections) or
-            not isinstance(energy, list) or len(energy) > 4000 or
+            not isinstance(energy, list) or len(energy) > DIRECTOR_MAX_ENERGY_SAMPLES or
             any(isinstance(value, bool) or not isinstance(value, (int, float)) or
                 not math.isfinite(value) or not -160 <= value <= 40 for value in energy)):
         raise ValueError("Invalid audio analysis")
@@ -1785,7 +1790,8 @@ def normalize_director_request(raw):
         if (not isinstance(shot_id, str) or not 1 <= len(shot_id) <= 80 or shot_id in seen or
                 isinstance(start, bool) or not isinstance(start, (int, float)) or
                 isinstance(end, bool) or not isinstance(end, (int, float)) or
-                not 0 <= start < end <= 180 or kind not in {"lyric", "breathing"} or
+                not 0 <= start < end <= duration or end > DIRECTOR_MAX_SECONDS or
+                kind not in {"lyric", "breathing"} or
                 not isinstance(lyrics, list) or len(lyrics) > 20 or
                 any(not isinstance(line, str) or len(line) > 500 for line in lyrics)):
             raise ValueError("Invalid director shot")
