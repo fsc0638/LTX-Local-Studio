@@ -35,6 +35,19 @@ class FactoryStoreTests(conftest.DatabaseFixture, unittest.TestCase):
         self.assertFalse(self.store.delete_project(plan["id"], "owner-2"))
         self.assertIsNotNone(self.store.get_project(plan["id"], "owner-1"))
 
+    def test_a_restart_marks_a_background_director_run_interrupted(self):
+        plan = self.project()
+        run = {"id": "run-1", "status": "running", "created_at": 1, "updated_at": 1}
+        stored, started = self.store.start_director_run(
+            plan["id"], "owner-1", run, stale_after=360)
+        self.assertTrue(started)
+        self.assertEqual(stored, run)
+        self.store.recover()
+        recovered = self.store.director_run(plan["id"], "owner-1")
+        self.assertEqual(recovered["id"], "run-1")
+        self.assertEqual(recovered["status"], "failed")
+        self.assertEqual(recovered["code"], "director_interrupted")
+
     def test_replacing_shots_renumbers_and_keeps_one_key_each(self):
         plan = self.project()
         saved = self.store.replace_shots(plan["id"], "owner-1", [shot("first"), shot("second")])
