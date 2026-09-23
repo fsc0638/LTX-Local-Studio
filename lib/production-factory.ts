@@ -29,6 +29,8 @@ export type FactoryOutput = {
 };
 export type FactoryBible = {
   character?: FactoryCharacter;
+  visual_style?: string;
+  style_anchor?: string;
   music?: FactoryMusic;
   output: FactoryOutput;
   directing?: Record<string, string>;
@@ -105,6 +107,7 @@ const runStates = new Set<FactoryRunState>([
 ]);
 const PROJECTED_FIELDS = [
   'character',
+  'visual_style',
   'mode',
   'image_id',
   'timeline',
@@ -168,6 +171,8 @@ export function normalizeFactoryBible(value: unknown): FactoryBible {
     (key) =>
       ![
         'character',
+        'visual_style',
+        'style_anchor',
         'music',
         'output',
         'directing',
@@ -212,6 +217,27 @@ export function normalizeFactoryBible(value: unknown): FactoryBible {
         ),
       } satisfies FactoryCharacter)
     : undefined;
+  const visualStyle =
+    raw.visual_style === undefined
+      ? undefined
+      : typeof raw.visual_style === 'string' &&
+          raw.visual_style.trim() &&
+          raw.visual_style.trim().length <= 1200
+        ? raw.visual_style
+        : (() => {
+            throw new Error(
+              'Bible visual_style must contain 1–1200 characters',
+            );
+          })();
+  const styleAnchor =
+    raw.style_anchor === undefined
+      ? undefined
+      : typeof raw.style_anchor === 'string' &&
+          /^[a-f0-9]{32}$/.test(raw.style_anchor)
+        ? raw.style_anchor
+        : (() => {
+            throw new Error('Bible style_anchor must be an image asset ID');
+          })();
   const musicRaw = raw.music ? record(raw.music, 'Bible music') : undefined;
   if (
     musicRaw &&
@@ -227,6 +253,8 @@ export function normalizeFactoryBible(value: unknown): FactoryBible {
   if (output.profile === 'distilled') output.profile = 'compat-v1';
   const bible = clone({
     ...(character ? { character } : {}),
+    ...(visualStyle ? { visual_style: visualStyle } : {}),
+    ...(styleAnchor ? { style_anchor: styleAnchor } : {}),
     ...(musicRaw ? { music: musicRaw } : {}),
     output,
     ...(raw.directing
@@ -251,6 +279,8 @@ export function normalizeFactoryBible(value: unknown): FactoryBible {
 export function hasFactoryBible(bible: FactoryBible): boolean {
   return Boolean(
     bible.character ||
+    bible.visual_style ||
+    bible.style_anchor ||
     bible.music ||
     bible.directing ||
     Object.keys(bible.output).length,
@@ -273,6 +303,7 @@ export function projectBible(
     projected.mode = 'i2v';
     projected.image_id = bible.character.references[0].image_id;
   }
+  if (bible.visual_style) projected.visual_style = bible.visual_style;
   if (bible.music) {
     projected.render_mode = 'sequence';
     projected.audio = true;
@@ -308,6 +339,8 @@ export function bibleFromRequest(requestValue: FactoryRequest): FactoryBible {
     request.character && typeof request.character === 'object'
       ? (clone(request.character) as FactoryCharacter)
       : undefined;
+  const visualStyle =
+    typeof request.visual_style === 'string' ? request.visual_style : undefined;
   const directing =
     request.directing && typeof request.directing === 'object'
       ? (clone(request.directing) as Record<string, string>)
@@ -335,6 +368,7 @@ export function bibleFromRequest(requestValue: FactoryRequest): FactoryBible {
   ) as FactoryOutput;
   return normalizeFactoryBible({
     ...(character ? { character } : {}),
+    ...(visualStyle ? { visual_style: visualStyle } : {}),
     ...(music ? { music } : {}),
     output,
     ...(directing ? { directing } : {}),

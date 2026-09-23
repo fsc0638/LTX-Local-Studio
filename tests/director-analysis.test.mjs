@@ -27,6 +27,20 @@ test('apply all uses worker-safe trimmed prompts and ignores unknown ids', () =>
   assert.equal(next[1], shots[1]);
 });
 
+test('AI director writes its structured angle onto the accepted shot', () => {
+  const next = applyDirectorSuggestions(shots, [
+    { ...suggestion('a', 'new a'), angle: 'left_three_quarter', camera: '45 degree view' },
+  ]);
+  assert.equal(next[0].cue.directing.angle, 'left_three_quarter');
+});
+
+test('older director results derive a supported angle from camera text', () => {
+  const next = applyDirectorSuggestions(shots, [
+    { ...suggestion('a', 'new a'), camera: 'Low-angle slow push-in' },
+  ]);
+  assert.equal(next[0].cue.directing.angle, 'low');
+});
+
 test('AI director remains available after reload before breakdown state is rebuilt', () => {
   assert.equal(canRunDirectorAnalysis({
     projectId: 'project-1', musicId: 'music-1', draftAvailable: true,

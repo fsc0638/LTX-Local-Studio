@@ -118,6 +118,11 @@ const copy = {
     calibrationBad: '不是校準報告：{reason}',
     calibrationLines: 'cj {cj} · dino {cj_dino} · sj {sj}（嚴格 {scj} · {sdino} · {ssj}）',
     bibleHint: '先固定角色、音樂與輸出規格；新增鏡頭會繼承這些設定。',
+    visualStyle: '視覺畫風鎖',
+    visualStyleHint: '請具體寫出媒材、線條、上色、材質與色盤；每個鏡頭都會繼承。',
+    visualStylePlaceholder: '2D 手繪日系動畫、清晰線稿、平面賽璐璐上色、細緻繪製背景、青綠與奶油色盤。',
+    styleAnchor: '畫風參考圖',
+    noStyleAnchor: '使用角色圖的原始畫風',
     bibleRequired: '請先設定專案 Bible，再新增鏡頭。',
     legacyFound: '這個瀏覽器還留著一份舊版計畫（{count} 鏡）。要上傳到主機嗎？上傳後即可關掉分頁繼續生產。',
     legacyUpload: '上傳到主機',
@@ -197,6 +202,11 @@ const copy = {
     calibrationLines: 'cj {cj} · dino {cj_dino} · sj {sj} (strict {scj} · {sdino} · {ssj})',
     bibleHint:
       'Lock character, music and output defaults before adding inherited shots.',
+    visualStyle: 'Visual style lock',
+    visualStyleHint: 'Describe the medium, linework, shading, texture and palette. Every shot inherits it.',
+    visualStylePlaceholder: '2D hand-drawn anime, clean line art, flat cel shading, painterly backgrounds, teal and cream palette.',
+    styleAnchor: 'Style reference image',
+    noStyleAnchor: 'Use the character reference style',
     bibleRequired: 'Set the project Bible before adding a shot.',
     legacyFound: 'This browser still holds an older plan ({count} shots). Upload it to the host? Once uploaded you can close the tab and it keeps running.',
     legacyUpload: 'Upload to the host',
@@ -281,6 +291,11 @@ const copy = {
     calibrationBad: '校正レポートではありません：{reason}',
     calibrationLines: 'cj {cj} · dino {cj_dino} · sj {sj}（厳格 {scj} · {sdino} · {ssj}）',
     bibleHint: '人物、音楽、出力設定を固定してから継承ショットを追加します。',
+    visualStyle: '視覚スタイル固定',
+    visualStyleHint: '媒体、線画、陰影、質感、色調を具体的に記述し、全ショットで継承します。',
+    visualStylePlaceholder: '2D手描きアニメ、明確な線画、セルシェーディング、絵画的な背景、青緑とクリームの色調。',
+    styleAnchor: 'スタイル参照画像',
+    noStyleAnchor: 'キャラクター参照のスタイルを使用',
     bibleRequired: '先にプロジェクト Bible を設定してください。',
     legacyFound: 'このブラウザに旧版の計画（{count} ショット）が残っています。ホストへアップロードしますか？アップロード後はタブを閉じても生成が続きます。',
     legacyUpload: 'ホストへアップロード',
@@ -910,6 +925,7 @@ export function ProductionFactory({
     ),
   };
   const audioAssets = assets.filter((asset) => asset.kind === 'audio');
+  const imageAssets = assets.filter((asset) => asset.kind === 'image');
 
   const updateBible = (change: (bible: FactoryBible) => FactoryBible) => {
     const overrideCount = countPinnedShots(plan);
@@ -1176,6 +1192,56 @@ export function ProductionFactory({
                   }))
                 }
               />
+            </fieldset>
+            <fieldset disabled={!editable} className="grid gap-4 lg:grid-cols-2">
+              <label className="text-[10px] font-bold lg:col-span-2">
+                {text.visualStyle}
+                <Textarea
+                  className="mt-2 min-h-24 rounded-none bg-white text-xs font-normal leading-5"
+                  maxLength={1200}
+                  placeholder={text.visualStylePlaceholder}
+                  value={plan.bible.visual_style || ''}
+                  onChange={(event) =>
+                    updateBible((bible) => ({
+                      ...bible,
+                      visual_style: event.target.value || undefined,
+                    }))
+                  }
+                />
+                <span className="mt-1 block font-normal leading-5 text-muted-foreground">
+                  {text.visualStyleHint}
+                </span>
+              </label>
+              <label className="text-[10px] font-bold lg:col-span-2">
+                {text.styleAnchor}
+                <Select
+                  value={
+                    plan.bible.style_anchor &&
+                    imageAssets.some((asset) => asset.id === plan.bible.style_anchor)
+                      ? plan.bible.style_anchor
+                      : 'none'
+                  }
+                  disabled={!editable}
+                  onValueChange={(id) =>
+                    updateBible((bible) => ({
+                      ...bible,
+                      style_anchor: !id || id === 'none' ? undefined : id,
+                    }))
+                  }
+                >
+                  <SelectTrigger className="mt-2 w-full rounded-none bg-white">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">{text.noStyleAnchor}</SelectItem>
+                    {imageAssets.map((asset) => (
+                      <SelectItem key={asset.id} value={asset.id}>
+                        {asset.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </label>
             </fieldset>
             <div className="grid gap-4 lg:grid-cols-2">
               <label className="text-[10px] font-bold">

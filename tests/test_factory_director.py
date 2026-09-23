@@ -12,12 +12,13 @@ import test_factory_api
 SHOT_FIELDS = (
     "scene", "mood", "atmosphere", "character_appearance", "wardrobe",
     "facial_expression", "body_language", "action", "progression", "emotion", "camera",
-    "lighting", "continuity", "breathing", "prompt",
+    "angle", "lighting", "continuity", "breathing", "prompt",
 )
 
 
 def suggestion(shot_id):
     row = {"shot_id": shot_id, **{field: f"{field} for {shot_id}" for field in SHOT_FIELDS}}
+    row["angle"] = "left_three_quarter"
     row["prompt"] = (f"Detailed standalone production direction for {shot_id}. " * 30)[:1200]
     return row
 
@@ -51,6 +52,7 @@ class DirectorDraftTests(test_factory_api.FactoryAPITests):
         return self.new_project(bible={
             "output": {},
             "lyric_offset_seconds": -0.9,
+            "visual_style": "2D cel animation with ink outlines",
             "character": {"name": "Mina", "description": "Short black hair, red coat",
                           "references": []},
             "music": {"audio_id": "audio-1", "audio_start_seconds": 0,
@@ -109,6 +111,12 @@ class DirectorDraftTests(test_factory_api.FactoryAPITests):
         self.assertIn("complete clothing", outbound["input"])
         self.assertIn("facial expression", outbound["input"])
         self.assertIn("anti-drift constraints", outbound["input"])
+        self.assertIn("2D cel animation with ink outlines", outbound["input"])
+        self.assertEqual(
+            outbound["text"]["format"]["schema"]["properties"]["shots"]["items"]
+            ["properties"]["angle"]["enum"],
+            sorted(backend.mv_timeline.DIRECTING["angle"]),
+        )
         self.assertIn("800-4000 characters", outbound["input"])
         self.assertNotIn(b"sk-test", body)
 

@@ -30,7 +30,7 @@ class DirectorRequestValidationTests(unittest.TestCase):
         self.assertIn("story_outline", song["required"])
         self.assertIn("continuity_rules", song["required"])
         for field in ("character_appearance", "wardrobe", "facial_expression",
-                      "body_language", "lighting", "continuity"):
+                      "body_language", "angle", "lighting", "continuity"):
             self.assertIn(field, shot["required"])
         self.assertEqual(shot["properties"]["prompt"]["minLength"], 800)
         self.assertEqual(shot["properties"]["prompt"]["maxLength"], 4000)
