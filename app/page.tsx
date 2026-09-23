@@ -89,9 +89,13 @@ import {
 import { parseLrcRows } from '@/lib/lrc-editor';
 import { breakdownFactoryEntries } from '@/lib/breakdown-factory';
 import { StatusBoard, progressOf } from '@/components/status-board';
-import type { FactoryPlan } from '@/lib/production-factory';
 import { STAGE_KEYS, UNAVAILABLE_STAGES, type StageKey } from '@/lib/stages';
-import { bibleFromRequest } from '@/lib/production-factory';
+import {
+  bibleFromRequest,
+  hasFactoryBible,
+  projectBible,
+  type FactoryPlan,
+} from '@/lib/production-factory';
 import {
   applyDirectorSuggestions,
   canRunDirectorAnalysis,
@@ -1137,8 +1141,12 @@ function Studio() {
         }
       : {}),
   };
+  const factoryRequest =
+    plan && hasFactoryBible(plan.bible)
+      ? projectBible(plan.bible, generationRequest)
+      : generationRequest;
   const breakdownEntries = breakdown
-    ? breakdownFactoryEntries(generationRequest, breakdown.shots)
+    ? breakdownFactoryEntries(factoryRequest, breakdown.shots)
     : [];
   const command = `POST /api/v1/jobs\n${JSON.stringify(generationRequest, null, 2)}`;
 
@@ -2359,12 +2367,12 @@ function Studio() {
                                   title: entry.title,
                                   pinned: entry.pinned,
                                 })),
-                                bible: bibleFromRequest(generationRequest),
+                                bible: bibleFromRequest(factoryRequest),
                               }
                             : {
                                 token: crypto.randomUUID(),
-                                request: generationRequest,
-                                bible: bibleFromRequest(generationRequest),
+                                request: factoryRequest,
+                                bible: bibleFromRequest(factoryRequest),
                               },
                         );
                         setTab('shoot');
