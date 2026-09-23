@@ -796,7 +796,7 @@ class FactoryStore:
             row = self._owned_keyframe(db, keyframe_id, owner_id)
         return dict(row) if row else None
 
-    def approve_keyframe(self, keyframe_id, owner_id, asset_id):
+    def approve_keyframe(self, keyframe_id, owner_id, asset_id, relay_metadata=None):
         """The keyframe becomes the shot's picture.
 
         The shot's image_id is set to the promoted asset and pinned, so a Bible reprojection cannot
@@ -815,6 +815,8 @@ class FactoryStore:
             )
             request["image_id"] = asset_id
             request["keyframe_id"] = str(row["id"])
+            if relay_metadata:
+                request["continuity_relay"] = json.loads(json.dumps(relay_metadata))
             # A shot that starts from a picture is an i2v shot; the worker contract insists on it.
             request["mode"] = "i2v"
             pinned = list(row["pinned"] or [])
@@ -828,6 +830,35 @@ class FactoryStore:
                        (Jsonb(request), Jsonb(pinned), now, row["shot_id"]))
             db.execute("UPDATE projects SET updated_at=%s WHERE id=%s", (now, row["project_id"]))
         return row["project_id"]
+
+    def set_identity_board(self, project_id, asset_id, sources):
+        """Persist the generated contact sheet inside the portable continuity contract."""
+        with self.connect() as db:
+            row = db.execute("SELECT bible FROM projects WHERE id=%s", (project_id,)).fetchone()
+            if not row:
+                return False
+            bible = dict(row["bible"] or {})
+            continuity = dict(bible.get("continuity") or {})
+            continuity.update({"mode": "relay", "gate": "strict", "identity_board_id": asset_id,
+                               "identity_sources": list(sources)})
+            bible["continuity"] = continuity
+            db.execute("UPDATE projects SET bible=%s,updated_at=%s WHERE id=%s",
+                       (Jsonb(bible), time.time(), project_id))
+        return True
+
+    def previous_succeeded_take(self, shot_id):
+        """Newest successful output from the immediately preceding shot, if there is one."""
+        with self.connect() as db:
+            shot = db.execute("SELECT project_id,position FROM shots WHERE id=%s", (shot_id,)).fetchone()
+            if not shot or shot["position"] == 0:
+                return None
+            row = db.execute(
+                """SELECT t.output_url,s.id AS shot_id FROM shots s
+                     JOIN LATERAL (SELECT output_url FROM takes WHERE shot_id=s.id
+                         AND output_url IS NOT NULL ORDER BY created_at DESC LIMIT 1) t ON true
+                    WHERE s.project_id=%s AND s.position=%s AND s.status='succeeded'""",
+                (shot["project_id"], shot["position"] - 1)).fetchone()
+        return dict(row) if row else None
 
     def reject_keyframe(self, keyframe_id, owner_id, reason):
         if not isinstance(reason, str) or not reason.strip():

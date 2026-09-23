@@ -123,6 +123,8 @@ const copy = {
     visualStylePlaceholder: '2D 手繪日系動畫、清晰線稿、平面賽璐璐上色、細緻繪製背景、青綠與奶油色盤。',
     styleAnchor: '畫風參考圖',
     noStyleAnchor: '使用角色圖的原始畫風',
+    continuityRelay: '最後一幀接力＋角色身分板＋分段品質閘門',
+    continuityRelayHint: '需要角色參照與畫風參考圖。每鏡用全部角色角度、畫風錨點與上一鏡末幀合成起始格；角色／畫風／動作品質全數綠燈才自動前進，否則暫停產線。',
     bibleRequired: '請先設定專案 Bible，再新增鏡頭。',
     legacyFound: '這個瀏覽器還留著一份舊版計畫（{count} 鏡）。要上傳到主機嗎？上傳後即可關掉分頁繼續生產。',
     legacyUpload: '上傳到主機',
@@ -207,6 +209,8 @@ const copy = {
     visualStylePlaceholder: '2D hand-drawn anime, clean line art, flat cel shading, painterly backgrounds, teal and cream palette.',
     styleAnchor: 'Style reference image',
     noStyleAnchor: 'Use the character reference style',
+    continuityRelay: 'Last-frame relay + identity board + shot quality gate',
+    continuityRelayHint: 'Character references and a style image are required. Each shot starts from all views, the style anchor and the previous final frame; only all-green quality advances.',
     bibleRequired: 'Set the project Bible before adding a shot.',
     legacyFound: 'This browser still holds an older plan ({count} shots). Upload it to the host? Once uploaded you can close the tab and it keeps running.',
     legacyUpload: 'Upload to the host',
@@ -296,6 +300,8 @@ const copy = {
     visualStylePlaceholder: '2D手描きアニメ、明確な線画、セルシェーディング、絵画的な背景、青緑とクリームの色調。',
     styleAnchor: 'スタイル参照画像',
     noStyleAnchor: 'キャラクター参照のスタイルを使用',
+    continuityRelay: '最終フレーム継承＋人物IDボード＋ショット品質ゲート',
+    continuityRelayHint: '人物参照と画風画像が必要です。全アングル、画風アンカー、前ショット最終フレームから開始画を作り、全品質判定が緑のときだけ次へ進みます。',
     bibleRequired: '先にプロジェクト Bible を設定してください。',
     legacyFound: 'このブラウザに旧版の計画（{count} ショット）が残っています。ホストへアップロードしますか？アップロード後はタブを閉じても生成が続きます。',
     legacyUpload: 'ホストへアップロード',
@@ -1241,6 +1247,27 @@ export function ProductionFactory({
                     ))}
                   </SelectContent>
                 </Select>
+              </label>
+              <label className="flex items-start gap-3 text-[10px] font-bold lg:col-span-2">
+                <Switch
+                  className="mt-0.5"
+                  disabled={!editable}
+                  checked={plan.bible.continuity?.mode === 'relay'}
+                  onCheckedChange={(enabled) =>
+                    updateBible((bible) => ({
+                      ...bible,
+                      continuity: enabled
+                        ? { mode: 'relay', gate: 'strict' }
+                        : undefined,
+                    }))
+                  }
+                />
+                <span>
+                  {text.continuityRelay}
+                  <span className="mt-1 block font-normal leading-5 text-muted-foreground">
+                    {text.continuityRelayHint}
+                  </span>
+                </span>
               </label>
             </fieldset>
             <div className="grid gap-4 lg:grid-cols-2">

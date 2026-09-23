@@ -63,6 +63,25 @@ test('legacy distilled profile migrates to the versioned compatibility profile',
   );
 });
 
+test('continuity relay metadata round-trips and rejects loose gates', () => {
+  const sources = ['a'.repeat(32), 'b'.repeat(32)];
+  const normalized = normalizeFactoryBible({
+    output: {},
+    lyric_offset_seconds: -0.9,
+    continuity: {
+      mode: 'relay',
+      gate: 'strict',
+      identity_board_id: 'c'.repeat(32),
+      identity_sources: sources,
+    },
+  });
+  assert.deepEqual(normalized.continuity?.identity_sources, sources);
+  assert.throws(
+    () => normalizeFactoryBible({ output: {}, continuity: { mode: 'relay', gate: 'loose' } }),
+    /relay \+ strict/,
+  );
+});
+
 const bible = {
   character: {
     name: 'Mika',
