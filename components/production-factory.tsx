@@ -1753,8 +1753,8 @@ export function ProductionFactory({
                   variant="outline"
                   className="h-12 w-full rounded-none border-white/25 bg-transparent text-white hover:bg-white hover:text-black"
                   onClick={() => {
-                    mutate((current) => ({ ...current, status: 'paused' }));
                     setNotice(text.activePause);
+                    runOnHost(factory.pauseProject);
                   }}
                 >
                   <CirclePause /> {text.pause}
