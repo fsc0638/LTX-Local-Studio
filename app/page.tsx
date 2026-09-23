@@ -93,6 +93,7 @@ import { STAGE_KEYS, UNAVAILABLE_STAGES, type StageKey } from '@/lib/stages';
 import { bibleFromRequest } from '@/lib/production-factory';
 import {
   applyDirectorSuggestions,
+  canRunDirectorAnalysis,
   type DirectorAnalysis,
 } from '@/lib/director-analysis';
 
@@ -855,8 +856,82 @@ function Studio() {
     setTimeline((current) => ({ ...current, cues: breakdownCues(shots) }));
   };
 
+  /**
+   * Ask the host for beats and sections, then cut the song. The cues go straight into the timeline
+   * draft: the breakdown is the thing that decides where shots begin, and the existing "preview
+   * shot plan" button below reads those cues, so there is no second preview to keep in step.
+   */
+  const runBreakdown = async () => {
+    const audioId = timeline.music?.id;
+    if (!audioId || breakdownBusy) return null;
+    setBreakdownBusy(true);
+    setBreakdownNotice('none');
+    try {
+      const response = await serviceFetch(`${API_BASE}/api/v1/audio/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ audio_id: audioId }),
+      });
+      if (!response.ok) {
+        // 503 is the documented answer when the analysis service is down, and it is not an error
+        // the user has to act on: the page keeps working without it.
+        setBreakdownNotice(response.status === 503 ? 'unavailable' : 'failed');
+        return null;
+      }
+      // Only the fields the breakdown reads are named; the response also carries the alignment
+      // and the cache flag, which belong to other stages.
+      const data = (await response.json()) as {
+        beats?: {
+          duration_seconds?: number;
+          beats?: number[];
+          sections?: number[];
+          energy_db?: number[];
+          energy_hop_seconds?: number;
+        };
+        lyric_offset_seconds?: number;
+      };
+      const measured = data?.beats ?? {};
+      const rows = parseLrcRows(timeline.lrc);
+      const bibleLyricOffset = plan?.bible.lyric_offset_seconds;
+      const result = planBreakdown({
+        durationSeconds: Number(measured.duration_seconds) || 0,
+        beats: Array.isArray(measured.beats) ? measured.beats : [],
+        sections: Array.isArray(measured.sections) ? measured.sections : [],
+        lyrics: rows,
+        lyricOffsetSeconds: Number.isFinite(bibleLyricOffset)
+          ? bibleLyricOffset
+          : Number(data?.lyric_offset_seconds) || 0,
+        segmentSeconds: timeline.segmentSeconds,
+        directing: plan?.bible.directing ?? {},
+      });
+      const nextBreakdown = {
+        shots: result.shots,
+        lyrics: result.shots.flatMap((shot) => shot.lyrics),
+        beats: Array.isArray(measured.beats) ? measured.beats : [],
+        sections: Array.isArray(measured.sections) ? measured.sections : [],
+        durationSeconds: Number(measured.duration_seconds) || 0,
+        beatSeconds: result.beatSeconds,
+        energy: Array.isArray(measured.energy_db) ? measured.energy_db : [],
+        energyHopSeconds: Number(measured.energy_hop_seconds) || 0.1,
+      };
+      setBreakdown(nextBreakdown);
+      setDirectorAnalysis(null);
+      setDirectorNotice('none');
+      setTimeline((current) => ({ ...current, cues: breakdownCues(result.shots) }));
+      setBreakdownNotice('applied');
+      return nextBreakdown;
+    } catch {
+      setBreakdownNotice('failed');
+      return null;
+    } finally {
+      setBreakdownBusy(false);
+    }
+  };
+
   const runDirectorAnalysis = async () => {
-    if (!plan?.id || !breakdown?.shots.length || directorBusy) return;
+    if (!plan?.id || directorBusy) return;
+    const source = breakdown ?? (await runBreakdown());
+    if (!source?.shots.length) return;
     setDirectorBusy(true);
     setDirectorNotice('none');
     try {
@@ -868,13 +943,13 @@ function Studio() {
           body: JSON.stringify({
             locale,
             audio_analysis: {
-              duration_seconds: breakdown.durationSeconds,
-              beat_seconds: breakdown.beatSeconds,
-              section_seconds: breakdown.sections,
-              energy_db: breakdown.energy,
-              energy_hop_seconds: breakdown.energyHopSeconds,
+              duration_seconds: source.durationSeconds,
+              beat_seconds: source.beatSeconds,
+              section_seconds: source.sections,
+              energy_db: source.energy,
+              energy_hop_seconds: source.energyHopSeconds,
             },
-            shots: breakdown.shots.map((shot) => ({
+            shots: source.shots.map((shot) => ({
               shot_id: shot.id,
               start_seconds: shot.start,
               end_seconds: shot.end,
@@ -903,75 +978,6 @@ function Studio() {
       setDirectorNotice('failed');
     } finally {
       setDirectorBusy(false);
-    }
-  };
-
-  /**
-   * Ask the host for beats and sections, then cut the song. The cues go straight into the timeline
-   * draft: the breakdown is the thing that decides where shots begin, and the existing "preview
-   * shot plan" button below reads those cues, so there is no second preview to keep in step.
-   */
-  const runBreakdown = async () => {
-    const audioId = timeline.music?.id;
-    if (!audioId || breakdownBusy) return;
-    setBreakdownBusy(true);
-    setBreakdownNotice('none');
-    try {
-      const response = await serviceFetch(`${API_BASE}/api/v1/audio/analyze`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ audio_id: audioId }),
-      });
-      if (!response.ok) {
-        // 503 is the documented answer when the analysis service is down, and it is not an error
-        // the user has to act on: the page keeps working without it.
-        setBreakdownNotice(response.status === 503 ? 'unavailable' : 'failed');
-        return;
-      }
-      // Only the fields the breakdown reads are named; the response also carries the alignment
-      // and the cache flag, which belong to other stages.
-      const data = (await response.json()) as {
-        beats?: {
-          duration_seconds?: number;
-          beats?: number[];
-          sections?: number[];
-          energy_db?: number[];
-          energy_hop_seconds?: number;
-        };
-        lyric_offset_seconds?: number;
-      };
-      const measured = data?.beats ?? {};
-      const rows = parseLrcRows(timeline.lrc);
-      const bibleLyricOffset = plan?.bible.lyric_offset_seconds;
-      const result = planBreakdown({
-        durationSeconds: Number(measured.duration_seconds) || 0,
-        beats: Array.isArray(measured.beats) ? measured.beats : [],
-        sections: Array.isArray(measured.sections) ? measured.sections : [],
-        lyrics: rows,
-        lyricOffsetSeconds: Number.isFinite(bibleLyricOffset)
-          ? bibleLyricOffset
-          : Number(data?.lyric_offset_seconds) || 0,
-        segmentSeconds: timeline.segmentSeconds,
-        directing: plan?.bible.directing ?? {},
-      });
-      setBreakdown({
-        shots: result.shots,
-        lyrics: result.shots.flatMap((shot) => shot.lyrics),
-        beats: Array.isArray(measured.beats) ? measured.beats : [],
-        sections: Array.isArray(measured.sections) ? measured.sections : [],
-        durationSeconds: Number(measured.duration_seconds) || 0,
-        beatSeconds: result.beatSeconds,
-        energy: Array.isArray(measured.energy_db) ? measured.energy_db : [],
-        energyHopSeconds: Number(measured.energy_hop_seconds) || 0.1,
-      });
-      setDirectorAnalysis(null);
-      setDirectorNotice('none');
-      setTimeline((current) => ({ ...current, cues: breakdownCues(result.shots) }));
-      setBreakdownNotice('applied');
-    } catch {
-      setBreakdownNotice('failed');
-    } finally {
-      setBreakdownBusy(false);
     }
   };
   const [factoryIncoming, setFactoryIncoming] =
@@ -1512,22 +1518,28 @@ function Studio() {
                   type="button"
                   onClick={() => void runDirectorAnalysis()}
                   disabled={
-                    !breakdown?.shots.length ||
-                    directorBusy ||
-                    capabilities?.draft_available !== true
+                    !canRunDirectorAnalysis({
+                      projectId: plan?.id,
+                      musicId: timeline.music?.id,
+                      draftAvailable: capabilities?.draft_available,
+                      breakdownBusy,
+                      directorBusy,
+                    })
                   }
                   title={
                     capabilities?.draft_available === false
                       ? directorCopy[locale].unavailable
-                      : !breakdown?.shots.length
-                        ? directorCopy[locale].needsBreakdown
+                      : !breakdown?.shots.length && timeline.music
+                        ? directorCopy[locale].createsBreakdown
                         : undefined
                   }
                   className="rounded-sm bg-[#171918] px-4 py-2 text-[12px] font-bold text-white hover:bg-[#e85578] disabled:opacity-45"
                 >
-                  {directorBusy
-                    ? directorCopy[locale].analyzing
-                    : directorCopy[locale].analyze}
+                  {breakdownBusy
+                    ? ui.breakdownBusy
+                    : directorBusy
+                      ? directorCopy[locale].analyzing
+                      : directorCopy[locale].analyze}
                 </button>
                 <p className="text-[11px] text-muted-foreground">
                   {!timeline.music
