@@ -26,6 +26,22 @@ export type DirectorAnalysis = {
   shots: DirectorShotSuggestion[];
 };
 
+export function canRunDirectorAnalysis({
+  projectId,
+  musicId,
+  draftAvailable,
+  breakdownBusy,
+  directorBusy,
+}: {
+  projectId?: string;
+  musicId?: string;
+  draftAvailable?: boolean;
+  breakdownBusy: boolean;
+  directorBusy: boolean;
+}): boolean {
+  return Boolean(projectId && musicId && draftAvailable === true && !breakdownBusy && !directorBusy);
+}
+
 /** Applying advice remains an explicit edit. The worker's cue contract caps action at 600 chars. */
 export function applyDirectorSuggestions(
   shots: BreakdownShot[],

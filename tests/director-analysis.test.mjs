@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { applyDirectorSuggestions } from '../lib/director-analysis.ts';
+import { applyDirectorSuggestions, canRunDirectorAnalysis } from '../lib/director-analysis.ts';
 
 const shots = [
   { id: 'a', cue: { time: 0, action: 'human edit', directing: {} } },
@@ -25,4 +25,23 @@ test('apply all uses worker-safe trimmed prompts and ignores unknown ids', () =>
   const next = applyDirectorSuggestions(shots, [suggestion('a', long), suggestion('missing', 'x')]);
   assert.equal(next[0].cue.action.length, 600);
   assert.equal(next[1], shots[1]);
+});
+
+test('AI director remains available after reload before breakdown state is rebuilt', () => {
+  assert.equal(canRunDirectorAnalysis({
+    projectId: 'project-1', musicId: 'music-1', draftAvailable: true,
+    breakdownBusy: false, directorBusy: false,
+  }), true);
+});
+
+test('AI director stays unavailable without its required host and project inputs', () => {
+  const ready = {
+    projectId: 'project-1', musicId: 'music-1', draftAvailable: true,
+    breakdownBusy: false, directorBusy: false,
+  };
+  assert.equal(canRunDirectorAnalysis({ ...ready, projectId: undefined }), false);
+  assert.equal(canRunDirectorAnalysis({ ...ready, musicId: undefined }), false);
+  assert.equal(canRunDirectorAnalysis({ ...ready, draftAvailable: false }), false);
+  assert.equal(canRunDirectorAnalysis({ ...ready, breakdownBusy: true }), false);
+  assert.equal(canRunDirectorAnalysis({ ...ready, directorBusy: true }), false);
 });
