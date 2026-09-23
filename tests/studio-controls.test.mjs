@@ -141,7 +141,7 @@ test('imported shot plans are rejected before they can reach the worker', () => 
   fails('{"cues":[{"time":"4"}]}', 'must be a number');
   fails('{"cues":[{"time":1,"directing":{"lighting":"warm"}}]}', 'not a directing field');
   fails('{"cues":[{"time":1,"directing":{"emotion":"furious"}}]}', 'not a supported option');
-  fails('{"cues":[{"time":1,"action":' + JSON.stringify('x'.repeat(601)) + '}]}', 'up to 600 characters');
+  fails('{"cues":[{"time":1,"action":' + JSON.stringify('x'.repeat(4001)) + '}]}', 'up to 4000 characters');
   fails(JSON.stringify({cues:Array.from({length:61},(_,i)=>({time:i}))}), 'At most 60');
   fails('{"lrc":"x","lrc_timebase":"bar"}', 'must be "output" or "music"');
   fails('{"lrc":"x","audio_mode":"loud"}', 'must be "soundtrack" or "condition"');

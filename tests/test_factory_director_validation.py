@@ -24,6 +24,17 @@ def request(duration):
 
 
 class DirectorRequestValidationTests(unittest.TestCase):
+    def test_director_schema_requires_story_continuity_and_detailed_prompt_fields(self):
+        song = backend.DIRECTOR_SCHEMA["properties"]["song"]
+        shot = backend.DIRECTOR_SCHEMA["properties"]["shots"]["items"]
+        self.assertIn("story_outline", song["required"])
+        self.assertIn("continuity_rules", song["required"])
+        for field in ("character_appearance", "wardrobe", "facial_expression",
+                      "body_language", "lighting", "continuity"):
+            self.assertIn(field, shot["required"])
+        self.assertEqual(shot["properties"]["prompt"]["minLength"], 800)
+        self.assertEqual(shot["properties"]["prompt"]["maxLength"], 4000)
+
     def test_full_song_longer_than_generation_sequence_cap_is_valid(self):
         shots, audio, locale = backend.normalize_director_request(request(198.88))
         self.assertEqual(shots[-1]["end_seconds"], 198.88)

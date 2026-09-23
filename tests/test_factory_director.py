@@ -8,13 +8,16 @@ import test_factory_api
 
 
 SHOT_FIELDS = (
-    "scene", "mood", "atmosphere", "action", "progression", "emotion", "camera",
-    "breathing", "prompt",
+    "scene", "mood", "atmosphere", "character_appearance", "wardrobe",
+    "facial_expression", "body_language", "action", "progression", "emotion", "camera",
+    "lighting", "continuity", "breathing", "prompt",
 )
 
 
 def suggestion(shot_id):
-    return {"shot_id": shot_id, **{field: f"{field} for {shot_id}" for field in SHOT_FIELDS}}
+    row = {"shot_id": shot_id, **{field: f"{field} for {shot_id}" for field in SHOT_FIELDS}}
+    row["prompt"] = (f"Detailed standalone production direction for {shot_id}. " * 30)[:1200]
+    return row
 
 
 def openai_response(ids=("shot-0", "shot-1"), tokens=2400):
@@ -23,7 +26,9 @@ def openai_response(ids=("shot-0", "shot-1"), tokens=2400):
             "genre": "Dream pop",
             "lyrical_meaning": "Learning to let go",
             "visual_concept": "A city slowly becoming weightless",
+            "story_outline": "She leaves home, crosses the city, and releases the last letter",
             "emotional_arc": "Isolation to release",
+            "continuity_rules": "Keep her red coat and the silver letter in every city scene",
             "producer_strategy": "Reserve wide frames for the chorus",
         },
         "shots": [suggestion(identity) for identity in ids],
@@ -82,6 +87,10 @@ class DirectorDraftTests(test_factory_api.FactoryAPITests):
         self.assertIn("[00:01.00]飛向夜空", outbound["input"])
         self.assertIn("breathing", outbound["input"])
         self.assertIn("energy_db", outbound["input"])
+        self.assertIn("complete clothing", outbound["input"])
+        self.assertIn("facial expression", outbound["input"])
+        self.assertIn("anti-drift constraints", outbound["input"])
+        self.assertIn("800-4000 characters", outbound["input"])
         self.assertNotIn(b"sk-test", body)
 
     def test_bad_shot_input_is_refused_before_openai(self):

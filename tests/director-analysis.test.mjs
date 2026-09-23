@@ -21,9 +21,9 @@ test('AI director advice changes only the explicitly accepted shot', () => {
 });
 
 test('apply all uses worker-safe trimmed prompts and ignores unknown ids', () => {
-  const long = `  ${'x'.repeat(700)}  `;
+  const long = `  ${'x'.repeat(4100)}  `;
   const next = applyDirectorSuggestions(shots, [suggestion('a', long), suggestion('missing', 'x')]);
-  assert.equal(next[0].cue.action.length, 600);
+  assert.equal(next[0].cue.action.length, 4000);
   assert.equal(next[1], shots[1]);
 });
 

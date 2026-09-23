@@ -74,7 +74,7 @@ def openapi_document():
             "lrc_timebase": {"enum": ["output", "music"], "default": "output", "description": "music subtracts audio_start_seconds from original-song timestamps; lines before the selected start are skipped."},
             "cues": {"type": "array", "maxItems": 60, "items": {"type": "object", "additionalProperties": False,
                 "required": ["time"], "properties": {"time": {"type": "number", "minimum": 0, "exclusiveMaximum": 180},
-                "action": {"type": "string", "maxLength": 600}, "directing": ref("Directing")}}}}},
+                "action": {"type": "string", "maxLength": mv_timeline.CUE_ACTION_MAX}, "directing": ref("Directing")}}}}},
         "Error": {"type": "object", "required": ["error"], "properties": {
             "error": {"type": "string"}, "code": {"type": "string"}, "retry_after_seconds": {"type": "integer"}}},
         "External": {"type": "object", "additionalProperties": False,

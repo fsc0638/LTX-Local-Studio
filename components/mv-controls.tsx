@@ -1135,7 +1135,7 @@ export function TimelineControls({
               {text.action}
               <Textarea
                 className="mt-1 rounded-none text-xs"
-                maxLength={600}
+                maxLength={4000}
                 value={cue.action}
                 onChange={(event) =>
                   cueChange(index, { action: event.target.value })

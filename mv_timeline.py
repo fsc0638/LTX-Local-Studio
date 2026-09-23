@@ -4,6 +4,7 @@ import re
 
 MAX_SECONDS = 180
 MAX_SEGMENTS = 120
+CUE_ACTION_MAX = 4000
 
 
 def option(zh, en, ja, prompt):
@@ -171,8 +172,8 @@ def normalize_sequence(raw, payload, max_frames, asset_lookup):
         if when >= duration:
             raise ValueError("Action cue must start before the end of the video")
         action = cue.get("action", "")
-        if not isinstance(action, str) or len(action) > 600:
-            raise ValueError("Cue action must be text, maximum 600 characters")
+        if not isinstance(action, str) or len(action) > CUE_ACTION_MAX:
+            raise ValueError(f"Cue action must be text, maximum {CUE_ACTION_MAX} characters")
         clean_cues.append({"time": when, "action": action, "directing": normalize_directing(cue.get("directing", {}))})
     clean_cues.sort(key=lambda cue: cue["time"])
     if len({c["time"] for c in clean_cues}) != len(clean_cues):
