@@ -67,9 +67,18 @@ import { resolveThresholds } from '@/lib/review';
 type Locale = 'zh-TW' | 'en' | 'ja';
 export type FactoryIncoming = {
   token: string;
-  request: FactoryRequest;
   bible?: FactoryBible;
-};
+} & (
+  | { request: FactoryRequest; shots?: never }
+  | {
+      request?: never;
+      shots: {
+        request: FactoryRequest;
+        title?: string;
+        pinned?: string[];
+      }[];
+    }
+);
 
 type WorkerJob = {
   id: string;
@@ -810,19 +819,28 @@ export function ProductionFactory({
     // eslint-disable-next-line react/react-compiler -- This external parent event is intentionally consumed into persisted factory state.
     mutate((current) => {
       if (current.shots.length >= MAX_FACTORY_SHOTS) return current;
-      const shot = createFactoryShot(
-        incoming.request,
-        crypto.randomUUID(),
-        current.shots.length,
-      );
-      if (current.status === 'running') shot.status = 'queued';
+      const entries = incoming.shots ?? [{ request: incoming.request }];
+      const available = MAX_FACTORY_SHOTS - current.shots.length;
+      const shots = entries.slice(0, available).map((entry, offset) => {
+        const shot = createFactoryShot(
+          entry.request,
+          crypto.randomUUID(),
+          current.shots.length + offset,
+          entry.title,
+          entry.pinned,
+        );
+        if (current.status === 'running') shot.status = 'queued';
+        return shot;
+      });
+      const sourceRequest = entries[0]?.request;
       return {
         ...current,
         bible: hasFactoryBible(current.bible)
           ? current.bible
-          : incoming.bible || bibleFromRequest(incoming.request),
+          : incoming.bible ||
+            (sourceRequest ? bibleFromRequest(sourceRequest) : current.bible),
         status: current.status === 'completed' ? 'paused' : current.status,
-        shots: [...current.shots, shot],
+        shots: [...current.shots, ...shots],
       };
     });
     onIncomingConsumed();

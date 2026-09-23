@@ -330,6 +330,7 @@ export function TimelineControls({
   value,
   onChange,
   request,
+  previewRequests,
   onDuration,
   factoryMusic,
 }: {
@@ -338,6 +339,8 @@ export function TimelineControls({
   value: TimelineDraft;
   onChange: Dispatch<SetStateAction<TimelineDraft>>;
   request: Record<string, unknown>;
+  /** Full songs are validated as their factory-sized shots instead of one >180 second request. */
+  previewRequests?: { request: Record<string, unknown>; startSeconds: number }[];
   onDuration: (seconds: number) => void;
   /** Music selected in stage 00. Stage 01 must edit and analyse that same source. */
   factoryMusic?: FactoryMusic;
@@ -367,7 +370,9 @@ export function TimelineControls({
   const factoryAudioMode = factoryMusic?.audio_mode;
   const factoryLrc = factoryMusic?.lrc;
   const factoryLrcTimebase = factoryMusic?.lrc_timebase;
-  const fingerprint = JSON.stringify(request);
+  const fingerprint = JSON.stringify(
+    previewRequests?.length ? { request, previewRequests } : request,
+  );
   const lrcRows = parseLrcRows(value.lrc);
   useEffect(() => {
     const abort = new AbortController();
@@ -605,23 +610,27 @@ export function TimelineControls({
     setPending(true);
     setError('');
     try {
-      const result = await serviceFetch('/api/v1/validate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: fingerprint,
-      });
-      const data = (await result.json()) as {
-        error?: string;
-        resolved_parameters: { segments?: Shot[]; prompt: string };
-        configured_duration_seconds: number;
-        effective_prompt?: string;
-        warnings?: string[];
-      };
-      if (!result.ok) throw new Error(data.error || text.error);
-      const resolved = data.resolved_parameters;
-      setPlan({
-        fingerprint,
-        shots: resolved.segments || [
+      const sources = previewRequests?.length
+        ? previewRequests
+        : [{ request, startSeconds: 0 }];
+      const shots: Shot[] = [];
+      const warnings: string[] = [];
+      for (const source of sources) {
+        const result = await serviceFetch('/api/v1/validate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(source.request),
+        });
+        const data = (await result.json()) as {
+          error?: string;
+          resolved_parameters: { segments?: Shot[]; prompt: string };
+          configured_duration_seconds: number;
+          effective_prompt?: string;
+          warnings?: string[];
+        };
+        if (!result.ok) throw new Error(data.error || text.error);
+        const resolved = data.resolved_parameters;
+        const resolvedShots = resolved.segments || [
           {
             index: 1,
             start_seconds: 0,
@@ -630,8 +639,20 @@ export function TimelineControls({
             action: '',
             prompt: data.effective_prompt || resolved.prompt,
           },
-        ],
-        warnings: data.warnings || [],
+        ];
+        for (const shot of resolvedShots) {
+          shots.push({
+            ...shot,
+            index: shots.length + 1,
+            start_seconds: source.startSeconds + shot.start_seconds,
+          });
+        }
+        warnings.push(...(data.warnings || []));
+      }
+      setPlan({
+        fingerprint,
+        shots,
+        warnings: [...new Set(warnings)],
       });
     } catch (issue) {
       setError(issue instanceof Error ? issue.message : text.error);

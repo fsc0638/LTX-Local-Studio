@@ -87,6 +87,7 @@ import {
   type BreakdownShot,
 } from '@/lib/breakdown';
 import { parseLrcRows } from '@/lib/lrc-editor';
+import { breakdownFactoryEntries } from '@/lib/breakdown-factory';
 import { StatusBoard, progressOf } from '@/components/status-board';
 import type { FactoryPlan } from '@/lib/production-factory';
 import { STAGE_KEYS, UNAVAILABLE_STAGES, type StageKey } from '@/lib/stages';
@@ -1136,6 +1137,9 @@ function Studio() {
         }
       : {}),
   };
+  const breakdownEntries = breakdown
+    ? breakdownFactoryEntries(generationRequest, breakdown.shots)
+    : [];
   const command = `POST /api/v1/jobs\n${JSON.stringify(generationRequest, null, 2)}`;
 
   useEffect(() => {
@@ -1612,6 +1616,10 @@ function Studio() {
               value={timeline}
               onChange={setTimeline}
               request={generationRequest}
+              previewRequests={breakdownEntries.map((entry) => ({
+                request: entry.request,
+                startSeconds: entry.startSeconds,
+              }))}
               onDuration={(value) => setSeconds(String(value))}
               factoryMusic={plan?.bible.music}
             />
@@ -2342,11 +2350,23 @@ function Studio() {
                         (mode === 'i2v' && !reference)
                       }
                       onClick={() => {
-                        setFactoryIncoming({
-                          token: crypto.randomUUID(),
-                          request: generationRequest,
-                          bible: bibleFromRequest(generationRequest),
-                        });
+                        setFactoryIncoming(
+                          breakdownEntries.length
+                            ? {
+                                token: crypto.randomUUID(),
+                                shots: breakdownEntries.map((entry) => ({
+                                  request: entry.request,
+                                  title: entry.title,
+                                  pinned: entry.pinned,
+                                })),
+                                bible: bibleFromRequest(generationRequest),
+                              }
+                            : {
+                                token: crypto.randomUUID(),
+                                request: generationRequest,
+                                bible: bibleFromRequest(generationRequest),
+                              },
+                        );
                         setTab('shoot');
                       }}
                       className="h-12 w-full rounded-none text-[11px] font-bold tracking-[0.12em]"
