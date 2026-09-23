@@ -77,6 +77,7 @@ class DirectorDraftTests(test_factory_api.FactoryAPITests):
                          ["shot-0", "shot-1"])
         self.assertEqual(result["usage"], {"total_tokens": 2400, "calls": 1})
         outbound = json.loads(sent.call_args[0][0].data.decode())
+        self.assertEqual(outbound["model"], "gpt-5.6-terra")
         self.assertEqual(outbound["text"]["format"]["schema"], backend.DIRECTOR_SCHEMA)
         self.assertIn("[00:01.00]飛向夜空", outbound["input"])
         self.assertIn("breathing", outbound["input"])
