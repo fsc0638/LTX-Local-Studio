@@ -131,6 +131,13 @@ type OutputItem = {
   download?: string;
 };
 
+type DirectorRun = {
+  id: string;
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  analysis?: DirectorAnalysis;
+  code?: string;
+};
+
 const outputItems: OutputItem[] = [];
 const emptyOutput: OutputItem = {
   id: 'empty',
@@ -933,6 +940,41 @@ function Studio() {
     }
   };
 
+  const pollDirectorAnalysis = async (
+    projectId: string,
+    runId: string,
+    signal?: AbortSignal,
+  ) => {
+    const deadline = Date.now() + 7 * 60 * 1000;
+    while (!signal?.aborted && Date.now() < deadline) {
+      const response = await serviceFetch(
+        `/api/v1/factory/projects/${projectId}/director-draft`,
+        signal ? { signal } : {},
+      );
+      if (!response.ok) throw new Error('director poll failed');
+      const result = (await response.json()) as { run?: DirectorRun | null };
+      const run = result.run;
+      if (!run || run.id !== runId) throw new Error('director run changed');
+      if (run.status === 'completed' && run.analysis) {
+        setDirectorAnalysis(run.analysis);
+        setDirectorNotice('none');
+        return;
+      }
+      if (run.status === 'failed') {
+        setDirectorNotice(
+          run.code === 'draft_budget_spent'
+            ? 'budget'
+            : run.code === 'draft_unavailable' || run.code === 'director_interrupted'
+              ? 'unavailable'
+              : 'failed',
+        );
+        return;
+      }
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 2000));
+    }
+    if (!signal?.aborted) setDirectorNotice('unavailable');
+  };
+
   const runDirectorAnalysis = async () => {
     if (!plan?.id || directorBusy) return;
     const source = breakdown ?? (await runBreakdown());
@@ -965,10 +1007,10 @@ function Studio() {
         },
       );
       const result = (await response.json()) as {
-        analysis?: DirectorAnalysis;
+        run?: DirectorRun;
         code?: string;
       };
-      if (!response.ok || !result.analysis) {
+      if (!response.ok || !result.run) {
         setDirectorNotice(
           response.status === 429
             ? 'budget'
@@ -978,13 +1020,44 @@ function Studio() {
         );
         return;
       }
-      setDirectorAnalysis(result.analysis);
+      await pollDirectorAnalysis(plan.id, result.run.id);
     } catch {
       setDirectorNotice('failed');
     } finally {
       setDirectorBusy(false);
     }
   };
+
+  useEffect(() => {
+    if (!plan?.id) return;
+    const abort = new AbortController();
+    void (async () => {
+      try {
+        const response = await serviceFetch(
+          `/api/v1/factory/projects/${plan.id}/director-draft`,
+          { signal: abort.signal },
+        );
+        if (!response.ok || abort.signal.aborted) return;
+        const result = (await response.json()) as { run?: DirectorRun | null };
+        if (!result.run) return;
+        if (result.run.status === 'completed' && result.run.analysis) {
+          setDirectorAnalysis(result.run.analysis);
+          return;
+        }
+        if (result.run.status === 'queued' || result.run.status === 'running') {
+          setDirectorBusy(true);
+          await pollDirectorAnalysis(plan.id, result.run.id, abort.signal);
+        }
+      } catch {
+        if (!abort.signal.aborted) setDirectorNotice('failed');
+      } finally {
+        if (!abort.signal.aborted) setDirectorBusy(false);
+      }
+    })();
+    return () => abort.abort();
+    // A project change is the only event that should resume its durable analysis.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan?.id]);
   const [factoryIncoming, setFactoryIncoming] =
     useState<FactoryIncoming | null>(null);
   const [referenceUploading, setReferenceUploading] = useState(false);

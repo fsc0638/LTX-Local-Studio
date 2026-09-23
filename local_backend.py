@@ -973,6 +973,12 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
             view = budget_view(match.group(1), owner)
             self.send_json(200, view) if view is not None else self.send_json(404, {"error": "Project not found", "code": "project_not_found"})
             return True
+        match = re.fullmatch(r"/api/v1/factory/projects/([0-9a-fA-F-]{36})/director-draft", path)
+        if match:
+            run = FACTORY.director_run(match.group(1), owner)
+            self.send_json(200, {"run": run or None}) if run is not None else self.send_json(
+                404, {"error": "Project not found", "code": "project_not_found"})
+            return True
         match = re.fullmatch(r"/api/v1/factory/projects/([0-9a-fA-F-]{36})/post", path)
         if match:
             grouped = FACTORY.project_takes(match.group(1), owner)
@@ -1630,7 +1636,7 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
         self.send_json(200, {**draft, "usage": usage, "limit_tokens": DRAFT_TOKEN_LIMIT})
 
     def factory_director_draft(self, project_id, owner):
-        """Analyse the whole song and return reviewable advice for every breakdown shot."""
+        """Start a durable whole-song analysis without holding the HTTP connection open."""
         key = openai_key()
         if key is None:
             self.send_json(503, {"error": "Drafting is not configured on this host",
@@ -1653,17 +1659,21 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
             self.send_json(400, {"error": "Director analysis request is invalid",
                                  "code": "director_invalid"})
             return
-        try:
-            analysis, tokens = openai_director_analysis(key, context, shots, audio, locale)
-        except (ValueError, TypeError, json.JSONDecodeError):
-            self.send_json(502, {"error": "Director analysis response is invalid",
-                                 "code": "director_unreadable"})
+        now = time.time()
+        requested = {"id": str(uuid.uuid4()), "status": "running", "created_at": now,
+                     "updated_at": now}
+        store = FACTORY
+        run, started = store.start_director_run(
+            project_id, owner, requested, DRAFT_TIMEOUT + 60)
+        if run is None:
+            self.send_json(404, {"error": "Project not found", "code": "project_not_found"})
             return
-        except (OSError, urllib.error.URLError):
-            self.send_json(503, {"error": "OpenAI is unavailable", "code": "draft_unavailable"})
-            return
-        usage = FACTORY.add_draft_usage(project_id, tokens)
-        self.send_json(200, {"analysis": analysis, "usage": usage,
+        if started:
+            threading.Thread(
+                target=director_analysis_job,
+                args=(store, project_id, requested["id"], now, key, context, shots, audio, locale),
+                name=f"director-{requested['id'][:8]}", daemon=True).start()
+        self.send_json(202, {"run": run, "reused": not started,
                              "limit_tokens": DRAFT_TOKEN_LIMIT})
 
     def log_message(self, format: str, *args: Any) -> None:
@@ -2004,6 +2014,32 @@ def openai_director_analysis(key, context, shots, audio, locale):
             row[field] = row[field][:DIRECTOR_PROMPT_MAX if field == "prompt" else 1000]
     tokens = int((payload.get("usage") or {}).get("total_tokens") or 0)
     return analysis, tokens
+
+
+def director_analysis_job(store, project_id, run_id, created_at, key, context, shots, audio, locale):
+    """Run beyond the tunnel request lifetime and persist the terminal state."""
+    try:
+        analysis, tokens = openai_director_analysis(key, context, shots, audio, locale)
+        now = time.time()
+        store.complete_director_run(project_id, run_id, {
+            "id": run_id, "status": "completed", "analysis": analysis,
+            "created_at": created_at,
+            "updated_at": now, "finished_at": now,
+        }, tokens)
+    except (ValueError, TypeError, json.JSONDecodeError):
+        now = time.time()
+        store.update_director_run(project_id, run_id, {
+            "id": run_id, "status": "failed", "code": "director_unreadable",
+            "created_at": created_at, "updated_at": now,
+            "finished_at": now,
+        })
+    except (OSError, urllib.error.URLError):
+        now = time.time()
+        store.update_director_run(project_id, run_id, {
+            "id": run_id, "status": "failed", "code": "draft_unavailable",
+            "created_at": created_at, "updated_at": now,
+            "finished_at": now,
+        })
 
 
 def judge_service(payload, timeout=JUDGE_TIMEOUT):

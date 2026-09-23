@@ -1,6 +1,8 @@
 """Whole-song AI director analysis. OpenAI is mocked; no project material leaves the test."""
 import io
 import json
+import threading
+import time
 from unittest.mock import patch
 
 import local_backend as backend
@@ -71,12 +73,29 @@ class DirectorDraftTests(test_factory_api.FactoryAPITests):
         return self.call("POST", f"/api/v1/factory/projects/{project_id}/director-draft",
                          payload or self.director_payload())
 
+    def director_run(self, project_id):
+        status, _, body = self.call(
+            "GET", f"/api/v1/factory/projects/{project_id}/director-draft")
+        self.assertEqual(status, 200, body)
+        return json.loads(body)["run"]
+
+    def wait_for_director(self, project_id):
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            run = self.director_run(project_id)
+            if run["status"] in {"completed", "failed"}:
+                return run
+            time.sleep(0.01)
+        self.fail("director analysis did not settle")
+
     def test_whole_song_and_every_shot_are_returned_without_auto_applying(self):
         plan = self.project()
         with patch("urllib.request.urlopen", return_value=openai_response()) as sent:
             status, _, body = self.draft(plan["id"])
-        self.assertEqual(status, 200, body)
-        result = json.loads(body)
+            self.assertEqual(status, 202, body)
+            accepted = json.loads(body)
+            self.assertEqual(accepted["run"]["status"], "running")
+            result = self.wait_for_director(plan["id"])
         self.assertEqual(result["analysis"]["song"]["genre"], "Dream pop")
         self.assertEqual([row["shot_id"] for row in result["analysis"]["shots"]],
                          ["shot-0", "shot-1"])
@@ -107,10 +126,34 @@ class DirectorDraftTests(test_factory_api.FactoryAPITests):
         plan = self.project()
         with patch("urllib.request.urlopen", return_value=openai_response(("shot-1", "shot-0"))):
             status, _, body = self.draft(plan["id"])
-        self.assertEqual(status, 502, body)
-        self.assertEqual(json.loads(body)["code"], "director_unreadable")
+            self.assertEqual(status, 202, body)
+            result = self.wait_for_director(plan["id"])
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["code"], "director_unreadable")
         stored = self.factory.director_context(plan["id"], "@service")
         self.assertEqual(stored["usage"], {})
+
+    def test_an_active_analysis_is_reused_instead_of_charged_twice(self):
+        plan = self.project()
+        entered = threading.Event()
+        release = threading.Event()
+
+        def delayed(*_args, **_kwargs):
+            entered.set()
+            release.wait(1)
+            return openai_response()
+
+        with patch("urllib.request.urlopen", side_effect=delayed) as sent:
+            first = json.loads(self.draft(plan["id"])[2])
+            self.assertTrue(entered.wait(1))
+            second = json.loads(self.draft(plan["id"])[2])
+            self.assertEqual(second["run"]["id"], first["run"]["id"])
+            self.assertTrue(second["reused"])
+            release.set()
+            result = self.wait_for_director(plan["id"])
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(sent.call_count, 1)
+        self.assertEqual(result["usage"], {"total_tokens": 2400, "calls": 1})
 
     def test_project_ownership_and_configuration_are_enforced(self):
         missing = "11111111-1111-4111-8111-111111111111"

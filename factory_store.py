@@ -444,6 +444,61 @@ class FactoryStore:
         return {"project_id": row["id"], "project_title": row["title"],
                 "bible": row["bible"] or {}, "usage": row["draft_usage"] or {}}
 
+    def director_run(self, project_id, owner_id):
+        """Return the durable whole-song analysis run, scoped to its project owner."""
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT director_run FROM projects WHERE id=%s AND owner_id=%s",
+                (_identifier(project_id, "project id"), owner_id)).fetchone()
+        return None if row is None else (row["director_run"] or {})
+
+    def start_director_run(self, project_id, owner_id, run, stale_after):
+        """Start once, or replay the active run when a tab double-submits.
+
+        The project row is locked so two simultaneous requests cannot both spend model tokens.
+        A run left active by a dead API process may be replaced after its model deadline.
+        """
+        now = time.time()
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT director_run FROM projects WHERE id=%s AND owner_id=%s FOR UPDATE",
+                (_identifier(project_id, "project id"), owner_id)).fetchone()
+            if row is None:
+                return None, False
+            current = row["director_run"] or {}
+            updated = float(current.get("updated_at") or current.get("created_at") or 0)
+            if current.get("status") in {"queued", "running"} and now - updated < stale_after:
+                return current, False
+            db.execute("UPDATE projects SET director_run=%s,updated_at=%s WHERE id=%s",
+                       (Jsonb(run), now, project_id))
+        return run, True
+
+    def update_director_run(self, project_id, run_id, state):
+        """Replace one run only while its id is still current."""
+        with self.connect() as db:
+            row = db.execute(
+                "UPDATE projects SET director_run=%s,updated_at=%s "
+                "WHERE id=%s AND director_run->>'id'=%s RETURNING director_run",
+                (Jsonb(state), time.time(), project_id, run_id)).fetchone()
+        return (row or {}).get("director_run")
+
+    def complete_director_run(self, project_id, run_id, state, tokens):
+        """Persist the paid result and token charge atomically."""
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT draft_usage FROM projects WHERE id=%s AND director_run->>'id'=%s FOR UPDATE",
+                (project_id, run_id)).fetchone()
+            if row is None:
+                return None
+            current = row["draft_usage"] or {}
+            usage = {"total_tokens": int(current.get("total_tokens") or 0) + int(tokens),
+                     "calls": int(current.get("calls") or 0) + 1}
+            completed = {**state, "usage": usage}
+            db.execute(
+                "UPDATE projects SET director_run=%s,draft_usage=%s,updated_at=%s WHERE id=%s",
+                (Jsonb(completed), Jsonb(usage), time.time(), project_id))
+        return completed
+
     def draft_context_usage(self, project_id):
         with self.connect() as db:
             row = db.execute("SELECT draft_usage FROM projects WHERE id=%s", (project_id,)).fetchone()
@@ -910,11 +965,21 @@ class FactoryStore:
                 (owner_id, list(ACTIVE_SHOT_STATES))).fetchone()["total"]
 
     def recover(self):
-        """After a restart, no shot can still be mid-flight in this process. Anything left in a
-        transient state is put back in the queue so the scheduler picks it up; the idempotency key
-        is unchanged, so a job that did reach the worker is replayed, not duplicated."""
+        """Recover process-owned work after an API restart.
+
+        Shots return to their durable queue with the same idempotency key. A director analysis
+        thread cannot be resumed, so its stored state becomes an explicit retryable failure.
+        """
         with self.connect() as db:
-            return db.execute(
+            requeued = db.execute(
                 "UPDATE shots SET status='queued',updated_at=%s "
                 "WHERE status IN ('validating','submitting','running')",
                 (time.time(),)).rowcount
+            # A background director thread cannot survive an API restart. Preserve the run id and
+            # make the interruption explicit so the next click can safely start a new run.
+            db.execute(
+                "UPDATE projects SET director_run = director_run || %s "
+                "WHERE director_run->>'status' IN ('queued','running')",
+                (Jsonb({"status": "failed", "code": "director_interrupted",
+                        "finished_at": time.time(), "updated_at": time.time()}),))
+            return requeued
