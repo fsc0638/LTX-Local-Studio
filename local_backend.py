@@ -12,6 +12,7 @@ import signal
 import shutil
 import datetime
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -100,6 +101,7 @@ KEYFRAME_BUSY_RETRIES = int(os.environ.get("LTX_KEYFRAME_BUSY_RETRIES", "240"))
 KEYFRAME_BUSY_SLEEP = float(os.environ.get("LTX_KEYFRAME_BUSY_SLEEP", "5"))
 KEYFRAME_WAIT_SECONDS = float(os.environ.get("LTX_KEYFRAME_WAIT_SECONDS", "1800"))
 KEYFRAME_RUNS: dict[str, threading.Thread] = {}
+RELAY_RUNS: dict[str, threading.Thread] = {}
 # Alignment against the studio's own LRC sheets sits about 0.9 s ahead of the printed times.
 # Whether that is stable-ts running early or the sheets being written late is unresolved
 # (docs/GB10_SETUP.md), so it is published as a correctable constant rather than folded in.
@@ -2091,6 +2093,26 @@ def judge_inputs(bible):
     return references, anchor
 
 
+def judge_take(shot_id, output_url):
+    """Return the judge payload for one finished take without mutating factory state."""
+    scores = {"status": "unscored", "reason": "judge_unavailable"}
+    try:
+        context = FACTORY.judge_context(shot_id)
+        filename = str(output_url or "").rsplit("/", 1)[-1]
+        media = output_location(filename) if filename else None
+        if context is None or not media or not media.is_file():
+            return {"status": "unscored", "reason": "output_missing"}
+        references, anchor = judge_inputs(context["bible"])
+        payload = {"media_path": str(media), "references": references}
+        if anchor:
+            payload["style_anchor_path"] = anchor
+        return judge_service(payload)
+    except (OSError, urllib.error.URLError):
+        return scores
+    except (ValueError, TypeError, KeyError) as exc:
+        return {"status": "unscored", "reason": str(exc)[:200]}
+
+
 def score_take(shot_id, job_id, output_url):
     """Score a finished take on its own thread and write the numbers to it.
 
@@ -2098,23 +2120,7 @@ def score_take(shot_id, job_id, output_url):
     "unscored" and the run carries on. The judge is an opinion about the work, not a gate on it -
     a failed opinion must not turn a finished video into a failure.
     """
-    scores = {"status": "unscored", "reason": "judge_unavailable"}
-    try:
-        context = FACTORY.judge_context(shot_id)
-        filename = str(output_url or "").rsplit("/", 1)[-1]
-        media = output_location(filename) if filename else None
-        if context is None or not media or not media.is_file():
-            scores = {"status": "unscored", "reason": "output_missing"}
-        else:
-            references, anchor = judge_inputs(context["bible"])
-            payload = {"media_path": str(media), "references": references}
-            if anchor:
-                payload["style_anchor_path"] = anchor
-            scores = judge_service(payload)
-    except (OSError, urllib.error.URLError):
-        scores = {"status": "unscored", "reason": "judge_unavailable"}
-    except (ValueError, TypeError, KeyError) as exc:
-        scores = {"status": "unscored", "reason": str(exc)[:200]}
+    scores = judge_take(shot_id, output_url)
     try:
         FACTORY.record_scores(shot_id, job_id, scores)
     except Exception as exc:  # noqa: BLE001 - a lost score must not kill the thread pool
@@ -2165,6 +2171,67 @@ def promote_keyframe_asset(png_path, name, owner_id):
     return asset_id
 
 
+def identity_board(project, owner):
+    """Return one image containing every canonical view and the style anchor.
+
+    Qwen accepts only a small reference set. The board makes all views a single identity source,
+    leaving one slot for the target angle and one for the preceding shot's final frame.
+    """
+    from PIL import Image, ImageOps
+
+    bible = project.get("bible") or {}
+    continuity = bible.get("continuity") or {}
+    ids = [str(ref.get("image_id")) for ref in ((bible.get("character") or {}).get("references") or [])
+           if ref.get("image_id")]
+    anchor = bible.get("style_anchor")
+    if anchor and anchor not in ids:
+        ids.append(str(anchor))
+    if not ids:
+        raise ValueError("continuity_relay_requires_character_references")
+    cached = continuity.get("identity_board_id")
+    if cached and continuity.get("identity_sources") == ids:
+        try:
+            asset_path(asset_by_id(str(cached)))
+            return str(cached)
+        except (ValueError, TypeError, OSError):
+            pass
+    images = []
+    for asset_id in ids:
+        with Image.open(asset_path(asset_by_id(asset_id))) as source:
+            images.append(ImageOps.exif_transpose(source).convert("RGB"))
+    cell = 512
+    columns = min(3, len(images))
+    rows = math.ceil(len(images) / columns)
+    board = Image.new("RGB", (columns * cell, rows * cell), (245, 245, 242))
+    for index, source in enumerate(images):
+        fitted = ImageOps.contain(source, (cell, cell), Image.Resampling.LANCZOS)
+        x = (index % columns) * cell + (cell - fitted.width) // 2
+        y = (index // columns) * cell + (cell - fitted.height) // 2
+        board.paste(fitted, (x, y))
+    with tempfile.TemporaryDirectory(prefix="ltx-identity-board-") as directory:
+        output = Path(directory) / "identity-board.png"
+        board.save(output, "PNG", optimize=True)
+        asset_id = promote_keyframe_asset(output, f"{project.get('title', 'Project')} · character identity board", owner)
+    FACTORY.set_identity_board(project["id"], asset_id, ids)
+    return asset_id
+
+
+def relay_frame_asset(output_url, owner, title):
+    """Extract and promote the final decodable frame of the preceding successful take."""
+    filename = str(output_url or "").rsplit("/", 1)[-1]
+    media = output_location(filename) if filename else None
+    if not media or not media.is_file():
+        raise ValueError("continuity_relay_previous_output_missing")
+    with tempfile.TemporaryDirectory(prefix="ltx-relay-frame-") as directory:
+        output = Path(directory) / "last-frame.png"
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-sseof", "-0.2", "-i", str(media),
+             "-frames:v", "1", "-y", str(output)], capture_output=True, text=True, timeout=120, check=False)
+        if result.returncode != 0 or not output.is_file():
+            raise ValueError("continuity_relay_last_frame_failed")
+        return promote_keyframe_asset(output, f"{title} · relay final frame", owner)
+
+
 def keyframe_wait(job_id, timeout):
     """Block until a job settles, or the batch is stopped. Returns the job or None."""
     deadline = time.monotonic() + timeout
@@ -2176,7 +2243,7 @@ def keyframe_wait(job_id, timeout):
     return None
 
 
-def keyframe_generate(project, shot, owner, keyframe_id, seed, reference, size):
+def keyframe_generate(project, shot, owner, keyframe_id, seed, reference, size, extra_references=None):
     """One keyframe through the ordinary admission path, then the judge. Returns (light, scores)."""
     from user_auth import digest
     bible = project.get("bible") or {}
@@ -2185,9 +2252,13 @@ def keyframe_generate(project, shot, owner, keyframe_id, seed, reference, size):
     prompt = character_consistency.apply_style_prompt(
         prompt, bible.get("visual_style"), preserve_reference=True)
     parameters = {"seed": int(seed), "size": size, "steps": KEYFRAME_STEPS}
-    style_anchor = bible.get("style_anchor")
-    if style_anchor and style_anchor != reference:
-        parameters["reference_2"] = style_anchor
+    extras = [item for item in (extra_references or []) if item and item != reference]
+    if not extras:
+        style_anchor = bible.get("style_anchor")
+        if style_anchor and style_anchor != reference:
+            extras.append(style_anchor)
+    for index, asset_id in enumerate(extras[:2], start=2):
+        parameters[f"reference_{index}"] = asset_id
     raw = {"model": KEYFRAME_MODEL, "mode": "edit", "image_id": reference,
            "prompt": prompt,
            "parameters": parameters,
@@ -2286,6 +2357,80 @@ def keyframe_batch(project_id, owner):
     state["finished_at"] = time.time()
     FACTORY.set_keyframe_run(project_id, state)
     KEYFRAME_RUNS.pop(str(project_id), None)
+
+
+def relay_prepare(project_id, shot_id, owner):
+    """Build and approve the next shot's continuity keyframe on a background thread."""
+    keyframe_id = None
+    try:
+        project, shots = FACTORY.project_for_keyframes(project_id)
+        shot = next((row for row in shots if str(row["id"]) == str(shot_id)), None)
+        if not project or not shot:
+            raise ValueError("continuity_relay_shot_missing")
+        bible = project.get("bible") or {}
+        if not bible.get("style_anchor"):
+            raise ValueError("continuity_relay_requires_style_anchor")
+        character = bible.get("character") or {}
+        request = shot.get("request") or {}
+        reference = character_consistency.select_reference(
+            character or None, request.get("directing") or {}, request.get("image_id"))
+        if not reference and character.get("references"):
+            reference = character["references"][0].get("image_id")
+        if not reference:
+            raise ValueError("continuity_relay_requires_character_references")
+        board_id = identity_board(project, owner)
+        previous = FACTORY.previous_succeeded_take(shot_id)
+        relay_id = relay_frame_asset(previous["output_url"], owner, shot.get("title") or "Shot") if previous else None
+        generation_shot = dict(shot)
+        generation_shot["request"] = dict(request)
+        relay_instruction = (
+            "Preserve the exact same character identity, facial proportions, hairstyle, outfit, "
+              "line art, rendering medium and colour palette shown across the identity board. "
+            + ("Continue naturally from the previous shot's final frame without a visual reset. " if relay_id else "")
+            + "Use the target-angle reference only for pose and camera orientation; do not redesign the character."
+        )
+        generation_shot["request"]["prompt"] = (
+            relay_instruction + " " + str(request.get("prompt") or "")
+        )[:factory_store.MAX_PROMPT]
+        seed = int(request.get("seed") or 42)
+        keyframe_id = FACTORY.insert_keyframe(shot_id, seed=seed, attempt=1, reference_id=reference)
+        light, _ = keyframe_generate(project, generation_shot, owner, keyframe_id, seed, reference,
+                                     keyframe_size(bible), [board_id, relay_id])
+        context = FACTORY.keyframe_context(keyframe_id, owner)
+        if light != "green" or not context or not context.get("output_url"):
+            FACTORY.update_keyframe(keyframe_id, reason=f"continuity_gate_{light or 'unscored'}")
+            FACTORY.record_take(shot_id, status="failed",
+                                reason=f"continuity_keyframe_gate_{light or 'unscored'}",
+                                pause_project=True)
+            return
+        output = output_location(str(context["output_url"]).rsplit("/", 1)[-1])
+        asset_id = promote_keyframe_asset(output, f"{shot.get('title', 'Shot')} · continuity start", owner)
+        FACTORY.approve_keyframe(keyframe_id, owner, asset_id, {
+            "version": 1, "identity_board_id": board_id,
+            **({"previous_frame_id": relay_id} if relay_id else {}),
+        })
+        FACTORY.set_shot_status(shot_id, "queued")
+    except Exception as exc:  # noqa: BLE001 - every failure must stop this paid sequential line
+        if keyframe_id:
+            try:
+                FACTORY.update_keyframe(keyframe_id, verdict="failed", reason=str(exc)[:300])
+            except Exception:
+                pass
+        FACTORY.record_take(shot_id, status="failed", reason=str(exc)[:300], pause_project=True)
+    finally:
+        RELAY_RUNS.pop(str(shot_id), None)
+
+
+def start_relay_prepare(project, shot):
+    shot_id = str(shot["id"])
+    if shot_id in RELAY_RUNS:
+        return
+    FACTORY.set_shot_status(shot_id, "validating")
+    thread = threading.Thread(target=relay_prepare,
+                              args=(str(project["id"]), shot_id, project["owner_id"]),
+                              name=f"relay-{shot_id[:8]}", daemon=True)
+    RELAY_RUNS[shot_id] = thread
+    thread.start()
 
 
 def post_service_status():
@@ -2527,6 +2672,24 @@ def record_succeeded_take(shot_id, job):
                      name=f"judge-{str(job.get('id'))[:8]}", daemon=True).start()
 
 
+def record_relay_take(project, shot, job):
+    """A relay take is final only after every strict judge signal is green."""
+    FACTORY.record_take(shot["id"], job_id=job.get("id"), status="validating",
+                        output_url=job.get("output_url"), poster_url=job.get("poster_url"))
+    scores = judge_take(shot["id"], job.get("output_url"))
+    FACTORY.record_scores(shot["id"], job.get("id"), scores)
+    thresholds = review_rules.resolve_thresholds(
+        project.get("bible") or {}, shot.get("request") or {}, strict=True)
+    lights = review_rules.lights(scores, thresholds)
+    if lights and all(light == "green" for light in lights.values()):
+        FACTORY.set_shot_status(shot["id"], "succeeded")
+        return True
+    failed = ",".join(key for key, light in lights.items() if light != "green") or "unscored"
+    FACTORY.set_shot_status(shot["id"], "failed",
+                            reason=f"continuity_take_gate:{failed}", pause_project=True)
+    return False
+
+
 def audio_analysis(asset, lyrics, language):
     """Beats always; word timings when lyrics are supplied. Cached per file and per lyric sheet.
 
@@ -2562,7 +2725,7 @@ def audio_analysis(asset, lyrics, language):
     return {**result, "cached": False}
 
 
-def factory_replayed(shot, job):
+def factory_replayed(project, shot, job):
     """Decide what a replayed job means for the shot, or None to carry on submitting.
 
     An idempotency key that already produced a finished job replays that job forever. Treating
@@ -2576,7 +2739,10 @@ def factory_replayed(shot, job):
         return True
     if status == "succeeded":
         # The work is already done; no GPU time is owed.
-        record_succeeded_take(shot["id"], job)
+        if ((project.get("bible") or {}).get("continuity") or {}).get("mode") == "relay":
+            record_relay_take(project, shot, job)
+        else:
+            record_succeeded_take(shot["id"], job)
         return True
     if status == "interrupted":
         # A restart is not the shot's fault. Open a new take: the old key can only ever replay
@@ -2594,6 +2760,10 @@ def factory_replayed(shot, job):
 
 def factory_send(project, shot):
     """Hand one shot to the existing admission path. Returns True when the line may continue."""
+    continuity = ((project.get("bible") or {}).get("continuity") or {})
+    if continuity.get("mode") == "relay" and not (shot.get("request") or {}).get("continuity_relay"):
+        start_relay_prepare(project, shot)
+        return True
     FACTORY.set_shot_status(shot["id"], "validating")
     try:
         raw = dict(shot["request"])
@@ -2610,7 +2780,7 @@ def factory_send(project, shot):
         # These are factory bookkeeping (the UI reads keyframe_id as "from a keyframe" and the
         # drafting UI may show primary_action). The worker contract refuses unknown fields, so
         # neither travels. The picture itself is image_id; the action is already in the prompt.
-        for metadata_field in ("keyframe_id", "primary_action"):
+        for metadata_field in ("keyframe_id", "primary_action", "continuity_relay"):
             raw.pop(metadata_field, None)
         if raw.get("image_id") and not raw.get("mode"):
             raw["mode"] = "i2v"  # an imported shot may name its picture without spelling the mode
@@ -2637,7 +2807,7 @@ def factory_send(project, shot):
         with LOCK:
             replay = replay_job(key, fingerprint)
         if replay and replay[0] == 200:
-            settled = factory_replayed(shot, replay[1])
+            settled = factory_replayed(project, shot, replay[1])
             if settled is not None:
                 return settled
         FACTORY.set_shot_status(shot["id"], "submitting")
@@ -2659,13 +2829,19 @@ def factory_send(project, shot):
     return True
 
 
-def factory_collect(shot_row, take_job_id):
+def factory_collect(shot_row, take_job_id, project=None):
     """Move a shot that was on the GPU to its final state once its job settles."""
+    if project is None:
+        context = FACTORY.judge_context(shot_row["id"])
+        project = {"bible": (context or {}).get("bible") or {}}
     job = JOBS.get(take_job_id) or (STORE.get(take_job_id) if STORE else None)
     if not job or job["status"] in {"queued", "running"}:
         return
     if job["status"] == "succeeded":
-        record_succeeded_take(shot_row["id"], job)
+        if ((project.get("bible") or {}).get("continuity") or {}).get("mode") == "relay":
+            record_relay_take(project, shot_row, job)
+        else:
+            record_succeeded_take(shot_row["id"], job)
         return
     # failed, cancelled or interrupted: the line stops so a person decides what to do.
     reason = (job.get("error") or {}).get("code") or job["status"]
@@ -2766,7 +2942,9 @@ def scheduler_pick(projects=None):
     preferred = holder if holder in queued else max(queued, key=queued.get, default=None)
     candidates, by_project = [], {}
     for project in projects:
-        shot = FACTORY.next_queued_shot_for(project["id"], models_by_station.get(preferred, [])) if preferred else None
+        relay = (((project.get("bible") or {}).get("continuity") or {}).get("mode") == "relay")
+        shot = (None if relay else
+                FACTORY.next_queued_shot_for(project["id"], models_by_station.get(preferred, []))) if preferred else None
         if shot is None:
             shot = FACTORY.next_queued_shot(project["id"])
         if shot is None:
@@ -2797,13 +2975,13 @@ def factory_scheduler():
                     return
                 with FACTORY.connect() as db:
                     inflight = db.execute(
-                        "SELECT s.id, t.job_id FROM shots s JOIN LATERAL "
+                        "SELECT s.id, s.request, t.job_id FROM shots s JOIN LATERAL "
                         "(SELECT job_id FROM takes WHERE shot_id=s.id ORDER BY created_at DESC LIMIT 1) t ON true "
                         "WHERE s.project_id=%s AND s.status='running'", (project["id"],)).fetchall()
                 for row in inflight:
                     if row["job_id"]:
-                        factory_collect(row, row["job_id"])
-                if inflight:
+                        factory_collect(row, row["job_id"], project)
+                if FACTORY.inflight_any() is not None:
                     busy = True
                 if FACTORY.next_queued_shot(project["id"]) is None and not inflight:
                     FACTORY.finish_if_done(project["id"])

@@ -31,6 +31,13 @@ export type FactoryBible = {
   character?: FactoryCharacter;
   visual_style?: string;
   style_anchor?: string;
+  /** Sequential character/style lock. Green gates advance; yellow/red pause the line. */
+  continuity?: {
+    mode: 'relay';
+    gate: 'strict';
+    identity_board_id?: string;
+    identity_sources?: string[];
+  };
   music?: FactoryMusic;
   output: FactoryOutput;
   directing?: Record<string, string>;
@@ -173,6 +180,7 @@ export function normalizeFactoryBible(value: unknown): FactoryBible {
         'character',
         'visual_style',
         'style_anchor',
+        'continuity',
         'music',
         'output',
         'directing',
@@ -238,6 +246,24 @@ export function normalizeFactoryBible(value: unknown): FactoryBible {
         : (() => {
             throw new Error('Bible style_anchor must be an image asset ID');
           })();
+  const continuityRaw = raw.continuity
+    ? record(raw.continuity, 'Bible continuity')
+    : undefined;
+  if (
+    continuityRaw &&
+    (continuityRaw.mode !== 'relay' ||
+      continuityRaw.gate !== 'strict' ||
+      (continuityRaw.identity_board_id !== undefined &&
+        (typeof continuityRaw.identity_board_id !== 'string' ||
+          !/^[a-f0-9]{32}$/.test(continuityRaw.identity_board_id))) ||
+      (continuityRaw.identity_sources !== undefined &&
+        (!Array.isArray(continuityRaw.identity_sources) ||
+          continuityRaw.identity_sources.some(
+            (id) => typeof id !== 'string' || !/^[a-f0-9]{32}$/.test(id),
+          ))))
+  ) {
+    throw new Error('Bible continuity must use relay + strict gate');
+  }
   const musicRaw = raw.music ? record(raw.music, 'Bible music') : undefined;
   if (
     musicRaw &&
@@ -255,6 +281,20 @@ export function normalizeFactoryBible(value: unknown): FactoryBible {
     ...(character ? { character } : {}),
     ...(visualStyle ? { visual_style: visualStyle } : {}),
     ...(styleAnchor ? { style_anchor: styleAnchor } : {}),
+    ...(continuityRaw
+      ? {
+          continuity: {
+            mode: 'relay' as const,
+            gate: 'strict' as const,
+            ...(continuityRaw.identity_board_id
+              ? { identity_board_id: continuityRaw.identity_board_id as string }
+              : {}),
+            ...(continuityRaw.identity_sources
+              ? { identity_sources: continuityRaw.identity_sources as string[] }
+              : {}),
+          },
+        }
+      : {}),
     ...(musicRaw ? { music: musicRaw } : {}),
     output,
     ...(raw.directing
@@ -281,6 +321,7 @@ export function hasFactoryBible(bible: FactoryBible): boolean {
     bible.character ||
     bible.visual_style ||
     bible.style_anchor ||
+    bible.continuity ||
     bible.music ||
     bible.directing ||
     Object.keys(bible.output).length,
