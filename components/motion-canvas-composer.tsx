@@ -15,8 +15,11 @@ import {
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import {
+  buildMotionCanvasScene,
   motionCanvasDependencies,
+  motionCanvasMacLauncher,
   motionCanvasViteConfig,
+  parseMotionCanvasTimeline,
 } from '@/lib/motion-canvas-project';
 import { serviceFetch } from '@/lib/service-session';
 import type { Asset } from '@/components/media-library';
@@ -60,7 +63,7 @@ const copy = {
     export: '下載 Motion Canvas 專案',
     exporting: '打包中…',
     exportNote:
-      '下載 ZIP 後執行 npm install、npm start，再在 Editor 按 Render。',
+      'macOS 解壓後雙擊 start-mac.command，即會安裝、啟動並開啟 Editor；確認後按 Render。',
     failed: '操作失敗，請檢查素材與服務。',
     editorLimit: '第一階段採互動式 Editor；背景一鍵 MP4 會在第二階段加入。',
   },
@@ -94,7 +97,7 @@ const copy = {
     export: 'Download Motion Canvas project',
     exporting: 'Packaging…',
     exportNote:
-      'Unzip, run npm install and npm start, then press Render in the Editor.',
+      'On macOS, unzip and double-click start-mac.command to install, start, and open the Editor. Then press Render.',
     failed: 'Operation failed. Check the asset and service.',
     editorLimit:
       'Phase one uses the interactive Editor; background one-click MP4 rendering arrives in phase two.',
@@ -129,7 +132,7 @@ const copy = {
     export: 'Motion Canvas プロジェクトをダウンロード',
     exporting: '作成中…',
     exportNote:
-      '展開後 npm install、npm start を実行し、Editor で Render を押します。',
+      'macOSでは展開後 start-mac.command をダブルクリックすると、インストール・起動・Editor表示まで自動で行います。',
     failed: '操作に失敗しました。素材とサービスを確認してください。',
     editorLimit:
       '第1段階は対話型Editorです。バックグラウンドのワンクリックMP4は第2段階で追加します。',
@@ -277,11 +280,7 @@ export function MotionCanvasComposer({
                 accent: '#b85c3d',
                 paper: '#eadfc9',
               };
-      const paragraphs = script
-        .split(/\n+/)
-        .map((item) => item.trim())
-        .filter(Boolean)
-        .slice(0, 6);
+      const timeline = parseMotionCanvasTimeline(script, duration, headline);
       const manifest = {
         schema: 'ltx-motion-canvas-v1',
         projectName,
@@ -295,6 +294,7 @@ export function MotionCanvasComposer({
         theme,
         captions,
         lipsync,
+        timeline,
         assets: {
           audio: audioAsset?.id || null,
           character: characterAsset?.id || null,
@@ -311,7 +311,10 @@ export function MotionCanvasComposer({
             name: projectName,
             private: true,
             type: 'module',
-            scripts: { start: 'vite --host 127.0.0.1', build: 'vite build' },
+            scripts: {
+              start: 'vite --host 127.0.0.1 --port 9000 --strictPort',
+              build: 'vite build',
+            },
             dependencies: motionCanvasDependencies,
           },
           null,
@@ -344,24 +347,30 @@ export function MotionCanvasComposer({
         'src/project.ts',
         `import {makeProject} from '@motion-canvas/core';\nimport main from './scenes/main?scene';\n${audioImport}export default makeProject({scenes: [main]${audioFile ? ', audio: voice' : ''}});\n`,
       );
-      const characterImport = characterFile
-        ? `import character from '../assets/${characterFile}';\n`
-        : '';
-      const characterNode = characterFile
-        ? `<Img src={character} width={Math.min(${width} * 0.28, 360)} x={-${width} * 0.31} y={${height} * 0.22} />`
-        : '';
       zip.file(
         'src/scenes/main.tsx',
-        `import {Img, Layout, Rect, Txt, makeScene2D} from '@motion-canvas/2d';\nimport {all, createRef, waitFor} from '@motion-canvas/core';\n${characterImport}const paragraphs = ${JSON.stringify(paragraphs.length ? paragraphs : [headline])};\nexport default makeScene2D(function* (view) {\n  view.fill('${palette.bg}');\n  const title = createRef<Txt>();\n  const card = createRef<Rect>();\n  view.add(<Layout width="100%" height="100%">\n    <Txt ref={title} text={${JSON.stringify(headline)}} x={-${width} * 0.24} y={-${height} * 0.36} width={${width} * 0.78} fontFamily="Arial" fontWeight={900} fontSize={${Math.round(width * 0.065)}} fill="${palette.ink}" opacity={0} />\n    <Rect ref={card} x={${width} * 0.13} y={${height} * 0.06} width={${width} * 0.62} minHeight={${height} * 0.36} padding={48} radius={12} fill="${palette.paper}" stroke="${palette.ink}" lineWidth={3} opacity={0}>\n      <Txt text={paragraphs.join('\\n\\n')} width={${width} * 0.52} fontFamily="Arial" fontSize={${Math.round(width * 0.026)}} lineHeight={42} fill="${palette.ink}" />\n    </Rect>\n    ${characterNode}\n  </Layout>);\n  yield* all(title().opacity(1, .45), title().position.x(-${width} * .2, .45));\n  yield* all(card().opacity(1, .4), card().scale(1, .4));\n  yield* waitFor(${Math.max(1, duration - 0.85)});\n});\n`,
+        buildMotionCanvasScene({
+          headline,
+          width,
+          height,
+          duration,
+          palette,
+          cues: timeline,
+          characterFile,
+        }),
       );
       zip.file('project.manifest.json', JSON.stringify(manifest, null, 2));
+      zip.file('start-mac.command', motionCanvasMacLauncher, {
+        unixPermissions: 0o755,
+      });
       zip.file(
         'README.md',
-        `# ${headline}\n\n1. Run \`npm install\`.\n2. Run \`npm start\`.\n3. Open http://localhost:9000.\n4. Review time events and assets, then choose Video (FFmpeg) and press Render.\n\nGenerated by LTX Local Studio. Background one-click rendering is intentionally not part of phase one.\n`,
+        `# ${headline}\n\n## macOS 一鍵啟動\n\n雙擊 \`start-mac.command\`。它會在需要時執行 npm install、啟動 Editor，並開啟 http://127.0.0.1:9000/。若 macOS 阻擋，請按右鍵選「打開」。\n\n## 手動啟動\n\n1. Run \`npm install\`.\n2. Run \`npm start\`.\n3. Open http://127.0.0.1:9000/.\n4. Review the timeline, choose Video (FFmpeg), and press Render.\n\nGenerated by LTX Local Studio.\n`,
       );
       const blob = await zip.generateAsync({
         type: 'blob',
         compression: 'DEFLATE',
+        platform: 'UNIX',
       });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
