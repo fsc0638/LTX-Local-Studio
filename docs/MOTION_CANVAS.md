@@ -15,11 +15,13 @@ The Sandbox workspace collects:
 
 `Download Motion Canvas project` creates a ZIP containing a standalone Motion Canvas 3.17.2
 project, selected private assets, a parsed LRC timeline, animated TypeScript scene, FFmpeg
-exporter config, macOS launcher and setup instructions. On macOS, `start-mac.command` installs
-missing project-local packages, starts the Editor on port 9000 and opens the browser without
-sudo or global installs. The user reviews the project in Motion Canvas Editor and starts the
-render there. Asset bytes are read through the authenticated same-origin media endpoint and are
-only copied into the user-requested download.
+exporter config, macOS launcher and setup instructions. On macOS, the first launch uses
+Control-click/right-click → Open so Gatekeeper can show the explicit override; the README also
+documents Privacy & Security → Open Anyway and `bash ./start-mac.command` as fallbacks. The
+launcher installs missing project-local packages, starts the Editor on port 9000 and opens the
+browser without sudo, global installs or blanket quarantine removal. The user reviews the project
+in Motion Canvas Editor and starts the render there. Asset bytes are read through the authenticated
+same-origin media endpoint and are only copied into the user-requested download.
 
 The generated manifest is `ltx-motion-canvas-v1`. It records tool results and source asset IDs,
 but contains no credentials, host paths or executable input supplied by a model.

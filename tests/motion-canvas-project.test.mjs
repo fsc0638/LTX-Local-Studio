@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  buildMotionCanvasReadme,
   buildMotionCanvasScene,
   motionCanvasDependencies,
   motionCanvasMacLauncher,
@@ -84,4 +85,13 @@ test('macOS launcher installs locally, starts the editor, and opens localhost', 
   assert.match(motionCanvasMacLauncher, /npm start/);
   assert.match(motionCanvasMacLauncher, /open http:\/\/127\.0\.0\.1:9000\//);
   assert.doesNotMatch(motionCanvasMacLauncher, /sudo/);
+  assert.doesNotMatch(motionCanvasMacLauncher, /雙擊/);
+});
+
+test('macOS instructions use Gatekeeper-safe opening steps and keep a Terminal fallback', () => {
+  const readme = buildMotionCanvasReadme('測試');
+  assert.match(readme, /Control 點擊（或右鍵點擊）/);
+  assert.match(readme, /系統設定 → 隱私權與安全性/);
+  assert.match(readme, /bash \.\/start-mac\.command/);
+  assert.doesNotMatch(readme, /xattr\s+-d/);
 });
