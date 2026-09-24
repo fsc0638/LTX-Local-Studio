@@ -1701,12 +1701,28 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
 
 
 def audio_service(endpoint, payload, timeout):
-    """Call the loopback audio service. Raises OSError when it is not answering."""
+    """Call audio analysis while preserving actionable upstream client errors."""
     request = urllib.request.Request(
         f"{AUDIO_SERVICE}{endpoint}", data=json.dumps(payload).encode(),
         headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.load(response)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as exc:
+        try:
+            message = str(json.loads(exc.read(4096)).get("error") or "Audio analysis request failed")
+        except (OSError, ValueError, TypeError):
+            message = "Audio analysis request failed"
+        if 400 <= exc.code < 500:
+            raise ValueError(message[:300]) from exc
+        raise OSError(message[:300]) from exc
+
+
+def audio_language(language):
+    """Map browser locales to the ISO-639 codes accepted by Whisper."""
+    if not isinstance(language, str) or not language.strip():
+        return None
+    return language.strip().lower().replace("_", "-").split("-", 1)[0]
 
 
 def openai_key():
@@ -2712,6 +2728,7 @@ def audio_analysis(asset, lyrics, language):
 
     path = asset_path(asset)
     stat = path.stat()
+    language = audio_language(language)
     fingerprint = digest(f"{asset['id']}:{stat.st_size}:{stat.st_mtime_ns}:"
                          f"{language or ''}:{digest(lyrics) if lyrics else ''}")
     cache_file = AUDIO_CACHE_DIR / f"{fingerprint}.json"

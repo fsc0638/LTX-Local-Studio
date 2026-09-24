@@ -5,10 +5,13 @@ The one test that needs whisper is skipped unless LTX_AUDIO_INTEGRATION=1, becau
 large-v3 costs several seconds and about 6 GB.
 """
 import json
+import io
 import math
 import os
 import struct
 import unittest
+import urllib.error
+import urllib.request
 import wave
 from pathlib import Path
 from unittest.mock import patch
@@ -206,6 +209,20 @@ class AudioEndpointTests(test_backend.BackendTests):
             self.call({"audio_id": asset_id, "lyrics": "two", "language": "ja"})
         # Two beat calls and two align calls: a different sheet is a different question.
         self.assertEqual(service.call_count, 4)
+
+    def test_browser_locale_is_normalized_for_whisper(self):
+        asset_id = self.upload_audio()
+        with patch.object(backend, "audio_service", return_value={"tempo_bpm": 120.0}) as service:
+            status, _, _ = self.call({"audio_id": asset_id, "lyrics": "測試", "language": "zh-TW"})
+        self.assertEqual(status, 200)
+        self.assertEqual(service.call_args_list[1].args[1]["language"], "zh")
+
+    def test_audio_service_preserves_upstream_client_error(self):
+        response = io.BytesIO(json.dumps({"error": "zh-TW is not a valid language code"}).encode())
+        error = urllib.error.HTTPError("http://127.0.0.1:8790/align", 400, "Bad Request", {}, response)
+        with patch.object(urllib.request, "urlopen", side_effect=error):
+            with self.assertRaisesRegex(ValueError, "not a valid language code"):
+                backend.audio_service("/align", {"lyrics": "測試"}, 1)
 
 
 @unittest.skipUnless(os.environ.get("LTX_AUDIO_INTEGRATION") == "1",
