@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import importlib
 import math
 import os
+from pathlib import Path
 import re
 from typing import Callable
 from video_settings import MAX_FRAMES
@@ -35,6 +36,7 @@ class MediaAdapter:
     # The most frames this adapter may produce; 0 means the worker's own limit. Interpolation
     # doubles a take's frame count, so the post adapter sets its own.
     max_frames: int = 0
+    readiness: Callable[[], tuple[bool, str]] | None = None
 
     @property
     def extension(self):
@@ -45,11 +47,16 @@ class MediaAdapter:
         return FORMATS[self.media_type][1]
 
     def describe(self, runtime):
+        ready, reason = self.readiness() if self.readiness else (True, "")
         return {"id": self.id, "label": self.label, "media_type": self.media_type,
                 "modes": list(self.modes), "parameters": self.parameters, "description": self.description,
-                "available": not self.requires_cuda or bool(runtime.get("cuda_available")),
-                "accepts_image": self.accepts_image,
-                "installed": True, "adapter_version": "media-adapter-v1"}
+                "available": ready and (not self.requires_cuda or bool(runtime.get("cuda_available"))),
+                "unavailable_reason": reason or None, "accepts_image": self.accepts_image,
+                "installed": ready, "adapter_version": "media-adapter-v1"}
+
+    def is_available(self, runtime):
+        ready = self.readiness()[0] if self.readiness else True
+        return ready and (not self.requires_cuda or bool(runtime.get("cuda_available")))
 
     def normalize(self, raw):
         # This branch is for non-LTX adapters. LTX keeps its existing v1 fields.
@@ -109,8 +116,42 @@ def ltx_command(payload, output, context):
     return ["bash", str(context["launcher"]), payload["prompt"], str(output)]
 
 
-ADAPTERS = {"ltx23-distilled": MediaAdapter("ltx23-distilled", "LTX-2.3 Distilled", "video", ltx_command,
-                                           modes=("t2v", "i2v"), accepts_image=True, description="Existing LTX video contract and versioned profiles")}
+def ltx25_paths():
+    root = Path(os.environ.get("LTX_REPO_ROOT", ""))
+    model_root = root / "models/LTX-2.5"
+    return {
+        "transformer": Path(os.environ.get("LTX25_TRANSFORMER_PATH", model_root / "diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors")),
+        "text_encoder": Path(os.environ.get("LTX25_TEXT_ENCODER_PATH", model_root / "text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors")),
+        "video_vae": Path(os.environ.get("LTX25_VIDEO_VAE_PATH", model_root / "vae/ltx-2.5-video-vae-conv-bf16.safetensors")),
+        "audio_vae": Path(os.environ.get("LTX25_AUDIO_VAE_PATH", model_root / "vae/ltx-2.5-audio-vae-bf16.safetensors")),
+        "upsampler": Path(os.environ.get("LTX25_UPSAMPLER_PATH", model_root / "latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors")),
+    }
+
+
+def ltx25_readiness():
+    missing = [name for name, path in ltx25_paths().items() if not path.is_file()]
+    return (not missing, "" if not missing else "Missing LTX 2.5 components: " + ", ".join(missing))
+
+
+def ltx25_command(payload, output, context):
+    return ["bash", str(context["root"] / "scripts/run-ltx-2.5-fast.sh"), payload["prompt"], str(output)]
+
+
+LTX_MODELS = frozenset({"ltx23-distilled", "ltx25-fast"})
+
+
+def is_ltx(model_id):
+    return model_id in LTX_MODELS
+
+
+ADAPTERS = {
+    "ltx23-distilled": MediaAdapter("ltx23-distilled", "LTX-2.3 Distilled", "video", ltx_command,
+                                    modes=("t2v", "i2v"), accepts_image=True,
+                                    description="Existing LTX video contract and versioned profiles"),
+    "ltx25-fast": MediaAdapter("ltx25-fast", "LTX-2.5 Fast", "video", ltx25_command,
+                               modes=("t2v", "i2v"), accepts_image=True, readiness=ltx25_readiness,
+                               description="Official split-checkpoint LTX 2.5 distilled pipeline"),
+}
 
 
 def register(adapter):

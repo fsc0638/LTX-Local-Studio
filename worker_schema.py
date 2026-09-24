@@ -23,7 +23,7 @@ def operation(summary, schema, status="200", **extra):
 def openapi_document():
     request_properties = {
         "prompt": {"type": "string", "minLength": 1, "maxLength": 4000, "description": "Must contain non-whitespace characters."},
-        "model": {"type": "string", "enum": ["ltx23-distilled"], "default": "ltx23-distilled"},
+        "model": {"type": "string", "enum": sorted(model_registry.LTX_MODELS), "default": "ltx23-distilled"},
         "profile": {"type": "string", "enum": list(contract.PROFILES), "default": "compat-v1",
                     "description": "Versioned base defaults; explicit fields take precedence. Profiles do not guarantee visual quality or memory capacity."},
         "mode": {"type": "string", "enum": ["t2v", "i2v"], "default": "t2v"},
@@ -169,7 +169,7 @@ def openapi_document():
     schemas["LtxJobRequest"] = schemas["JobRequest"]
     variants = [ref("LtxJobRequest")]
     for index, adapter in enumerate(model_registry.ADAPTERS.values()):
-        if adapter.id == "ltx23-distilled":
+        if model_registry.is_ltx(adapter.id):
             continue
         parameters = {name: {k: v for k, v in rule.items() if k != "required"}
                       for name, rule in adapter.parameters.items()}
