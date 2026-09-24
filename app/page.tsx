@@ -174,12 +174,12 @@ const MOTION_CANVAS_MODEL: InstalledModel = {
   label: 'Motion Canvas',
   media_type: 'video',
   available: true,
-  description:
-    'Interactive TypeScript motion-graphics project builder and tool workspace.',
+  description: 'Interactive TypeScript motion-graphics project builder and tool workspace.',
   accepts_image: true,
   modes: ['project'],
   parameters: {},
 };
+
 type Health = {
   ok: boolean;
   runtime?: { cuda_available?: boolean; device?: string; error?: string };
@@ -208,7 +208,8 @@ type Locale = 'zh-TW' | 'en' | 'ja';
 // Browser traffic stays same-origin. Only the server knows the worker address.
 const API_BASE = '';
 const MEDIA_BASE = '';
-const OPENCLAW_URL = process.env.NEXT_PUBLIC_OPENCLAW_URL || '/openclaw';
+const OPENCLAW_URL =
+  process.env.NEXT_PUBLIC_OPENCLAW_URL || '/openclaw';
 
 const translations = {
   'zh-TW': {
@@ -222,17 +223,14 @@ const translations = {
     environmentTab: '工站',
     bibleEyebrow: '00 / 企劃 BIBLE',
     bibleTitle: '固定角色、音樂與輸出規格',
-    bibleNote:
-      '這裡設定一次，之後每一鏡都繼承。改這裡會套用到所有還沒生產的鏡頭；你手動改過的欄位會保留。',
+    bibleNote: '這裡設定一次，之後每一鏡都繼承。改這裡會套用到所有還沒生產的鏡頭；你手動改過的欄位會保留。',
     breakdownEyebrow: '01 / 分鏡',
     breakdownTitle: '把歌切成鏡頭',
-    breakdownNote:
-      '上傳音樂與歌詞後按「自動分鏡」，切點會跟著段落與歌詞走並吸附到拍點；再逐鏡調整。',
+    breakdownNote: '上傳音樂與歌詞後按「自動分鏡」，切點會跟著段落與歌詞走並吸附到拍點；再逐鏡調整。',
     breakdownAuto: '自動分鏡',
     breakdownBusy: '分析中…',
     breakdownNeedsMusic: '先在下方選好音樂，才能分析拍點。',
-    breakdownUnavailable:
-      '音訊分析服務目前不可用；分鏡可以手動做，生成不受影響。',
+    breakdownUnavailable: '音訊分析服務目前不可用；分鏡可以手動做，生成不受影響。',
     breakdownFailed: '分析失敗，請稍後再試。',
     breakdownApplied: '分鏡已寫入下方時間軸的 cue，用既有的「預覽分鏡」檢視。',
     shootEyebrow: '03 / 拍攝',
@@ -240,24 +238,18 @@ const translations = {
     shootNote: '一次送一個 GPU 任務；失敗會暫停整條線等人處理。',
     assemblyEyebrow: '06 / 組片交付',
     assemblyTitle: '產出與組片',
-    assemblyNote:
-      '已完成的鏡頭與歷史產出。跨 take 選片與 EDL 匯出在 D 期接上。',
+    assemblyNote: '已完成的鏡頭與歷史產出。跨 take 選片與 EDL 匯出在 D 期接上。',
     unavailableTitle: '這個階段本期未啟用',
-    unavailableNote:
-      '模型都已安裝，但還沒接上介面。實作進度見 docs/PRODUCTION_ROADMAP.md。',
-    unavailableKeyframes:
-      '需要把 Qwen-Image-Edit 註冊成 adapter，並接上一致性裁判（D 期）。',
+    unavailableNote: '模型都已安裝，但還沒接上介面。實作進度見 docs/PRODUCTION_ROADMAP.md。',
+    unavailableKeyframes: '需要把 Qwen-Image-Edit 註冊成 adapter，並接上一致性裁判（D 期）。',
     keyframesTitle: '每鏡先定一張關鍵格',
-    keyframesNote:
-      '整批生成，每鏡依運鏡角度選參照、經一致性裁判亮燈；紅燈自動換 seed 重生一次再請你決定。核准的圖成為該鏡的起始畫面。',
+    keyframesNote: '整批生成，每鏡依運鏡角度選參照、經一致性裁判亮燈；紅燈自動換 seed 重生一次再請你決定。核准的圖成為該鏡的起始畫面。',
     unavailableReview: '需要裁判服務與 take 概念（C 期）。',
     reviewTitle: '審每一鏡的 take',
-    reviewNote:
-      '三個裁判只亮燈、不否決：紅燈下你仍可採用，但會記錄是誰、何時推翻。門檻在校準前是暫定值。',
+    reviewNote: '三個裁判只亮燈、不否決：紅燈下你仍可採用，但會記錄是誰、何時推翻。門檻在校準前是暫定值。',
     unavailablePost: '需要後製 adapter：補幀、放大、清理（D 期）。',
     postTitle: '把核准的 take 再加工',
-    postNote:
-      '放大（Real-ESRGAN）、清理（LaMa，塗遮罩）、補幀（RIFE）。每次加工都是同一鏡的新版本，完成後自動經過動態裁判。',
+    postNote: '放大（Real-ESRGAN）、清理（LaMa，塗遮罩）、補幀（RIFE）。每次加工都是同一鏡的新版本，完成後自動經過動態裁判。',
     backToBoard: '回狀態板',
     ready: '已就緒',
     connecting: '連線中',
@@ -397,46 +389,33 @@ const translations = {
     environmentTab: 'WORKSTATION',
     bibleEyebrow: '00 / PROJECT BIBLE',
     bibleTitle: 'Fix the character, music and output format',
-    bibleNote:
-      'Set once here and every shot inherits it. Changes apply to shots that have not run yet; fields you edited by hand keep their values.',
+    bibleNote: 'Set once here and every shot inherits it. Changes apply to shots that have not run yet; fields you edited by hand keep their values.',
     breakdownEyebrow: '01 / BREAKDOWN',
     breakdownTitle: 'Cut the song into shots',
-    breakdownNote:
-      'Load the music and lyrics, press Auto breakdown, and the cuts follow the sections and lyrics, snapped to the beat. Adjust shot by shot afterwards.',
+    breakdownNote: 'Load the music and lyrics, press Auto breakdown, and the cuts follow the sections and lyrics, snapped to the beat. Adjust shot by shot afterwards.',
     breakdownAuto: 'Auto breakdown',
     breakdownBusy: 'Analysing\u2026',
-    breakdownNeedsMusic:
-      'Choose the music below before the beats can be analysed.',
-    breakdownUnavailable:
-      'The audio analysis service is unavailable. Build the breakdown by hand; generation is unaffected.',
+    breakdownNeedsMusic: 'Choose the music below before the beats can be analysed.',
+    breakdownUnavailable: 'The audio analysis service is unavailable. Build the breakdown by hand; generation is unaffected.',
     breakdownFailed: 'Analysis failed. Try again in a moment.',
-    breakdownApplied:
-      'The breakdown is written to the cues below. Use the existing preview to check it.',
+    breakdownApplied: 'The breakdown is written to the cues below. Use the existing preview to check it.',
     shootEyebrow: '03 / GENERATION',
     shootTitle: 'Production factory queue',
-    shootNote:
-      'One GPU job at a time; a failure pauses the whole line for a person.',
+    shootNote: 'One GPU job at a time; a failure pauses the whole line for a person.',
     assemblyEyebrow: '06 / ASSEMBLY',
     assemblyTitle: 'Outputs and assembly',
-    assemblyNote:
-      'Finished shots and past outputs. Take selection and EDL export arrive in phase D.',
+    assemblyNote: 'Finished shots and past outputs. Take selection and EDL export arrive in phase D.',
     unavailableTitle: 'This stage is not enabled yet',
-    unavailableNote:
-      'The models are installed; nothing is wired to the interface yet. See docs/PRODUCTION_ROADMAP.md.',
-    unavailableKeyframes:
-      'Needs Qwen-Image-Edit registered as an adapter and the consistency judge (phase D).',
+    unavailableNote: 'The models are installed; nothing is wired to the interface yet. See docs/PRODUCTION_ROADMAP.md.',
+    unavailableKeyframes: 'Needs Qwen-Image-Edit registered as an adapter and the consistency judge (phase D).',
     keyframesTitle: 'A keyframe for every shot',
-    keyframesNote:
-      'Generated as one batch: each shot picks a reference by its camera angle and is lit by the consistency judge; red is regenerated once with a new seed, then it is your call. An approved keyframe becomes the shot\u2019s starting frame.',
+    keyframesNote: 'Generated as one batch: each shot picks a reference by its camera angle and is lit by the consistency judge; red is regenerated once with a new seed, then it is your call. An approved keyframe becomes the shot\u2019s starting frame.',
     unavailableReview: 'Needs the judge service and the take model (phase C).',
     reviewTitle: 'Review each shot\u2019s takes',
-    reviewNote:
-      'The three judges light up; they do not veto. You can accept under a red light, and who did so and when is recorded. Thresholds are placeholders until calibrated.',
-    unavailablePost:
-      'Needs the post adapters: interpolation, upscaling, cleanup (phase D).',
+    reviewNote: 'The three judges light up; they do not veto. You can accept under a red light, and who did so and when is recorded. Thresholds are placeholders until calibrated.',
+    unavailablePost: 'Needs the post adapters: interpolation, upscaling, cleanup (phase D).',
     postTitle: 'Work on the accepted takes',
-    postNote:
-      'Upscale (Real-ESRGAN), clean under a painted mask (LaMa), interpolate (RIFE). Each is a new version of the same shot and goes through the motion judge when it finishes.',
+    postNote: 'Upscale (Real-ESRGAN), clean under a painted mask (LaMa), interpolate (RIFE). Each is a new version of the same shot and goes through the motion judge when it finishes.',
     backToBoard: 'Back to the board',
     ready: 'READY',
     connecting: 'CONNECTING',
@@ -577,45 +556,33 @@ const translations = {
     environmentTab: 'ワークステーション',
     bibleEyebrow: '00 / 企画 BIBLE',
     bibleTitle: '人物・音楽・出力設定を固定する',
-    bibleNote:
-      'ここで一度決めれば各ショットが継承します。未生成のショットに反映され、手動で変更した項目はそのまま残ります。',
+    bibleNote: 'ここで一度決めれば各ショットが継承します。未生成のショットに反映され、手動で変更した項目はそのまま残ります。',
     breakdownEyebrow: '01 / 絵コンテ',
     breakdownTitle: '曲をショットに割る',
-    breakdownNote:
-      '音楽と歌詞を読み込んで「自動割り」を押すと、セクションと歌詞に沿って拍にスナップしたカットが作られます。その後ショットごとに調整できます。',
+    breakdownNote: '音楽と歌詞を読み込んで「自動割り」を押すと、セクションと歌詞に沿って拍にスナップしたカットが作られます。その後ショットごとに調整できます。',
     breakdownAuto: '自動割り',
     breakdownBusy: '解析中…',
     breakdownNeedsMusic: '拍を解析するには、先に下で音楽を選んでください。',
-    breakdownUnavailable:
-      '音声解析サービスが利用できません。手動で作成できます。生成には影響しません。',
+    breakdownUnavailable: '音声解析サービスが利用できません。手動で作成できます。生成には影響しません。',
     breakdownFailed: '解析に失敗しました。しばらくしてからお試しください。',
-    breakdownApplied:
-      '割り結果を下の cue に書き込みました。既存の「プレビュー」で確認できます。',
+    breakdownApplied: '割り結果を下の cue に書き込みました。既存の「プレビュー」で確認できます。',
     shootEyebrow: '03 / 生成',
     shootTitle: '制作工場キュー',
-    shootNote:
-      'GPUジョブは一度に1件。失敗するとライン全体が停止し、人の判断を待ちます。',
+    shootNote: 'GPUジョブは一度に1件。失敗するとライン全体が停止し、人の判断を待ちます。',
     assemblyEyebrow: '06 / 編集・納品',
     assemblyTitle: '出力と編集',
-    assemblyNote:
-      '完了したショットと過去の出力。テイク選択とEDL書き出しはフェーズDで対応します。',
+    assemblyNote: '完了したショットと過去の出力。テイク選択とEDL書き出しはフェーズDで対応します。',
     unavailableTitle: 'この段階は今期未対応です',
-    unavailableNote:
-      'モデルは導入済みですが、まだ画面につながっていません。docs/PRODUCTION_ROADMAP.md を参照してください。',
-    unavailableKeyframes:
-      'Qwen-Image-Edit のアダプター登録と一貫性判定が必要です（フェーズD）。',
+    unavailableNote: 'モデルは導入済みですが、まだ画面につながっていません。docs/PRODUCTION_ROADMAP.md を参照してください。',
+    unavailableKeyframes: 'Qwen-Image-Edit のアダプター登録と一貫性判定が必要です（フェーズD）。',
     keyframesTitle: '各ショットのキーフレーム',
-    keyframesNote:
-      '一括生成：各ショットはカメラアングルで参照を選び、一貫性判定でランプが点きます。赤は seed を変えて1回再生成し、その後はあなたの判断です。承認した画像がそのショットの開始フレームになります。',
+    keyframesNote: '一括生成：各ショットはカメラアングルで参照を選び、一貫性判定でランプが点きます。赤は seed を変えて1回再生成し、その後はあなたの判断です。承認した画像がそのショットの開始フレームになります。',
     unavailableReview: '判定サービスとテイク概念が必要です（フェーズC）。',
     reviewTitle: '各ショットのテイクをレビュー',
-    reviewNote:
-      '3つの判定はランプを点けるだけで拒否はしません。赤でも採用できますが、誰がいつ覆したかは記録されます。しきい値は校正前は暫定値です。',
-    unavailablePost:
-      '仕上げアダプター（補間・拡大・除去）が必要です（フェーズD）。',
+    reviewNote: '3つの判定はランプを点けるだけで拒否はしません。赤でも採用できますが、誰がいつ覆したかは記録されます。しきい値は校正前は暫定値です。',
+    unavailablePost: '仕上げアダプター（補間・拡大・除去）が必要です（フェーズD）。',
     postTitle: '採用テイクを仕上げる',
-    postNote:
-      '拡大（Real-ESRGAN）、マスクでクリーン（LaMa）、補間（RIFE）。いずれも同じショットの新しいバージョンになり、完了後に動き判定を通ります。',
+    postNote: '拡大（Real-ESRGAN）、マスクでクリーン（LaMa）、補間（RIFE）。いずれも同じショットの新しいバージョンになり、完了後に動き判定を通ります。',
     backToBoard: 'ボードに戻る',
     ready: '準備完了',
     connecting: '接続中',
@@ -901,8 +868,7 @@ function Studio() {
   const [breakdownNotice, setBreakdownNotice] = useState<
     'none' | 'applied' | 'unavailable' | 'failed'
   >('none');
-  const [directorAnalysis, setDirectorAnalysis] =
-    useState<DirectorAnalysis | null>(null);
+  const [directorAnalysis, setDirectorAnalysis] = useState<DirectorAnalysis | null>(null);
   const [directorBusy, setDirectorBusy] = useState(false);
   const [directorNotice, setDirectorNotice] = useState<
     'none' | 'failed' | 'budget' | 'unavailable'
@@ -910,11 +876,7 @@ function Studio() {
 
   const applyDirector = (shotIds?: Set<string>) => {
     if (!breakdown || !directorAnalysis) return;
-    const shots = applyDirectorSuggestions(
-      breakdown.shots,
-      directorAnalysis.shots,
-      shotIds,
-    );
+    const shots = applyDirectorSuggestions(breakdown.shots, directorAnalysis.shots, shotIds);
     setBreakdown({ ...breakdown, shots });
     setTimeline((current) => ({ ...current, cues: breakdownCues(shots) }));
   };
@@ -980,10 +942,7 @@ function Studio() {
       setBreakdown(nextBreakdown);
       setDirectorAnalysis(null);
       setDirectorNotice('none');
-      setTimeline((current) => ({
-        ...current,
-        cues: breakdownCues(result.shots),
-      }));
+      setTimeline((current) => ({ ...current, cues: breakdownCues(result.shots) }));
       setBreakdownNotice('applied');
       return nextBreakdown;
     } catch {
@@ -1018,8 +977,7 @@ function Studio() {
         setDirectorNotice(
           run.code === 'draft_budget_spent'
             ? 'budget'
-            : run.code === 'draft_unavailable' ||
-                run.code === 'director_interrupted'
+            : run.code === 'draft_unavailable' || run.code === 'director_interrupted'
               ? 'unavailable'
               : 'failed',
         );
@@ -1280,11 +1238,7 @@ function Studio() {
 
   useEffect(() => {
     const savedLocale = window.localStorage.getItem('ltx-studio-locale');
-    if (
-      savedLocale === 'zh-TW' ||
-      savedLocale === 'en' ||
-      savedLocale === 'ja'
-    ) {
+    if (savedLocale === 'zh-TW' || savedLocale === 'en' || savedLocale === 'ja') {
       // eslint-disable-next-line react/react-compiler -- Read the browser-only saved preference after hydration.
       setLocale(savedLocale);
     }
@@ -1558,1477 +1512,1456 @@ function Studio() {
         </div>
 
         <div className="min-w-0">
-          {tab === 'board' && (
-            <StatusBoard
-              plans={plan ? [plan] : []}
-              locale={locale}
-              onOpenStage={setTab}
+        {tab === 'board' && (
+          <StatusBoard
+            plans={plan ? [plan] : []}
+            locale={locale}
+            onOpenStage={setTab}
+          />
+        )}
+
+        {tab === 'keyframes' && (
+          <section>
+            <SectionTitle
+              eyebrow={`${stageIndexOf('keyframes')} / ${stageNames.keyframes}`}
+              title={ui.keyframesTitle}
+              note={ui.keyframesNote}
             />
-          )}
+            <KeyframesBoard
+              plan={plan}
+              locale={locale}
+              onPlanChange={(next) => {
+                setPlan(next);
+                setHostVersion((version) => version + 1);
+              }}
+              onAttention={setKeyframesAttention}
+            />
+          </section>
+        )}
 
-          {tab === 'keyframes' && (
-            <section>
-              <SectionTitle
-                eyebrow={`${stageIndexOf('keyframes')} / ${stageNames.keyframes}`}
-                title={ui.keyframesTitle}
-                note={ui.keyframesNote}
-              />
-              <KeyframesBoard
-                plan={plan}
-                locale={locale}
-                onPlanChange={(next) => {
-                  setPlan(next);
-                  setHostVersion((version) => version + 1);
-                }}
-                onAttention={setKeyframesAttention}
-              />
-            </section>
-          )}
+        {tab === 'post' && (
+          <section>
+            <SectionTitle
+              eyebrow={`${stageIndexOf('post')} / ${stageNames.post}`}
+              title={ui.postTitle}
+              note={ui.postNote}
+            />
+            <PostBoard plan={plan} locale={locale} />
+          </section>
+        )}
 
-          {tab === 'post' && (
-            <section>
-              <SectionTitle
-                eyebrow={`${stageIndexOf('post')} / ${stageNames.post}`}
-                title={ui.postTitle}
-                note={ui.postNote}
-              />
-              <PostBoard plan={plan} locale={locale} />
-            </section>
-          )}
+        {tab === 'review' && (
+          <section>
+            <SectionTitle
+              eyebrow={`${stageIndexOf('review')} / ${stageNames.review}`}
+              title={ui.reviewTitle}
+              note={ui.reviewNote}
+            />
+            <ReviewBoard
+              plan={plan}
+              locale={locale}
+              opinionsAvailable={capabilities?.draft_available === true}
+              onPlanChange={(next) => {
+                setPlan(next);
+                setHostVersion((version) => version + 1);
+              }}
+            />
+          </section>
+        )}
 
-          {tab === 'review' && (
-            <section>
-              <SectionTitle
-                eyebrow={`${stageIndexOf('review')} / ${stageNames.review}`}
-                title={ui.reviewTitle}
-                note={ui.reviewNote}
-              />
-              <ReviewBoard
-                plan={plan}
-                locale={locale}
-                opinionsAvailable={capabilities?.draft_available === true}
-                onPlanChange={(next) => {
-                  setPlan(next);
-                  setHostVersion((version) => version + 1);
-                }}
-              />
-            </section>
-          )}
-
-          {UNAVAILABLE_STAGES.includes(tab as StageKey) && (
-            <section>
-              <SectionTitle
-                eyebrow={`${stageIndexOf(tab)} / ${stageNames[tab as StageKey]}`}
-                title={ui.unavailableTitle}
-                note={ui.unavailableNote}
-              />
-              <div className="grid min-h-64 place-items-center border border-dashed border-border bg-[#fafaf8] p-8 text-center">
-                <div className="max-w-md space-y-4">
-                  <p className="text-sm text-muted-foreground">
-                    {tab === 'keyframes'
-                      ? ui.unavailableKeyframes
-                      : tab === 'review'
-                        ? ui.unavailableReview
-                        : ui.unavailablePost}
-                  </p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="rounded-none"
-                    onClick={() => setTab('board')}
-                  >
-                    {ui.backToBoard}
-                  </Button>
-                </div>
-              </div>
-            </section>
-          )}
-
-          {tab === 'breakdown' && (
-            <section>
-              <SectionTitle
-                eyebrow={ui.breakdownEyebrow}
-                title={ui.breakdownTitle}
-                note={ui.breakdownNote}
-              />
-              <div className="mb-6 flex flex-col gap-3">
-                <div className="flex flex-wrap items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={runBreakdown}
-                    disabled={!timeline.music || breakdownBusy}
-                    className="rounded-sm border border-border bg-white px-4 py-2 text-[12px] font-bold hover:bg-[#faf9f7] disabled:opacity-45"
-                  >
-                    {breakdownBusy ? ui.breakdownBusy : ui.breakdownAuto}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void runDirectorAnalysis()}
-                    disabled={
-                      !canRunDirectorAnalysis({
-                        projectId: plan?.id,
-                        musicId: timeline.music?.id,
-                        draftAvailable: capabilities?.draft_available,
-                        breakdownBusy,
-                        directorBusy,
-                      })
-                    }
-                    title={
-                      capabilities?.draft_available === false
-                        ? directorCopy[locale].unavailable
-                        : !breakdown?.shots.length && timeline.music
-                          ? directorCopy[locale].createsBreakdown
-                          : undefined
-                    }
-                    className="rounded-sm bg-[#171918] px-4 py-2 text-[12px] font-bold text-white hover:bg-[#e85578] disabled:opacity-45"
-                  >
-                    {breakdownBusy
-                      ? ui.breakdownBusy
-                      : directorBusy
-                        ? directorCopy[locale].analyzing
-                        : directorCopy[locale].analyze}
-                  </button>
-                  <p className="text-[11px] text-muted-foreground">
-                    {!timeline.music
-                      ? ui.breakdownNeedsMusic
-                      : breakdownNotice === 'unavailable'
-                        ? ui.breakdownUnavailable
-                        : breakdownNotice === 'failed'
-                          ? ui.breakdownFailed
-                          : breakdownNotice === 'applied'
-                            ? ui.breakdownApplied
-                            : ''}
-                  </p>
-                </div>
-                <p className="text-[10px] leading-5 text-muted-foreground">
-                  {directorCopy[locale].disclosure}
+        {UNAVAILABLE_STAGES.includes(tab as StageKey) && (
+          <section>
+            <SectionTitle
+              eyebrow={`${stageIndexOf(tab)} / ${stageNames[tab as StageKey]}`}
+              title={ui.unavailableTitle}
+              note={ui.unavailableNote}
+            />
+            <div className="grid min-h-64 place-items-center border border-dashed border-border bg-[#fafaf8] p-8 text-center">
+              <div className="max-w-md space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  {tab === 'keyframes'
+                    ? ui.unavailableKeyframes
+                    : tab === 'review'
+                      ? ui.unavailableReview
+                      : ui.unavailablePost}
                 </p>
-                {directorNotice !== 'none' ? (
-                  <p role="alert" className="text-[11px] text-red-700">
-                    {directorNotice === 'budget'
-                      ? directorCopy[locale].budget
-                      : directorNotice === 'unavailable'
-                        ? directorCopy[locale].serviceUnavailable
-                        : directorCopy[locale].failed}
-                  </p>
-                ) : null}
-
-                {directorAnalysis ? (
-                  <DirectorSummary
-                    locale={locale}
-                    analysis={directorAnalysis}
-                    onApplyAll={() => applyDirector()}
-                  />
-                ) : null}
-
-                {breakdown ? (
-                  <BreakdownEditor
-                    shots={breakdown.shots}
-                    lyrics={breakdown.lyrics}
-                    beats={breakdown.beats}
-                    sections={breakdown.sections}
-                    durationSeconds={breakdown.durationSeconds}
-                    beatSeconds={breakdown.beatSeconds}
-                    energy={breakdown.energy}
-                    energyHopSeconds={breakdown.energyHopSeconds}
-                    locale={locale}
-                    directorSuggestions={directorAnalysis?.shots}
-                    onApplySuggestion={(shotId) =>
-                      applyDirector(new Set([shotId]))
-                    }
-                    onChange={(shots) => {
-                      const structureChanged =
-                        shots.length !== breakdown.shots.length ||
-                        shots.some(
-                          (shot, index) =>
-                            shot.id !== breakdown.shots[index]?.id ||
-                            shot.start !== breakdown.shots[index]?.start ||
-                            shot.end !== breakdown.shots[index]?.end,
-                        );
-                      if (structureChanged) setDirectorAnalysis(null);
-                      setBreakdown((current) =>
-                        current ? { ...current, shots } : current,
-                      );
-                      // The cues are the breakdown's output, so every edit lands in the timeline
-                      // immediately rather than behind an "apply" the user could forget to press.
-                      setTimeline((current) => ({
-                        ...current,
-                        cues: breakdownCues(shots),
-                      }));
-                    }}
-                  />
-                ) : null}
-              </div>
-
-              <TimelineControls
-                locale={locale}
-                catalog={capabilities?.directing}
-                value={timeline}
-                onChange={setTimeline}
-                request={generationRequest}
-                previewRequests={breakdownEntries.map((entry) => ({
-                  request: entry.request,
-                  startSeconds: entry.startSeconds,
-                }))}
-                onDuration={(value) => setSeconds(String(value))}
-                factoryMusic={plan?.bible.music}
-              />
-            </section>
-          )}
-
-          {tab === 'sandbox' && (
-            <section className="mb-6 flex flex-wrap items-center gap-4 border border-border bg-white p-5">
-              <label className="min-w-64 text-xs font-bold">
-                {ui.model}
-                <Select
-                  value={model}
-                  disabled={generating || !models.length}
-                  onValueChange={(value) => value && setModel(value)}
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="rounded-none"
+                  onClick={() => setTab('board')}
                 >
-                  <SelectTrigger className="mt-2 w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {models.map((item) => (
-                      <SelectItem key={item.id} value={item.id}>
-                        {item.label} · {item.media_type}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </label>
-              <p className="text-xs text-muted-foreground">
-                {catalogError
-                  ? locale === 'zh-TW'
-                    ? '無法讀取模型清單，請檢查服務後重新整理。'
-                    : locale === 'en'
-                      ? 'Model catalog unavailable. Check the service and reload.'
-                      : 'モデル一覧を取得できません。接続を確認して再読込してください。'
-                  : locale === 'zh-TW'
-                    ? '僅顯示主機已安裝並註冊的模型 · 帳號與 API 不隨模型更換'
-                    : locale === 'en'
-                      ? 'Installed host adapters only · Same account and API across models'
-                      : '導入・登録済みモデルのみ表示 · アカウントとAPIは共通'}
+                  {ui.backToBoard}
+                </Button>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {tab === 'breakdown' && (
+          <section>
+            <SectionTitle
+              eyebrow={ui.breakdownEyebrow}
+              title={ui.breakdownTitle}
+              note={ui.breakdownNote}
+            />
+            <div className="mb-6 flex flex-col gap-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={runBreakdown}
+                  disabled={!timeline.music || breakdownBusy}
+                  className="rounded-sm border border-border bg-white px-4 py-2 text-[12px] font-bold hover:bg-[#faf9f7] disabled:opacity-45"
+                >
+                  {breakdownBusy ? ui.breakdownBusy : ui.breakdownAuto}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void runDirectorAnalysis()}
+                  disabled={
+                    !canRunDirectorAnalysis({
+                      projectId: plan?.id,
+                      musicId: timeline.music?.id,
+                      draftAvailable: capabilities?.draft_available,
+                      breakdownBusy,
+                      directorBusy,
+                    })
+                  }
+                  title={
+                    capabilities?.draft_available === false
+                      ? directorCopy[locale].unavailable
+                      : !breakdown?.shots.length && timeline.music
+                        ? directorCopy[locale].createsBreakdown
+                        : undefined
+                  }
+                  className="rounded-sm bg-[#171918] px-4 py-2 text-[12px] font-bold text-white hover:bg-[#e85578] disabled:opacity-45"
+                >
+                  {breakdownBusy
+                    ? ui.breakdownBusy
+                    : directorBusy
+                      ? directorCopy[locale].analyzing
+                      : directorCopy[locale].analyze}
+                </button>
+                <p className="text-[11px] text-muted-foreground">
+                  {!timeline.music
+                    ? ui.breakdownNeedsMusic
+                    : breakdownNotice === 'unavailable'
+                      ? ui.breakdownUnavailable
+                      : breakdownNotice === 'failed'
+                        ? ui.breakdownFailed
+                        : breakdownNotice === 'applied'
+                          ? ui.breakdownApplied
+                          : ''}
+                </p>
+              </div>
+              <p className="text-[10px] leading-5 text-muted-foreground">
+                {directorCopy[locale].disclosure}
               </p>
-            </section>
-          )}
-          {tab === 'sandbox' &&
-            model !== 'ltx23-distilled' &&
-            model !== 'motion-canvas' &&
-            models.find((item) => item.id === model) && (
-              <ModelComposer
-                key={model}
-                model={models.find((item) => item.id === model)!}
-                locale={locale}
-              />
-            )}
-          {tab === 'sandbox' && model === 'motion-canvas' && (
-            <MotionCanvasComposer
+              {directorNotice !== 'none' ? (
+                <p role="alert" className="text-[11px] text-red-700">
+                  {directorNotice === 'budget'
+                    ? directorCopy[locale].budget
+                    : directorNotice === 'unavailable'
+                      ? directorCopy[locale].serviceUnavailable
+                      : directorCopy[locale].failed}
+                </p>
+              ) : null}
+
+              {directorAnalysis ? (
+                <DirectorSummary
+                  locale={locale}
+                  analysis={directorAnalysis}
+                  onApplyAll={() => applyDirector()}
+                />
+              ) : null}
+
+              {breakdown ? (
+                <BreakdownEditor
+                  shots={breakdown.shots}
+                  lyrics={breakdown.lyrics}
+                  beats={breakdown.beats}
+                  sections={breakdown.sections}
+                  durationSeconds={breakdown.durationSeconds}
+                  beatSeconds={breakdown.beatSeconds}
+                  energy={breakdown.energy}
+                  energyHopSeconds={breakdown.energyHopSeconds}
+                  locale={locale}
+                  directorSuggestions={directorAnalysis?.shots}
+                  onApplySuggestion={(shotId) => applyDirector(new Set([shotId]))}
+                  onChange={(shots) => {
+                    const structureChanged =
+                      shots.length !== breakdown.shots.length ||
+                      shots.some(
+                        (shot, index) =>
+                          shot.id !== breakdown.shots[index]?.id ||
+                          shot.start !== breakdown.shots[index]?.start ||
+                          shot.end !== breakdown.shots[index]?.end,
+                      );
+                    if (structureChanged) setDirectorAnalysis(null);
+                    setBreakdown((current) => (current ? { ...current, shots } : current));
+                    // The cues are the breakdown's output, so every edit lands in the timeline
+                    // immediately rather than behind an "apply" the user could forget to press.
+                    setTimeline((current) => ({ ...current, cues: breakdownCues(shots) }));
+                  }}
+                />
+              ) : null}
+            </div>
+
+            <TimelineControls
               locale={locale}
-              models={models}
-              onSelectModel={setModel}
+              catalog={capabilities?.directing}
+              value={timeline}
+              onChange={setTimeline}
+              request={generationRequest}
+              previewRequests={breakdownEntries.map((entry) => ({
+                request: entry.request,
+                startSeconds: entry.startSeconds,
+              }))}
+              onDuration={(value) => setSeconds(String(value))}
+              factoryMusic={plan?.bible.music}
+            />
+          </section>
+        )}
+
+        {tab === 'sandbox' && (
+          <section className="mb-6 flex flex-wrap items-center gap-4 border border-border bg-white p-5">
+            <label className="min-w-64 text-xs font-bold">
+              {ui.model}
+              <Select
+                value={model}
+                disabled={generating || !models.length}
+                onValueChange={(value) => value && setModel(value)}
+              >
+                <SelectTrigger className="mt-2 w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {models.map((item) => (
+                    <SelectItem key={item.id} value={item.id}>
+                      {item.label} · {item.media_type}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+            <p className="text-xs text-muted-foreground">
+              {catalogError
+                ? locale === 'zh-TW'
+                  ? '無法讀取模型清單，請檢查服務後重新整理。'
+                  : locale === 'en'
+                    ? 'Model catalog unavailable. Check the service and reload.'
+                    : 'モデル一覧を取得できません。接続を確認して再読込してください。'
+                : locale === 'zh-TW'
+                  ? '僅顯示主機已安裝並註冊的模型 · 帳號與 API 不隨模型更換'
+                  : locale === 'en'
+                    ? 'Installed host adapters only · Same account and API across models'
+                    : '導入・登録済みモデルのみ表示 · アカウントとAPIは共通'}
+            </p>
+          </section>
+        )}
+        {tab === 'sandbox' &&
+          model !== 'ltx23-distilled' &&
+          model !== 'motion-canvas' &&
+          models.find((item) => item.id === model) && (
+            <ModelComposer
+              key={model}
+              model={models.find((item) => item.id === model)!}
+              locale={locale}
             />
           )}
-          {tab === 'sandbox' && model === 'ltx23-distilled' && (
-            <section>
-              <SectionTitle
-                eyebrow={ui.createEyebrow}
-                title={ui.createTitle}
-                note={ui.createNote}
-              />
-              <div className="grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(400px,.82fr)]">
-                <div className="space-y-6">
-                  <section className="overflow-hidden border border-border bg-[#101211] text-white">
-                    <div className="flex items-center justify-between gap-4 border-b border-white/15 px-5 py-4">
-                      <div className="flex flex-wrap items-center gap-3">
-                        <span className="text-[10px] font-bold tracking-[0.18em]">
-                          {ui.outputPreview}
-                        </span>
-                        <span className="rounded-full bg-white/10 px-2.5 py-1 text-[10px] text-white/65">
-                          {formatMeta(selectedOutput.meta)}
-                        </span>
-                      </div>
-                      <span className="hidden text-[10px] text-white/50 sm:block">
-                        {selectedOutput.name}
+        {tab === 'sandbox' && model === 'motion-canvas' && (
+          <MotionCanvasComposer
+            locale={locale}
+            models={models}
+            onSelectModel={setModel}
+          />
+        )}
+        {tab === 'sandbox' && model === 'ltx23-distilled' && (
+          <section>
+            <SectionTitle
+              eyebrow={ui.createEyebrow}
+              title={ui.createTitle}
+              note={ui.createNote}
+            />
+            <div className="grid gap-6 xl:grid-cols-[minmax(0,1.5fr)_minmax(400px,.82fr)]">
+              <div className="space-y-6">
+                <section className="overflow-hidden border border-border bg-[#101211] text-white">
+                  <div className="flex items-center justify-between gap-4 border-b border-white/15 px-5 py-4">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <span className="text-[10px] font-bold tracking-[0.18em]">
+                        {ui.outputPreview}
+                      </span>
+                      <span className="rounded-full bg-white/10 px-2.5 py-1 text-[10px] text-white/65">
+                        {formatMeta(selectedOutput.meta)}
                       </span>
                     </div>
-                    <div className="relative aspect-video bg-black">
-                      {selectedOutput.src ? (
-                        <>
-                          <video
-                            key={selectedOutput.src}
-                            className="h-full w-full object-contain"
-                            controls
-                            preload="metadata"
-                            poster={selectedOutput.poster || undefined}
-                            src={selectedOutput.src}
-                          />
-                          <span className="pointer-events-none absolute left-4 top-4 rounded-full bg-[#25b6a6] px-3 py-1 text-[9px] font-bold tracking-[0.14em] text-white">
-                            {ui.outputPreview}
-                          </span>
-                        </>
-                      ) : (
-                        <div className="grid h-full place-items-center text-center text-white/50">
-                          <div>
-                            <Video className="mx-auto mb-4 size-8" />
-                            <p className="text-xs">
-                              {locale === 'zh-TW'
-                                ? '你的第一支作品將顯示在這裡'
-                                : locale === 'en'
-                                  ? 'Your first creation will appear here'
-                                  : '最初の作品がここに表示されます'}
-                            </p>
-                          </div>
+                    <span className="hidden text-[10px] text-white/50 sm:block">
+                      {selectedOutput.name}
+                    </span>
+                  </div>
+                  <div className="relative aspect-video bg-black">
+                    {selectedOutput.src ? (
+                      <>
+                        <video
+                          key={selectedOutput.src}
+                          className="h-full w-full object-contain"
+                          controls
+                          preload="metadata"
+                          poster={selectedOutput.poster || undefined}
+                          src={selectedOutput.src}
+                        />
+                        <span className="pointer-events-none absolute left-4 top-4 rounded-full bg-[#25b6a6] px-3 py-1 text-[9px] font-bold tracking-[0.14em] text-white">
+                          {ui.outputPreview}
+                        </span>
+                      </>
+                    ) : (
+                      <div className="grid h-full place-items-center text-center text-white/50">
+                        <div>
+                          <Video className="mx-auto mb-4 size-8" />
+                          <p className="text-xs">
+                            {locale === 'zh-TW'
+                              ? '你的第一支作品將顯示在這裡'
+                              : locale === 'en'
+                                ? 'Your first creation will appear here'
+                                : '最初の作品がここに表示されます'}
+                          </p>
                         </div>
-                      )}
+                      </div>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-3 divide-x divide-white/10 border-t border-white/10 bg-white/[.035] text-xs">
+                    <div className="px-5 py-4">
+                      <span className="block text-[9px] tracking-[0.14em] text-white/45">
+                        {ui.runtime}
+                      </span>
+                      <strong className="mt-1 block">
+                        {formatRuntime(selectedOutput.runtime)}
+                      </strong>
                     </div>
-                    <div className="grid grid-cols-3 divide-x divide-white/10 border-t border-white/10 bg-white/[.035] text-xs">
-                      <div className="px-5 py-4">
-                        <span className="block text-[9px] tracking-[0.14em] text-white/45">
-                          {ui.runtime}
-                        </span>
-                        <strong className="mt-1 block">
-                          {formatRuntime(selectedOutput.runtime)}
-                        </strong>
-                      </div>
-                      <div className="px-5 py-4">
-                        <span className="block text-[9px] tracking-[0.14em] text-white/45">
-                          {ui.precision}
-                        </span>
-                        <strong className="mt-1 block">
-                          {precision.toUpperCase()}
-                        </strong>
-                      </div>
-                      <div className="px-5 py-4">
-                        <span className="block text-[9px] tracking-[0.14em] text-white/45">
-                          {ui.attention}
-                        </span>
-                        <strong className="mt-1 block">
-                          {attention.toUpperCase()}
-                        </strong>
-                      </div>
+                    <div className="px-5 py-4">
+                      <span className="block text-[9px] tracking-[0.14em] text-white/45">
+                        {ui.precision}
+                      </span>
+                      <strong className="mt-1 block">
+                        {precision.toUpperCase()}
+                      </strong>
                     </div>
-                  </section>
+                    <div className="px-5 py-4">
+                      <span className="block text-[9px] tracking-[0.14em] text-white/45">
+                        {ui.attention}
+                      </span>
+                      <strong className="mt-1 block">
+                        {attention.toUpperCase()}
+                      </strong>
+                    </div>
+                  </div>
+                </section>
 
-                  <section className="border border-border bg-white">
-                    <div className="flex items-center justify-between border-b border-border px-5 py-4">
-                      <div className="flex items-center gap-2">
-                        <Settings2 className="size-4 text-[#e85578]" />
-                        <h2 className="text-xs font-extrabold tracking-[0.13em]">
-                          {ui.generationSettings}
-                        </h2>
-                      </div>
-                      <button
-                        onClick={() => {
-                          setAspectRatio('16:9');
-                          setSeconds('2');
-                          setFps('24');
-                          setSeed(42);
-                        }}
-                        className="flex items-center gap-2 text-[10px] font-bold tracking-[0.1em] text-muted-foreground hover:text-foreground"
-                      >
-                        <RotateCcw className="size-3" />
-                        {ui.reset}
-                      </button>
+                <section className="border border-border bg-white">
+                  <div className="flex items-center justify-between border-b border-border px-5 py-4">
+                    <div className="flex items-center gap-2">
+                      <Settings2 className="size-4 text-[#e85578]" />
+                      <h2 className="text-xs font-extrabold tracking-[0.13em]">
+                        {ui.generationSettings}
+                      </h2>
                     </div>
-                    <div className="grid gap-px bg-border md:grid-cols-2 xl:grid-cols-3">
-                      <label className="bg-white p-5">
-                        <Label>{videoText.ratio}</Label>
-                        <Select
-                          value={aspectRatio}
-                          onValueChange={(value) =>
-                            value && setAspectRatio(value)
-                          }
-                          disabled={!capabilities}
+                    <button
+                      onClick={() => {
+                        setAspectRatio('16:9');
+                        setSeconds('2');
+                        setFps('24');
+                        setSeed(42);
+                      }}
+                      className="flex items-center gap-2 text-[10px] font-bold tracking-[0.1em] text-muted-foreground hover:text-foreground"
+                    >
+                      <RotateCcw className="size-3" />
+                      {ui.reset}
+                    </button>
+                  </div>
+                  <div className="grid gap-px bg-border md:grid-cols-2 xl:grid-cols-3">
+                    <label className="bg-white p-5">
+                      <Label>{videoText.ratio}</Label>
+                      <Select
+                        value={aspectRatio}
+                        onValueChange={(value) =>
+                          value && setAspectRatio(value)
+                        }
+                        disabled={!capabilities}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Object.keys(
+                            capabilities?.aspect_ratios || { '16:9': {} },
+                          ).map((ratio) => (
+                            <SelectItem key={ratio} value={ratio}>
+                              {ratio}
+                            </SelectItem>
+                          ))}
+                          {mode === 'i2v' && reference && (
+                            <SelectItem value="source">
+                              {mvText.source} · {reference.source_ratio}
+                            </SelectItem>
+                          )}
+                        </SelectContent>
+                      </Select>
+                      <span className="mt-2 block text-[10px] text-muted-foreground">
+                        {videoText.dimensions} · {width} × {height}
+                      </span>
+                    </label>
+                    <div className="bg-white p-5">
+                      <Label>{ui.videoDuration}</Label>
+                      <Select
+                        value={durationPreset}
+                        onValueChange={(value) =>
+                          value && setSeconds(value === 'custom' ? '' : value)
+                        }
+                      >
+                        <SelectTrigger
+                          aria-label={ui.videoDuration}
+                          className="w-full"
                         >
-                          <SelectTrigger className="w-full">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {Object.keys(
-                              capabilities?.aspect_ratios || { '16:9': {} },
-                            ).map((ratio) => (
-                              <SelectItem key={ratio} value={ratio}>
-                                {ratio}
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {durationPresets
+                            .filter((value) => value <= maximumSeconds)
+                            .map((value) => (
+                              <SelectItem key={value} value={String(value)}>
+                                {value} {ui.seconds}
                               </SelectItem>
                             ))}
-                            {mode === 'i2v' && reference && (
-                              <SelectItem value="source">
-                                {mvText.source} · {reference.source_ratio}
+                          <SelectItem value="custom">
+                            {videoText.custom}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        aria-label={videoText.custom}
+                        type="number"
+                        min="0.125"
+                        max={maximumSeconds}
+                        step="any"
+                        value={seconds}
+                        onChange={(event) => setSeconds(event.target.value)}
+                        className="mt-2 rounded-none"
+                      />
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={!capabilities}
+                        className="mt-2 w-full rounded-none text-[10px]"
+                        onClick={() => setSeconds(String(maximumSeconds))}
+                      >
+                        {videoText.maximum} · {maximumSeconds.toFixed(3)}s
+                      </Button>
+                      <span className="mt-2 block text-[10px] text-muted-foreground">
+                        {ui.actual} {duration}s · {validFrames ? frames : '—'}{' '}
+                        {ui.frameUnit}
+                      </span>
+                      <span className="mt-2 block text-[10px] text-[#a32e4a]">
+                        {isSequence ? mvText.sequence : mvText.single}
+                      </span>
+                    </div>
+                    <label className="bg-white p-5">
+                      <Label>{ui.frameRate}</Label>
+                      <Select
+                        value={fps}
+                        onValueChange={(value) => value && setFps(value)}
+                      >
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {[8, 16, 24, 25, 30, 50, 60]
+                            .filter(
+                              (value) =>
+                                !capabilities ||
+                                (value >= capabilities.limits.fps_min &&
+                                  value <= capabilities.limits.fps_max),
+                            )
+                            .map((value) => (
+                              <SelectItem key={value} value={String(value)}>
+                                {value} FPS
                               </SelectItem>
-                            )}
-                          </SelectContent>
-                        </Select>
-                        <span className="mt-2 block text-[10px] text-muted-foreground">
-                          {videoText.dimensions} · {width} × {height}
-                        </span>
-                      </label>
-                      <div className="bg-white p-5">
-                        <Label>{ui.videoDuration}</Label>
-                        <Select
-                          value={durationPreset}
-                          onValueChange={(value) =>
-                            value && setSeconds(value === 'custom' ? '' : value)
-                          }
+                            ))}
+                        </SelectContent>
+                      </Select>
+                      <span className="mt-2 block text-[10px] text-muted-foreground">
+                        {videoText.ceiling} · {maxFrames} {ui.frameUnit}
+                      </span>
+                    </label>
+                    <label className="bg-white p-5">
+                      <Label>{ui.inferenceSteps}</Label>
+                      <Input value="8 + 3" disabled className="rounded-none" />
+                    </label>
+                    <label className="bg-white p-5">
+                      <Label>{ui.cfgScale}</Label>
+                      <Input
+                        value="1 · Distilled"
+                        readOnly
+                        className="rounded-none"
+                      />
+                    </label>
+                    <label className="bg-white p-5">
+                      <Label>{ui.seed}</Label>
+                      <Input
+                        type="number"
+                        value={seed}
+                        onChange={(e) => setSeed(Number(e.target.value))}
+                        className="rounded-none"
+                      />
+                    </label>
+                    <label className="bg-white p-5">
+                      <Label>{ui.precision}</Label>
+                      <Select value={precision} disabled>
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="bf16">BF16</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </label>
+                    <label className="bg-white p-5">
+                      <Label>{ui.attention}</Label>
+                      <Select value={attention} disabled>
+                        <SelectTrigger className="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="sdpa">SDPA</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </label>
+                  </div>
+                  <div className="grid gap-x-8 px-5 md:grid-cols-2">
+                    <ToggleRow
+                      label={ui.upscaler}
+                      note={ui.upscalerNote}
+                      checked={upscaler}
+                      onChange={setUpscaler}
+                      disabled
+                    />
+                    <ToggleRow
+                      label={ui.offload}
+                      note={ui.offloadNote}
+                      checked={offload}
+                      onChange={setOffload}
+                    />
+                    <ToggleRow
+                      label={ui.tiling}
+                      note={ui.tilingNote}
+                      checked={tiling}
+                      onChange={setTiling}
+                      disabled
+                    />
+                    <ToggleRow
+                      label={
+                        isSequence && timeline.music ? mvText.music : ui.audio
+                      }
+                      note={
+                        isSequence && timeline.music
+                          ? mvText.soundtrack
+                          : ui.audioNote
+                      }
+                      checked={isSequence && timeline.music ? true : audio}
+                      onChange={setAudio}
+                      disabled={Boolean(isSequence && timeline.music)}
+                    />
+                  </div>
+                  <div className="border-t border-border p-5">
+                    <p className="text-[10px] leading-5 text-muted-foreground">
+                      {transfer.fixed}
+                    </p>
+                    <p className="mt-2 text-[11px] leading-5 text-muted-foreground">
+                      {videoText.resource}
+                    </p>
+                    {!capabilities && (
+                      <output className="mt-2 block text-xs">
+                        {videoText.loading}
+                      </output>
+                    )}
+                    {capabilities && !validFrames && (
+                      <p role="alert" className="mt-2 text-xs text-red-700">
+                        {isSequence ? '0.125–180s' : videoText.invalid}
+                      </p>
+                    )}
+                    {isSequence && (
+                      <p className="mt-2 text-xs text-amber-800">
+                        {mvText.note}
+                      </p>
+                    )}
+                    <Button
+                      variant="outline"
+                      className="mt-3 rounded-none text-[10px]"
+                      disabled={generating}
+                      onClick={() => {
+                        setTimeline({ ...emptyTimeline });
+                        setAspectRatio('1:1');
+                        setSeconds('0.667');
+                        setFps('24');
+                        setOffload(false);
+                      }}
+                    >
+                      <Zap className="size-3" />
+                      {videoText.quick}
+                    </Button>
+                  </div>
+                </section>
+                <TimelineControls
+                  locale={locale}
+                  catalog={capabilities?.directing}
+                  value={timeline}
+                  onChange={setTimeline}
+                  request={generationRequest}
+                  onDuration={(value) => setSeconds(String(value))}
+                />
+              </div>
+
+              <aside className="space-y-6 xl:sticky xl:top-[122px] xl:self-start">
+                <section className="border border-border bg-card">
+                  <div className="border-b border-border px-6 py-5">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="size-4 text-[#e85578]" />
+                      <h2 className="text-sm font-extrabold tracking-[0.1em]">
+                        {ui.promptAndModel}
+                      </h2>
+                    </div>
+                  </div>
+                  <div className="space-y-5 p-6">
+                    <div className="flex flex-wrap gap-2">
+                      {promptPresets.map(([label, value], index) => (
+                        <button
+                          key={label}
+                          onClick={() => setPrompt(value)}
+                          className="border border-border px-3 py-2 text-[9px] font-bold tracking-[0.12em] hover:border-[#ff6f91] hover:bg-[#fff5f7]"
                         >
-                          <SelectTrigger
-                            aria-label={ui.videoDuration}
-                            className="w-full"
-                          >
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {durationPresets
-                              .filter((value) => value <= maximumSeconds)
-                              .map((value) => (
-                                <SelectItem key={value} value={String(value)}>
-                                  {value} {ui.seconds}
-                                </SelectItem>
-                              ))}
-                            <SelectItem value="custom">
-                              {videoText.custom}
-                            </SelectItem>
-                          </SelectContent>
-                        </Select>
+                          {[ui.cinematic, ui.portrait, ui.product][index]}
+                        </button>
+                      ))}
+                    </div>
+                    <label className="block">
+                      <Label>{ui.prompt}</Label>
+                      <Textarea
+                        value={prompt}
+                        onChange={(e) => setPrompt(e.target.value)}
+                        className="min-h-40 resize-none rounded-none bg-[#fafaf8] text-sm leading-6 shadow-none focus-visible:ring-[#ff6f91]/25"
+                      />
+                      <span className="mt-2 block text-right text-[10px] text-muted-foreground">
+                        {prompt.length} {ui.characters}
+                      </span>
+                    </label>
+                    <section className="space-y-3 border-t border-border pt-4">
+                      <h3 className="text-xs font-bold">{mvText.director}</h3>
+                      <DirectingControls
+                        locale={locale}
+                        catalog={capabilities?.directing}
+                        value={directing}
+                        onChange={setDirecting}
+                      />
+                    </section>
+                    <section
+                      aria-label={ui.negativePrompt}
+                      className="border border-[#efc4d0] bg-[#fff8fa] p-4 text-[11px] leading-6"
+                    >
+                      <h3 className="font-bold text-[#a32e4a]">
+                        {videoText.negativeTitle}
+                      </h3>
+                      <p className="mt-1">{videoText.negative}</p>
+                      <p className="mt-2 text-muted-foreground">
+                        {videoText.promptTip}
+                      </p>
+                    </section>
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <label>
+                        <Label>{ui.model}</Label>
                         <Input
-                          aria-label={videoText.custom}
-                          type="number"
-                          min="0.125"
-                          max={maximumSeconds}
-                          step="any"
-                          value={seconds}
-                          onChange={(event) => setSeconds(event.target.value)}
-                          className="mt-2 rounded-none"
-                        />
-                        <Button
-                          type="button"
-                          variant="outline"
-                          disabled={!capabilities}
-                          className="mt-2 w-full rounded-none text-[10px]"
-                          onClick={() => setSeconds(String(maximumSeconds))}
-                        >
-                          {videoText.maximum} · {maximumSeconds.toFixed(3)}s
-                        </Button>
-                        <span className="mt-2 block text-[10px] text-muted-foreground">
-                          {ui.actual} {duration}s · {validFrames ? frames : '—'}{' '}
-                          {ui.frameUnit}
-                        </span>
-                        <span className="mt-2 block text-[10px] text-[#a32e4a]">
-                          {isSequence ? mvText.sequence : mvText.single}
-                        </span>
-                      </div>
-                      <label className="bg-white p-5">
-                        <Label>{ui.frameRate}</Label>
-                        <Select
-                          value={fps}
-                          onValueChange={(value) => value && setFps(value)}
-                        >
-                          <SelectTrigger className="w-full">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {[8, 16, 24, 25, 30, 50, 60]
-                              .filter(
-                                (value) =>
-                                  !capabilities ||
-                                  (value >= capabilities.limits.fps_min &&
-                                    value <= capabilities.limits.fps_max),
-                              )
-                              .map((value) => (
-                                <SelectItem key={value} value={String(value)}>
-                                  {value} FPS
-                                </SelectItem>
-                              ))}
-                          </SelectContent>
-                        </Select>
-                        <span className="mt-2 block text-[10px] text-muted-foreground">
-                          {videoText.ceiling} · {maxFrames} {ui.frameUnit}
-                        </span>
-                      </label>
-                      <label className="bg-white p-5">
-                        <Label>{ui.inferenceSteps}</Label>
-                        <Input
-                          value="8 + 3"
-                          disabled
-                          className="rounded-none"
-                        />
-                      </label>
-                      <label className="bg-white p-5">
-                        <Label>{ui.cfgScale}</Label>
-                        <Input
-                          value="1 · Distilled"
+                          value="LTX-2.3 Distilled"
                           readOnly
                           className="rounded-none"
                         />
                       </label>
-                      <label className="bg-white p-5">
-                        <Label>{ui.seed}</Label>
-                        <Input
-                          type="number"
-                          value={seed}
-                          onChange={(e) => setSeed(Number(e.target.value))}
-                          className="rounded-none"
-                        />
-                      </label>
-                      <label className="bg-white p-5">
-                        <Label>{ui.precision}</Label>
-                        <Select value={precision} disabled>
+                      <label>
+                        <Label>{ui.mode}</Label>
+                        <Select
+                          value={mode}
+                          onValueChange={(value) => {
+                            if (!value) return;
+                            setMode(value);
+                            if (value === 't2v' && aspectRatio === 'source')
+                              setAspectRatio('16:9');
+                          }}
+                        >
                           <SelectTrigger className="w-full">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="bf16">BF16</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </label>
-                      <label className="bg-white p-5">
-                        <Label>{ui.attention}</Label>
-                        <Select value={attention} disabled>
-                          <SelectTrigger className="w-full">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="sdpa">SDPA</SelectItem>
+                            <SelectItem value="t2v">{ui.t2v}</SelectItem>
+                            <SelectItem value="i2v">{ui.i2v}</SelectItem>
+                            <SelectItem value="v2v" disabled>
+                              {ui.v2v}
+                            </SelectItem>
                           </SelectContent>
                         </Select>
                       </label>
                     </div>
-                    <div className="grid gap-x-8 px-5 md:grid-cols-2">
-                      <ToggleRow
-                        label={ui.upscaler}
-                        note={ui.upscalerNote}
-                        checked={upscaler}
-                        onChange={setUpscaler}
-                        disabled
-                      />
-                      <ToggleRow
-                        label={ui.offload}
-                        note={ui.offloadNote}
-                        checked={offload}
-                        onChange={setOffload}
-                      />
-                      <ToggleRow
-                        label={ui.tiling}
-                        note={ui.tilingNote}
-                        checked={tiling}
-                        onChange={setTiling}
-                        disabled
-                      />
-                      <ToggleRow
-                        label={
-                          isSequence && timeline.music ? mvText.music : ui.audio
-                        }
-                        note={
-                          isSequence && timeline.music
-                            ? mvText.soundtrack
-                            : ui.audioNote
-                        }
-                        checked={isSequence && timeline.music ? true : audio}
-                        onChange={setAudio}
-                        disabled={Boolean(isSequence && timeline.music)}
-                      />
-                    </div>
-                    <div className="border-t border-border p-5">
-                      <p className="text-[10px] leading-5 text-muted-foreground">
-                        {transfer.fixed}
-                      </p>
-                      <p className="mt-2 text-[11px] leading-5 text-muted-foreground">
-                        {videoText.resource}
-                      </p>
-                      {!capabilities && (
-                        <output className="mt-2 block text-xs">
-                          {videoText.loading}
-                        </output>
-                      )}
-                      {capabilities && !validFrames && (
-                        <p role="alert" className="mt-2 text-xs text-red-700">
-                          {isSequence ? '0.125–180s' : videoText.invalid}
+                    {mode !== 't2v' && (
+                      <div className="border border-dashed border-[#b8b8b2] bg-[#fafaf8] p-5 text-center">
+                        <ImageIcon className="mx-auto size-5 text-[#25b6a6]" />
+                        <p className="mt-2 text-xs font-bold">
+                          {ui.chooseAsset}
                         </p>
-                      )}
-                      {isSequence && (
-                        <p className="mt-2 text-xs text-amber-800">
-                          {mvText.note}
-                        </p>
-                      )}
-                      <Button
-                        variant="outline"
-                        className="mt-3 rounded-none text-[10px]"
-                        disabled={generating}
-                        onClick={() => {
-                          setTimeline({ ...emptyTimeline });
-                          setAspectRatio('1:1');
-                          setSeconds('0.667');
-                          setFps('24');
-                          setOffload(false);
-                        }}
-                      >
-                        <Zap className="size-3" />
-                        {videoText.quick}
-                      </Button>
-                    </div>
-                  </section>
-                  <TimelineControls
-                    locale={locale}
-                    catalog={capabilities?.directing}
-                    value={timeline}
-                    onChange={setTimeline}
-                    request={generationRequest}
-                    onDuration={(value) => setSeconds(String(value))}
-                  />
-                </div>
-
-                <aside className="space-y-6 xl:sticky xl:top-[122px] xl:self-start">
-                  <section className="border border-border bg-card">
-                    <div className="border-b border-border px-6 py-5">
-                      <div className="flex items-center gap-2">
-                        <Sparkles className="size-4 text-[#e85578]" />
-                        <h2 className="text-sm font-extrabold tracking-[0.1em]">
-                          {ui.promptAndModel}
-                        </h2>
+                        <button
+                          onClick={() => setTab('bible')}
+                          className="mt-2 text-[10px] font-bold text-[#e85578] underline underline-offset-4"
+                        >
+                          {ui.openAssetLibrary}
+                        </button>
                       </div>
-                    </div>
-                    <div className="space-y-5 p-6">
-                      <div className="flex flex-wrap gap-2">
-                        {promptPresets.map(([label, value], index) => (
-                          <button
-                            key={label}
-                            onClick={() => setPrompt(value)}
-                            className="border border-border px-3 py-2 text-[9px] font-bold tracking-[0.12em] hover:border-[#ff6f91] hover:bg-[#fff5f7]"
-                          >
-                            {[ui.cinematic, ui.portrait, ui.product][index]}
-                          </button>
-                        ))}
-                      </div>
-                      <label className="block">
-                        <Label>{ui.prompt}</Label>
-                        <Textarea
-                          value={prompt}
-                          onChange={(e) => setPrompt(e.target.value)}
-                          className="min-h-40 resize-none rounded-none bg-[#fafaf8] text-sm leading-6 shadow-none focus-visible:ring-[#ff6f91]/25"
+                    )}
+                    <input
+                      ref={referenceInput}
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      className="hidden"
+                      aria-label={mvText.imageImport}
+                      onChange={(event) => {
+                        void uploadReference(event.target.files?.[0]);
+                        event.target.value = '';
+                      }}
+                    />
+                    <Button
+                      variant="outline"
+                      className="w-full rounded-none text-xs"
+                      disabled={referenceUploading || generating}
+                      onClick={() => referenceInput.current?.click()}
+                    >
+                      <ImageIcon />
+                      {referenceUploading ? mvText.loading : mvText.imageImport}
+                    </Button>
+                    {mode === 'i2v' && reference && (
+                      <div className="border border-[#bfe8e3] p-3">
+                        <img
+                          src={`${API_BASE}${reference.url}`}
+                          alt={reference.name}
+                          className="max-h-32 w-full object-contain"
                         />
-                        <span className="mt-2 block text-right text-[10px] text-muted-foreground">
-                          {prompt.length} {ui.characters}
-                        </span>
-                      </label>
-                      <section className="space-y-3 border-t border-border pt-4">
-                        <h3 className="text-xs font-bold">{mvText.director}</h3>
-                        <DirectingControls
-                          locale={locale}
-                          catalog={capabilities?.directing}
-                          value={directing}
-                          onChange={setDirecting}
-                        />
-                      </section>
-                      <section
-                        aria-label={ui.negativePrompt}
-                        className="border border-[#efc4d0] bg-[#fff8fa] p-4 text-[11px] leading-6"
-                      >
-                        <h3 className="font-bold text-[#a32e4a]">
-                          {videoText.negativeTitle}
-                        </h3>
-                        <p className="mt-1">{videoText.negative}</p>
-                        <p className="mt-2 text-muted-foreground">
-                          {videoText.promptTip}
+                        <p className="mt-2 truncate text-[10px]">
+                          {transfer.selected}: {reference.name} ·{' '}
+                          {reference.source_ratio}
                         </p>
-                      </section>
-                      <div className="grid gap-4 sm:grid-cols-2">
-                        <label>
-                          <Label>{ui.model}</Label>
+                        <p className="mt-2 text-[10px] leading-5">
+                          {mvText.aligned}{' '}
+                          {reference.ratio_error_percent
+                            ? `Δ ${reference.ratio_error_percent}%`
+                            : ''}
+                        </p>
+                        <button
+                          onClick={() => {
+                            setReference(null);
+                            if (aspectRatio === 'source')
+                              setAspectRatio('16:9');
+                          }}
+                          className="mt-2 text-[10px] text-[#e85578] underline"
+                        >
+                          {transfer.remove}
+                        </button>
+                      </div>
+                    )}
+                    {mode === 'i2v' && (
+                      <section className="grid gap-3 border border-border bg-[#fafaf8] p-4 sm:grid-cols-2">
+                        <label className="text-[10px] font-bold">
+                          {locale === 'zh-TW'
+                            ? '圖片約束強度'
+                            : locale === 'en'
+                              ? 'Image conditioning strength'
+                              : '画像条件の強さ'}
                           <Input
-                            value="LTX-2.3 Distilled"
-                            readOnly
-                            className="rounded-none"
+                            type="number"
+                            min="0"
+                            max="1"
+                            step="0.05"
+                            value={imageStrength}
+                            onChange={(event) =>
+                              setImageStrength(Number(event.target.value))
+                            }
+                            className="mt-2 rounded-none bg-white"
                           />
+                          <span className="mt-1 block font-normal leading-5 text-muted-foreground">
+                            {locale === 'zh-TW'
+                              ? '建議 0.65–0.8；越低越能改背景，但人物也可能較鬆。'
+                              : locale === 'en'
+                                ? 'Try 0.65–0.8. Lower values free the background but may loosen identity.'
+                                : '0.65～0.8推奨。低いほど背景は変わりやすく、人物も緩くなります。'}
+                          </span>
                         </label>
-                        <label>
-                          <Label>{ui.mode}</Label>
+                        <label className="text-[10px] font-bold">
+                          {locale === 'zh-TW'
+                            ? '參照背景處理'
+                            : locale === 'en'
+                              ? 'Reference background'
+                              : '参照背景処理'}
                           <Select
-                            value={mode}
-                            onValueChange={(value) => {
-                              if (!value) return;
-                              setMode(value);
-                              if (value === 't2v' && aspectRatio === 'source')
-                                setAspectRatio('16:9');
-                            }}
+                            value={referenceBackground}
+                            onValueChange={(value) =>
+                              value &&
+                              setReferenceBackground(
+                                value as 'source' | 'alpha_neutral',
+                              )
+                            }
                           >
-                            <SelectTrigger className="w-full">
+                            <SelectTrigger className="mt-2 w-full bg-white">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="t2v">{ui.t2v}</SelectItem>
-                              <SelectItem value="i2v">{ui.i2v}</SelectItem>
-                              <SelectItem value="v2v" disabled>
-                                {ui.v2v}
+                              <SelectItem value="source">
+                                {locale === 'zh-TW'
+                                  ? '保留原圖'
+                                  : locale === 'en'
+                                    ? 'Keep source'
+                                    : '元画像を保持'}
+                              </SelectItem>
+                              <SelectItem value="alpha_neutral">
+                                {locale === 'zh-TW'
+                                  ? '透明人物 PNG → 中性背景'
+                                  : locale === 'en'
+                                    ? 'Transparent subject PNG → neutral'
+                                    : '透過人物PNG → 中立背景'}
                               </SelectItem>
                             </SelectContent>
                           </Select>
+                          <span className="mt-1 block font-normal leading-5 text-muted-foreground">
+                            {locale === 'zh-TW'
+                              ? '中性模式只接受已去背的透明 PNG，避免把原照片背景一起鎖進影片。'
+                              : locale === 'en'
+                                ? 'Neutral mode requires transparent cutout PNGs so the source background is not locked into the video.'
+                                : '中立モードには背景を除去した透過PNGが必要です。'}
+                          </span>
                         </label>
-                      </div>
-                      {mode !== 't2v' && (
-                        <div className="border border-dashed border-[#b8b8b2] bg-[#fafaf8] p-5 text-center">
-                          <ImageIcon className="mx-auto size-5 text-[#25b6a6]" />
-                          <p className="mt-2 text-xs font-bold">
-                            {ui.chooseAsset}
-                          </p>
-                          <button
-                            onClick={() => setTab('bible')}
-                            className="mt-2 text-[10px] font-bold text-[#e85578] underline underline-offset-4"
-                          >
-                            {ui.openAssetLibrary}
-                          </button>
-                        </div>
-                      )}
-                      <input
-                        ref={referenceInput}
-                        type="file"
-                        accept="image/png,image/jpeg,image/webp"
-                        className="hidden"
-                        aria-label={mvText.imageImport}
-                        onChange={(event) => {
-                          void uploadReference(event.target.files?.[0]);
-                          event.target.value = '';
-                        }}
+                      </section>
+                    )}
+                    {mode === 'i2v' && (
+                      <CharacterLock
+                        locale={locale}
+                        value={character}
+                        current={reference}
+                        primaryId={reference?.id}
+                        onChange={setCharacter}
+                        onPrimary={setReference}
                       />
-                      <Button
-                        variant="outline"
-                        className="w-full rounded-none text-xs"
-                        disabled={referenceUploading || generating}
-                        onClick={() => referenceInput.current?.click()}
-                      >
-                        <ImageIcon />
-                        {referenceUploading
-                          ? mvText.loading
-                          : mvText.imageImport}
-                      </Button>
-                      {mode === 'i2v' && reference && (
-                        <div className="border border-[#bfe8e3] p-3">
-                          <img
-                            src={`${API_BASE}${reference.url}`}
-                            alt={reference.name}
-                            className="max-h-32 w-full object-contain"
-                          />
-                          <p className="mt-2 truncate text-[10px]">
-                            {transfer.selected}: {reference.name} ·{' '}
-                            {reference.source_ratio}
-                          </p>
-                          <p className="mt-2 text-[10px] leading-5">
-                            {mvText.aligned}{' '}
-                            {reference.ratio_error_percent
-                              ? `Δ ${reference.ratio_error_percent}%`
-                              : ''}
-                          </p>
-                          <button
-                            onClick={() => {
-                              setReference(null);
-                              if (aspectRatio === 'source')
-                                setAspectRatio('16:9');
-                            }}
-                            className="mt-2 text-[10px] text-[#e85578] underline"
-                          >
-                            {transfer.remove}
-                          </button>
-                        </div>
-                      )}
-                      {mode === 'i2v' && (
-                        <section className="grid gap-3 border border-border bg-[#fafaf8] p-4 sm:grid-cols-2">
-                          <label className="text-[10px] font-bold">
-                            {locale === 'zh-TW'
-                              ? '圖片約束強度'
-                              : locale === 'en'
-                                ? 'Image conditioning strength'
-                                : '画像条件の強さ'}
-                            <Input
-                              type="number"
-                              min="0"
-                              max="1"
-                              step="0.05"
-                              value={imageStrength}
-                              onChange={(event) =>
-                                setImageStrength(Number(event.target.value))
-                              }
-                              className="mt-2 rounded-none bg-white"
-                            />
-                            <span className="mt-1 block font-normal leading-5 text-muted-foreground">
-                              {locale === 'zh-TW'
-                                ? '建議 0.65–0.8；越低越能改背景，但人物也可能較鬆。'
-                                : locale === 'en'
-                                  ? 'Try 0.65–0.8. Lower values free the background but may loosen identity.'
-                                  : '0.65～0.8推奨。低いほど背景は変わりやすく、人物も緩くなります。'}
-                            </span>
-                          </label>
-                          <label className="text-[10px] font-bold">
-                            {locale === 'zh-TW'
-                              ? '參照背景處理'
-                              : locale === 'en'
-                                ? 'Reference background'
-                                : '参照背景処理'}
-                            <Select
-                              value={referenceBackground}
-                              onValueChange={(value) =>
-                                value &&
-                                setReferenceBackground(
-                                  value as 'source' | 'alpha_neutral',
-                                )
-                              }
-                            >
-                              <SelectTrigger className="mt-2 w-full bg-white">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="source">
-                                  {locale === 'zh-TW'
-                                    ? '保留原圖'
-                                    : locale === 'en'
-                                      ? 'Keep source'
-                                      : '元画像を保持'}
-                                </SelectItem>
-                                <SelectItem value="alpha_neutral">
-                                  {locale === 'zh-TW'
-                                    ? '透明人物 PNG → 中性背景'
-                                    : locale === 'en'
-                                      ? 'Transparent subject PNG → neutral'
-                                      : '透過人物PNG → 中立背景'}
-                                </SelectItem>
-                              </SelectContent>
-                            </Select>
-                            <span className="mt-1 block font-normal leading-5 text-muted-foreground">
-                              {locale === 'zh-TW'
-                                ? '中性模式只接受已去背的透明 PNG，避免把原照片背景一起鎖進影片。'
-                                : locale === 'en'
-                                  ? 'Neutral mode requires transparent cutout PNGs so the source background is not locked into the video.'
-                                  : '中立モードには背景を除去した透過PNGが必要です。'}
-                            </span>
-                          </label>
-                        </section>
-                      )}
-                      {mode === 'i2v' && (
-                        <CharacterLock
-                          locale={locale}
-                          value={character}
-                          current={reference}
-                          primaryId={reference?.id}
-                          onChange={setCharacter}
-                          onPrimary={setReference}
-                        />
-                      )}
-                      <div className="grid grid-cols-3 gap-px bg-border text-center">
-                        <div className="bg-[#fafaf8] p-3">
-                          <p className="text-[9px] text-muted-foreground">
-                            {ui.duration}
-                          </p>
-                          <strong className="mt-1 block text-xs">
-                            {duration}s
-                          </strong>
-                        </div>
-                        <div className="bg-[#fafaf8] p-3">
-                          <p className="text-[9px] text-muted-foreground">
-                            {ui.canvas}
-                          </p>
-                          <strong className="mt-1 block text-xs">
-                            {aspectRatio} · {width}×{height}
-                          </strong>
-                        </div>
-                        <div className="bg-[#fafaf8] p-3">
-                          <p className="text-[9px] text-muted-foreground">
-                            VRAM
-                          </p>
-                          <strong className="mt-1 block text-xs">
-                            {videoText.memory}
-                          </strong>
-                        </div>
-                      </div>
-                      <div
-                        className={`border px-4 py-3 text-[10px] leading-5 ${backendOnline ? 'border-[#bfe8e3] bg-[#f0fbf9] text-[#11786f]' : 'border-[#e2e2de] bg-[#fafaf8] text-muted-foreground'}`}
-                      >
-                        <span className="font-bold">{ui.localEngine} · </span>
-                        {backendOnline ? ui.engineConnected : ui.engineWaiting}
-                      </div>
-                      {generating || progress > 0 ? (
-                        <div className="space-y-2">
-                          <div className="flex justify-between text-[10px] font-bold tracking-[0.12em]">
-                            <span>{visibleStatus}</span>
-                            <span>{progress}%</span>
-                          </div>
-                          <Progress
-                            value={progress}
-                            className="h-1.5 rounded-none [&>div]:bg-[#25b6a6]"
-                          />
-                          {jobMessage && (
-                            <p className="text-[10px] leading-4 text-muted-foreground">
-                              {jobMessage}
-                            </p>
-                          )}
-                        </div>
-                      ) : null}
-                      <p className="text-[10px] leading-5 text-muted-foreground">
-                        {transfer.gpu}: {computeDevice || transfer.offline}
-                        {generating && (
-                          <>
-                            <br />
-                            {transfer.stage} · {transfer.elapsed}{' '}
-                            {Math.round(elapsed)}s
-                          </>
-                        )}
-                      </p>
-                      {jobError && (
-                        <div
-                          role="alert"
-                          className="border border-red-200 bg-red-50 px-4 py-3 text-[10px] leading-5 text-red-700"
-                        >
-                          <strong className="block">
-                            {ui.generationFailed}
-                          </strong>
-                          {jobError}
-                        </div>
-                      )}
-                      {capabilitiesFailed && (
-                        <div
-                          role="alert"
-                          className="border border-red-200 p-3 text-xs text-red-700"
-                        >
-                          {ui.cannotConnect}
-                          <Button
-                            variant="outline"
-                            onClick={() => location.reload()}
-                            className="ml-2 rounded-none"
-                          >
-                            {locale === 'zh-TW'
-                              ? '重新載入'
-                              : locale === 'en'
-                                ? 'Reload'
-                                : '再読み込み'}
-                          </Button>
-                        </div>
-                      )}
-                      <Button
-                        onClick={simulateGeneration}
-                        disabled={!canSubmit}
-                        className="h-12 w-full rounded-none bg-foreground text-[11px] font-bold tracking-[0.16em] text-background hover:bg-[#e85578]"
-                      >
-                        <Play className="size-3.5 fill-current" />
-                        {generating ? ui.generatingVideo : ui.generateVideo}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        disabled={
-                          !prompt.trim() ||
-                          !settingsReady ||
-                          !characterReady ||
-                          (mode === 'i2v' && !reference)
-                        }
-                        onClick={() => {
-                          setFactoryIncoming(
-                            breakdownEntries.length
-                              ? {
-                                  token: crypto.randomUUID(),
-                                  shots: breakdownEntries.map((entry) => ({
-                                    request: entry.request,
-                                    title: entry.title,
-                                    pinned: entry.pinned,
-                                  })),
-                                  bible: bibleFromRequest(factoryRequest),
-                                }
-                              : {
-                                  token: crypto.randomUUID(),
-                                  request: factoryRequest,
-                                  bible: bibleFromRequest(factoryRequest),
-                                },
-                          );
-                          setTab('shoot');
-                        }}
-                        className="h-12 w-full rounded-none text-[11px] font-bold tracking-[0.12em]"
-                      >
-                        <Layers3 className="size-3.5" />
-                        {ui.addToFactory}
-                      </Button>
-                      {canSubmit && (!settingsReady || !characterReady) && (
-                        <p className="border-l-2 border-amber-500 pl-3 text-[10px] leading-5 text-amber-800">
-                          {locale === 'zh-TW'
-                            ? '可送出；若設定仍有衝突，後端會回傳明確欄位錯誤，不再無提示地鎖住按鈕。'
-                            : locale === 'en'
-                              ? 'Submission is enabled. Any remaining conflict will return an explicit server validation error instead of silently disabling the button.'
-                              : '送信できます。残る設定エラーはボタンを無言で無効化せず、サーバーが明示します。'}
+                    )}
+                    <div className="grid grid-cols-3 gap-px bg-border text-center">
+                      <div className="bg-[#fafaf8] p-3">
+                        <p className="text-[9px] text-muted-foreground">
+                          {ui.duration}
                         </p>
-                      )}
-                      {selectedOutput.src && (
+                        <strong className="mt-1 block text-xs">
+                          {duration}s
+                        </strong>
+                      </div>
+                      <div className="bg-[#fafaf8] p-3">
+                        <p className="text-[9px] text-muted-foreground">
+                          {ui.canvas}
+                        </p>
+                        <strong className="mt-1 block text-xs">
+                          {aspectRatio} · {width}×{height}
+                        </strong>
+                      </div>
+                      <div className="bg-[#fafaf8] p-3">
+                        <p className="text-[9px] text-muted-foreground">VRAM</p>
+                        <strong className="mt-1 block text-xs">
+                          {videoText.memory}
+                        </strong>
+                      </div>
+                    </div>
+                    <div
+                      className={`border px-4 py-3 text-[10px] leading-5 ${backendOnline ? 'border-[#bfe8e3] bg-[#f0fbf9] text-[#11786f]' : 'border-[#e2e2de] bg-[#fafaf8] text-muted-foreground'}`}
+                    >
+                      <span className="font-bold">{ui.localEngine} · </span>
+                      {backendOnline ? ui.engineConnected : ui.engineWaiting}
+                    </div>
+                    {generating || progress > 0 ? (
+                      <div className="space-y-2">
+                        <div className="flex justify-between text-[10px] font-bold tracking-[0.12em]">
+                          <span>{visibleStatus}</span>
+                          <span>{progress}%</span>
+                        </div>
+                        <Progress
+                          value={progress}
+                          className="h-1.5 rounded-none [&>div]:bg-[#25b6a6]"
+                        />
+                        {jobMessage && (
+                          <p className="text-[10px] leading-4 text-muted-foreground">
+                            {jobMessage}
+                          </p>
+                        )}
+                      </div>
+                    ) : null}
+                    <p className="text-[10px] leading-5 text-muted-foreground">
+                      {transfer.gpu}: {computeDevice || transfer.offline}
+                      {generating && (
                         <>
-                          <a
-                            href={selectedOutput.download || selectedOutput.src}
-                            download={selectedOutput.name}
-                            className="block border border-border p-3 text-center text-[11px] font-bold hover:border-[#e85578]"
-                          >
-                            {transfer.download} · MP4
-                          </a>
-                          <DeleteMediaButton
-                            locale={locale}
-                            kind="jobs"
-                            id={selectedOutput.id}
-                            name={selectedOutput.name}
-                            onDeleted={() => removeOutput(selectedOutput.id)}
-                          />
+                          <br />
+                          {transfer.stage} · {transfer.elapsed}{' '}
+                          {Math.round(elapsed)}s
                         </>
                       )}
-                      <p className="text-center text-[9px] leading-4 text-muted-foreground">
-                        {ui.generateNote}
-                      </p>
-                    </div>
-                  </section>
-                  <section className="border border-border bg-[#171918] p-5 text-white">
-                    <div className="mb-3 flex items-center gap-2 text-[10px] font-bold tracking-[0.14em] text-white/65">
-                      <TerminalSquare className="size-4 text-[#25b6a6]" />
-                      {ui.commandPreview}
-                    </div>
-                    <code className="block break-words font-mono text-[10px] leading-5 text-white/75">
-                      {command}
-                    </code>
-                  </section>
-                </aside>
-              </div>
-            </section>
-          )}
-
-          {/* One mounted factory serves stage 00 and stage 03; two mounts would mean two plans. */}
-          <div hidden={tab !== 'bible' && tab !== 'shoot'}>
-            <SectionTitle
-              eyebrow={tab === 'shoot' ? ui.shootEyebrow : ui.bibleEyebrow}
-              title={tab === 'shoot' ? ui.shootTitle : ui.bibleTitle}
-              note={tab === 'shoot' ? ui.shootNote : ui.bibleNote}
-            />
-            <ProductionFactory
-              locale={locale}
-              online={backendOnline}
-              incoming={factoryIncoming}
-              onIncomingConsumed={() => setFactoryIncoming(null)}
-              onPlanChange={setPlan}
-              draftAvailable={capabilities?.draft_available === true}
-              profiles={Object.keys(capabilities?.profiles || {})}
-              hostVersion={hostVersion}
-              section={tab === 'shoot' ? 'queue' : 'bible'}
-            />
-          </div>
-
-          {tab === 'bible' && (
-            <section>
-              <SectionTitle
-                eyebrow={ui.assetsEyebrow}
-                title={ui.assetsTitle}
-                note={ui.assetsNote}
-              />
-              <MediaLibrary
-                locale={locale}
-                onSelect={selectReference}
-                onDelete={(id) => {
-                  if (reference?.id === id) {
-                    setReference(null);
-                    if (aspectRatio === 'source') setAspectRatio('16:9');
-                  }
-                  setCharacter((current) => ({
-                    ...current,
-                    references: current.references.filter(
-                      (item) => item.asset.id !== id,
-                    ),
-                  }));
-                  if (timeline.music?.id === id)
-                    setTimeline((current) => ({
-                      ...current,
-                      music: null,
-                      audioStart: 0,
-                    }));
-                }}
-              />
-              <div className="grid gap-6 lg:grid-cols-[1.35fr_.65fr]">
-                <div>
-                  <div className="mb-4 flex items-center justify-between">
-                    <p className="text-[10px] font-bold tracking-[0.15em]">
-                      {ui.mediaReferences}
                     </p>
-                    <Button
-                      variant="outline"
-                      className="rounded-none text-[10px] font-bold tracking-[0.12em]"
-                    >
-                      <FolderOpen className="size-3.5" />
-                      {ui.openFolder}
-                    </Button>
-                  </div>
-                  <div className="grid gap-px bg-border sm:grid-cols-2">
-                    {outputItems
-                      .flatMap((item) => [
-                        {
-                          id: `${item.id}-video`,
-                          type: ui.video,
-                          isVideo: true,
-                          name: item.name,
-                          src: item.poster!,
-                          meta: item.meta,
-                          path: `outputs/${item.name}`,
-                        },
-                        {
-                          id: `${item.id}-image`,
-                          type: ui.image,
-                          isVideo: false,
-                          name: item.poster!.split('/').pop()!,
-                          src: item.poster!,
-                          meta: ui.previewFrame,
-                          path: `outputs/${item.poster!.split('/').pop()}`,
-                        },
-                      ])
-                      .map((asset) => (
-                        <article key={asset.id} className="group bg-white p-5">
-                          <div className="relative aspect-video overflow-hidden bg-[#111]">
-                            <img
-                              src={asset.src}
-                              alt={asset.name}
-                              className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.03]"
-                            />
-                            <span className="absolute left-3 top-3 bg-white px-2 py-1 text-[9px] font-extrabold tracking-[0.15em]">
-                              {asset.type}
-                            </span>
-                          </div>
-                          <div className="mt-4 flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <p className="truncate text-xs font-bold">
-                                {asset.name}
-                              </p>
-                              <p className="mt-1 text-[10px] text-muted-foreground">
-                                {asset.meta}
-                              </p>
-                              <code className="mt-2 block truncate text-[9px] text-[#159c8f]">
-                                {asset.path}
-                              </code>
-                            </div>
-                            {asset.isVideo ? (
-                              <FileVideo className="size-4 shrink-0 text-[#e85578]" />
-                            ) : (
-                              <FileImage className="size-4 shrink-0 text-[#25b6a6]" />
-                            )}
-                          </div>
-                        </article>
-                      ))}
-                  </div>
-                </div>
-                <aside className="space-y-6">
-                  <section className="border border-border bg-white">
-                    <div className="border-b border-border px-5 py-4">
-                      <h2 className="text-xs font-extrabold tracking-[0.13em]">
-                        {ui.modelSources}
-                      </h2>
-                    </div>
-                    <div className="divide-y divide-border">
-                      {[
-                        [
-                          'LTX-2.3 22B Distilled 1.1',
-                          'Hugging Face · Lightricks/LTX-2.3',
-                          ui.primaryTransformer,
-                        ],
-                        [
-                          'Gemma 3 12B',
-                          'Hugging Face · google/gemma-3-12b-it',
-                          ui.promptEncoder,
-                        ],
-                        [
-                          'x2 Spatial Upscaler',
-                          'LTX model package',
-                          ui.detailRecovery,
-                        ],
-                      ].map(([name, source, note]) => (
-                        <div key={name} className="p-5">
-                          <div className="flex gap-3">
-                            <Box className="mt-0.5 size-4 shrink-0 text-[#e85578]" />
-                            <div>
-                              <p className="text-xs font-bold">{name}</p>
-                              <p className="mt-1 text-[10px] text-muted-foreground">
-                                {source}
-                              </p>
-                              <p className="mt-2 text-[10px] leading-4 text-[#159c8f]">
-                                {note}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </section>
-                  <section className="border border-border bg-[#f7f7f4] p-5">
-                    <div className="flex gap-3">
-                      <HardDrive className="size-4 text-[#25b6a6]" />
-                      <div>
-                        <p className="text-xs font-bold">{ui.sourcePolicy}</p>
-                        <p className="mt-2 text-[10px] leading-5 text-muted-foreground">
-                          {ui.sourcePolicyNote}
-                        </p>
-                      </div>
-                    </div>
-                  </section>
-                </aside>
-              </div>
-            </section>
-          )}
-
-          {tab === 'assembly' && (
-            <section>
-              <SectionTitle
-                eyebrow={ui.outputsEyebrow}
-                title={ui.outputsTitle}
-                note={ui.outputsNote}
-              />
-              <AssemblyPanel
-                plan={plan}
-                locale={locale}
-                onGoReview={() => setTab('review')}
-              />
-              <div className="grid gap-6 xl:grid-cols-2">
-                {liveOutputs.map((item, index) => (
-                  <article
-                    key={item.id}
-                    className="overflow-hidden border border-border bg-white"
-                  >
-                    <div className="flex flex-wrap items-center justify-end gap-3 border-b border-border px-6 py-3">
-                      <a
-                        href={item.download || item.src}
-                        download={item.name}
-                        className="text-[11px] font-bold hover:text-[#e85578]"
+                    {jobError && (
+                      <div
+                        role="alert"
+                        className="border border-red-200 bg-red-50 px-4 py-3 text-[10px] leading-5 text-red-700"
                       >
-                        {transfer.download} · MP4
-                      </a>
-                      <DeleteMediaButton
-                        locale={locale}
-                        kind="jobs"
-                        id={item.id}
-                        name={item.name}
-                        onDeleted={() => removeOutput(item.id)}
-                      />
-                    </div>
-                    <div className="relative aspect-video bg-black">
-                      <video
-                        className="h-full w-full object-contain"
-                        controls
-                        preload="metadata"
-                        poster={item.poster || undefined}
-                        src={item.src}
-                      />
-                      <span className="absolute left-4 top-4 bg-[#25b6a6] px-3 py-1 text-[9px] font-bold tracking-[0.12em] text-white">
-                        RUN 0{index + 1} · {ui.runPassed}
-                      </span>
-                    </div>
-                    <div className="p-6">
-                      <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
-                        <div>
-                          <p className="text-base font-extrabold tracking-[0.03em]">
-                            {item.name}
-                          </p>
-                          <p className="mt-2 text-xs text-muted-foreground">
-                            {formatMeta(item.meta)}
-                          </p>
-                        </div>
+                        <strong className="block">{ui.generationFailed}</strong>
+                        {jobError}
+                      </div>
+                    )}
+                    {capabilitiesFailed && (
+                      <div
+                        role="alert"
+                        className="border border-red-200 p-3 text-xs text-red-700"
+                      >
+                        {ui.cannotConnect}
                         <Button
-                          onClick={() => {
-                            setSelectedOutput(item);
-                            setTab('sandbox');
-                          }}
                           variant="outline"
-                          className="rounded-none text-[10px] font-bold tracking-[0.1em]"
+                          onClick={() => location.reload()}
+                          className="ml-2 rounded-none"
                         >
-                          {ui.useAsPreview}
-                          <ChevronRight className="size-3.5" />
+                          {locale === 'zh-TW'
+                            ? '重新載入'
+                            : locale === 'en'
+                              ? 'Reload'
+                              : '再読み込み'}
                         </Button>
                       </div>
-                      <div className="mt-6 grid grid-cols-3 gap-px bg-border">
-                        <div className="bg-[#fafaf8] p-4">
-                          <Label>{ui.runtime}</Label>
-                          <strong className="text-sm">
-                            {formatRuntime(item.runtime)}
-                          </strong>
-                        </div>
-                        <div className="bg-[#fafaf8] p-4">
-                          <Label>{ui.fileSize}</Label>
-                          <strong className="text-sm">{item.size}</strong>
-                        </div>
-                        <div className="bg-[#fafaf8] p-4">
-                          <Label>{ui.codec}</Label>
-                          <strong className="text-sm">H.264/AAC</strong>
-                        </div>
-                      </div>
-                    </div>
-                  </article>
-                ))}
-              </div>
-              {liveOutputs.length === 0 && (
-                <p className="border border-dashed border-border bg-white p-12 text-center text-sm text-muted-foreground">
-                  {locale === 'zh-TW'
-                    ? '尚無產出，完成生成後會顯示於此。'
-                    : locale === 'en'
-                      ? 'No outputs yet. Completed generations will appear here.'
-                      : '作品はありません。生成が完了するとここに表示されます。'}
-                </p>
-              )}
-              <div className="mt-6 border border-border bg-[#171918] p-6 text-white">
-                <div className="grid gap-5 md:grid-cols-[auto_1fr_auto] md:items-center">
-                  <div className="grid size-12 place-items-center rounded-full border border-white/15">
-                    <Check className="size-5 text-[#25b6a6]" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-bold">{ui.workflowConnected}</p>
-                    <p className="mt-1 text-[11px] leading-5 text-white/55">
-                      {ui.workflowNote}
+                    )}
+                    <Button
+                      onClick={simulateGeneration}
+                      disabled={!canSubmit}
+                      className="h-12 w-full rounded-none bg-foreground text-[11px] font-bold tracking-[0.16em] text-background hover:bg-[#e85578]"
+                    >
+                      <Play className="size-3.5 fill-current" />
+                      {generating ? ui.generatingVideo : ui.generateVideo}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={
+                        !prompt.trim() ||
+                        !settingsReady ||
+                        !characterReady ||
+                        (mode === 'i2v' && !reference)
+                      }
+                      onClick={() => {
+                        setFactoryIncoming(
+                          breakdownEntries.length
+                            ? {
+                                token: crypto.randomUUID(),
+                                shots: breakdownEntries.map((entry) => ({
+                                  request: entry.request,
+                                  title: entry.title,
+                                  pinned: entry.pinned,
+                                })),
+                                bible: bibleFromRequest(factoryRequest),
+                              }
+                            : {
+                                token: crypto.randomUUID(),
+                                request: factoryRequest,
+                                bible: bibleFromRequest(factoryRequest),
+                              },
+                        );
+                        setTab('shoot');
+                      }}
+                      className="h-12 w-full rounded-none text-[11px] font-bold tracking-[0.12em]"
+                    >
+                      <Layers3 className="size-3.5" />
+                      {ui.addToFactory}
+                    </Button>
+                    {canSubmit && (!settingsReady || !characterReady) && (
+                      <p className="border-l-2 border-amber-500 pl-3 text-[10px] leading-5 text-amber-800">
+                        {locale === 'zh-TW'
+                          ? '可送出；若設定仍有衝突，後端會回傳明確欄位錯誤，不再無提示地鎖住按鈕。'
+                          : locale === 'en'
+                            ? 'Submission is enabled. Any remaining conflict will return an explicit server validation error instead of silently disabling the button.'
+                            : '送信できます。残る設定エラーはボタンを無言で無効化せず、サーバーが明示します。'}
+                      </p>
+                    )}
+                    {selectedOutput.src && (
+                      <>
+                        <a
+                          href={selectedOutput.download || selectedOutput.src}
+                          download={selectedOutput.name}
+                          className="block border border-border p-3 text-center text-[11px] font-bold hover:border-[#e85578]"
+                        >
+                          {transfer.download} · MP4
+                        </a>
+                        <DeleteMediaButton
+                          locale={locale}
+                          kind="jobs"
+                          id={selectedOutput.id}
+                          name={selectedOutput.name}
+                          onDeleted={() => removeOutput(selectedOutput.id)}
+                        />
+                      </>
+                    )}
+                    <p className="text-center text-[9px] leading-4 text-muted-foreground">
+                      {ui.generateNote}
                     </p>
                   </div>
-                  <span className="text-[10px] font-bold tracking-[0.14em] text-[#76d5cb]">
-                    {liveOutputs.length} {ui.outputCount}
-                  </span>
+                </section>
+                <section className="border border-border bg-[#171918] p-5 text-white">
+                  <div className="mb-3 flex items-center gap-2 text-[10px] font-bold tracking-[0.14em] text-white/65">
+                    <TerminalSquare className="size-4 text-[#25b6a6]" />
+                    {ui.commandPreview}
+                  </div>
+                  <code className="block break-words font-mono text-[10px] leading-5 text-white/75">
+                    {command}
+                  </code>
+                </section>
+              </aside>
+            </div>
+          </section>
+        )}
+
+        {/* One mounted factory serves stage 00 and stage 03; two mounts would mean two plans. */}
+        <div hidden={tab !== 'bible' && tab !== 'shoot'}>
+          <SectionTitle
+            eyebrow={tab === 'shoot' ? ui.shootEyebrow : ui.bibleEyebrow}
+            title={tab === 'shoot' ? ui.shootTitle : ui.bibleTitle}
+            note={tab === 'shoot' ? ui.shootNote : ui.bibleNote}
+          />
+          <ProductionFactory
+            locale={locale}
+            online={backendOnline}
+            incoming={factoryIncoming}
+            onIncomingConsumed={() => setFactoryIncoming(null)}
+            onPlanChange={setPlan}
+            draftAvailable={capabilities?.draft_available === true}
+            profiles={Object.keys(capabilities?.profiles || {})}
+            hostVersion={hostVersion}
+            section={tab === 'shoot' ? 'queue' : 'bible'}
+          />
+        </div>
+
+        {tab === 'bible' && (
+          <section>
+            <SectionTitle
+              eyebrow={ui.assetsEyebrow}
+              title={ui.assetsTitle}
+              note={ui.assetsNote}
+            />
+            <MediaLibrary
+              locale={locale}
+              onSelect={selectReference}
+              onDelete={(id) => {
+                if (reference?.id === id) {
+                  setReference(null);
+                  if (aspectRatio === 'source') setAspectRatio('16:9');
+                }
+                setCharacter((current) => ({
+                  ...current,
+                  references: current.references.filter(
+                    (item) => item.asset.id !== id,
+                  ),
+                }));
+                if (timeline.music?.id === id)
+                  setTimeline((current) => ({
+                    ...current,
+                    music: null,
+                    audioStart: 0,
+                  }));
+              }}
+            />
+            <div className="grid gap-6 lg:grid-cols-[1.35fr_.65fr]">
+              <div>
+                <div className="mb-4 flex items-center justify-between">
+                  <p className="text-[10px] font-bold tracking-[0.15em]">
+                    {ui.mediaReferences}
+                  </p>
+                  <Button
+                    variant="outline"
+                    className="rounded-none text-[10px] font-bold tracking-[0.12em]"
+                  >
+                    <FolderOpen className="size-3.5" />
+                    {ui.openFolder}
+                  </Button>
+                </div>
+                <div className="grid gap-px bg-border sm:grid-cols-2">
+                  {outputItems
+                    .flatMap((item) => [
+                      {
+                        id: `${item.id}-video`,
+                        type: ui.video,
+                        isVideo: true,
+                        name: item.name,
+                        src: item.poster!,
+                        meta: item.meta,
+                        path: `outputs/${item.name}`,
+                      },
+                      {
+                        id: `${item.id}-image`,
+                        type: ui.image,
+                        isVideo: false,
+                        name: item.poster!.split('/').pop()!,
+                        src: item.poster!,
+                        meta: ui.previewFrame,
+                        path: `outputs/${item.poster!.split('/').pop()}`,
+                      },
+                    ])
+                    .map((asset) => (
+                      <article key={asset.id} className="group bg-white p-5">
+                        <div className="relative aspect-video overflow-hidden bg-[#111]">
+                          <img
+                            src={asset.src}
+                            alt={asset.name}
+                            className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.03]"
+                          />
+                          <span className="absolute left-3 top-3 bg-white px-2 py-1 text-[9px] font-extrabold tracking-[0.15em]">
+                            {asset.type}
+                          </span>
+                        </div>
+                        <div className="mt-4 flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="truncate text-xs font-bold">
+                              {asset.name}
+                            </p>
+                            <p className="mt-1 text-[10px] text-muted-foreground">
+                              {asset.meta}
+                            </p>
+                            <code className="mt-2 block truncate text-[9px] text-[#159c8f]">
+                              {asset.path}
+                            </code>
+                          </div>
+                          {asset.isVideo ? (
+                            <FileVideo className="size-4 shrink-0 text-[#e85578]" />
+                          ) : (
+                            <FileImage className="size-4 shrink-0 text-[#25b6a6]" />
+                          )}
+                        </div>
+                      </article>
+                    ))}
                 </div>
               </div>
-            </section>
-          )}
-
-          {tab === 'workstation' && (
-            <section>
-              <SectionTitle
-                eyebrow={ui.envEyebrow}
-                title={ui.envTitle}
-                note={ui.envNote}
-              />
-              <WorkstationPanel
-                plan={plan}
-                locale={locale}
-                onPlanChange={(next) => {
-                  setPlan(next);
-                  setHostVersion((version) => version + 1);
-                }}
-              />
-              <p className="mb-4 border border-border bg-white p-4 text-xs">
-                {transfer.gpu}:{' '}
-                <strong>{computeDevice || transfer.offline}</strong>
-              </p>
-              <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                <Stat label={ui.accelerator} value="NVIDIA GB10" accent />
-                <Stat label={ui.unifiedMemory} value="121.69 GiB" />
-                <Stat label={ui.peakResident} value="~42 GiB" />
-                <Stat label={ui.architecture} value="ARM64" />
-              </div>
-              <div className="mt-6 grid gap-6 lg:grid-cols-2">
+              <aside className="space-y-6">
                 <section className="border border-border bg-white">
                   <div className="border-b border-border px-5 py-4">
-                    <div className="flex items-center gap-2">
-                      <Cpu className="size-4 text-[#e85578]" />
-                      <h2 className="text-xs font-extrabold tracking-[0.13em]">
-                        {ui.runtimeStack}
-                      </h2>
-                    </div>
+                    <h2 className="text-xs font-extrabold tracking-[0.13em]">
+                      {ui.modelSources}
+                    </h2>
                   </div>
-                  <div className="grid gap-px bg-border sm:grid-cols-2">
+                  <div className="divide-y divide-border">
                     {[
-                      ['CUDA', '13.0', Zap],
-                      ['PyTorch', '2.11', Layers3],
-                      [ui.precision, 'BF16', CircleGauge],
-                      [ui.attention, 'SDPA', Gauge],
-                      [ui.swap, '0 GiB', MemoryStick],
-                      [ui.output, 'H.264 + AAC', FileVideo],
-                    ].map(([label, value, Icon]) => {
-                      const I = Icon as typeof Cpu;
-                      return (
-                        <div key={label as string} className="bg-white p-5">
-                          <I className="mb-4 size-4 text-[#25b6a6]" />
-                          <Label>{label as string}</Label>
-                          <strong className="text-lg">{value as string}</strong>
+                      [
+                        'LTX-2.3 22B Distilled 1.1',
+                        'Hugging Face · Lightricks/LTX-2.3',
+                        ui.primaryTransformer,
+                      ],
+                      [
+                        'Gemma 3 12B',
+                        'Hugging Face · google/gemma-3-12b-it',
+                        ui.promptEncoder,
+                      ],
+                      [
+                        'x2 Spatial Upscaler',
+                        'LTX model package',
+                        ui.detailRecovery,
+                      ],
+                    ].map(([name, source, note]) => (
+                      <div key={name} className="p-5">
+                        <div className="flex gap-3">
+                          <Box className="mt-0.5 size-4 shrink-0 text-[#e85578]" />
+                          <div>
+                            <p className="text-xs font-bold">{name}</p>
+                            <p className="mt-1 text-[10px] text-muted-foreground">
+                              {source}
+                            </p>
+                            <p className="mt-2 text-[10px] leading-4 text-[#159c8f]">
+                              {note}
+                            </p>
+                          </div>
                         </div>
-                      );
-                    })}
-                  </div>
-                </section>
-                <section className="border border-border bg-white">
-                  <div className="border-b border-border px-5 py-4">
-                    <div className="flex items-center gap-2">
-                      <Clock3 className="size-4 text-[#e85578]" />
-                      <h2 className="text-xs font-extrabold tracking-[0.13em]">
-                        {ui.measuredPerformance}
-                      </h2>
-                    </div>
-                  </div>
-                  <div className="p-6">
-                    <div className="space-y-6">
-                      <div>
-                        <div className="mb-2 flex justify-between text-xs font-bold">
-                          <span>384 × 256 · 17F</span>
-                          <span>33.69s</span>
-                        </div>
-                        <div className="h-2 bg-[#efefec]">
-                          <div className="h-full w-[73%] bg-[#25b6a6]" />
-                        </div>
-                      </div>
-                      <div>
-                        <div className="mb-2 flex justify-between text-xs font-bold">
-                          <span>768 × 512 · 49F</span>
-                          <span>46.18s</span>
-                        </div>
-                        <div className="h-2 bg-[#efefec]">
-                          <div className="h-full w-full bg-[#ff6f91]" />
-                        </div>
-                      </div>
-                    </div>
-                    <div className="mt-8 border-t border-border pt-5 text-[10px] leading-5 text-muted-foreground">
-                      {ui.performanceNote}
-                    </div>
-                  </div>
-                </section>
-              </div>
-
-              <div className="mt-6 grid gap-6 xl:grid-cols-[1.1fr_.9fr]">
-                <section className="border border-border bg-white">
-                  <div className="border-b border-border px-5 py-4">
-                    <div className="flex items-center gap-2">
-                      <FolderOpen className="size-4 text-[#e85578]" />
-                      <h2 className="text-xs font-extrabold tracking-[0.13em]">
-                        {ui.localPaths}
-                      </h2>
-                    </div>
-                  </div>
-                  <div className="divide-y divide-border font-mono text-[10px]">
-                    {[
-                      [ui.repository, 'work/ltx-2.3/LTX-2'],
-                      [ui.launcher, 'outputs/run-ltx-2.3.sh'],
-                      [ui.guide, 'outputs/LTX-2.3-使用說明.md'],
-                      [ui.mainOutput, 'outputs/ltx-2.3-512x768.mp4'],
-                      [ui.smokeTest, 'outputs/ltx-2.3-smoke.mp4'],
-                    ].map(([label, path]) => (
-                      <div
-                        key={label}
-                        className="grid gap-2 p-5 sm:grid-cols-[120px_1fr]"
-                      >
-                        <span className="font-sans font-bold text-muted-foreground">
-                          {label}
-                        </span>
-                        <span className="break-all text-[#168f84]">{path}</span>
                       </div>
                     ))}
                   </div>
                 </section>
-                <section className="border border-border bg-[#171918] text-white">
-                  <div className="border-b border-white/10 px-5 py-4">
-                    <div className="flex items-center gap-2">
-                      <Code2 className="size-4 text-[#25b6a6]" />
-                      <h2 className="text-xs font-extrabold tracking-[0.13em]">
-                        {ui.currentCommand}
-                      </h2>
-                    </div>
-                  </div>
-                  <div className="p-6">
-                    <code className="block break-words font-mono text-[11px] leading-6 text-white/72">
-                      {command}
-                    </code>
-                    <div className="mt-6 border-t border-white/10 pt-5">
-                      <p className="text-[9px] font-bold tracking-[0.14em] text-white/40">
-                        {ui.compatibility}
-                      </p>
-                      <p className="mt-2 text-[10px] leading-5 text-white/55">
-                        {ui.compatibilityNote}
+                <section className="border border-border bg-[#f7f7f4] p-5">
+                  <div className="flex gap-3">
+                    <HardDrive className="size-4 text-[#25b6a6]" />
+                    <div>
+                      <p className="text-xs font-bold">{ui.sourcePolicy}</p>
+                      <p className="mt-2 text-[10px] leading-5 text-muted-foreground">
+                        {ui.sourcePolicyNote}
                       </p>
                     </div>
                   </div>
                 </section>
+              </aside>
+            </div>
+          </section>
+        )}
+
+        {tab === 'assembly' && (
+          <section>
+            <SectionTitle
+              eyebrow={ui.outputsEyebrow}
+              title={ui.outputsTitle}
+              note={ui.outputsNote}
+            />
+            <AssemblyPanel plan={plan} locale={locale} onGoReview={() => setTab('review')} />
+            <div className="grid gap-6 xl:grid-cols-2">
+              {liveOutputs.map((item, index) => (
+                <article
+                  key={item.id}
+                  className="overflow-hidden border border-border bg-white"
+                >
+                  <div className="flex flex-wrap items-center justify-end gap-3 border-b border-border px-6 py-3">
+                    <a
+                      href={item.download || item.src}
+                      download={item.name}
+                      className="text-[11px] font-bold hover:text-[#e85578]"
+                    >
+                      {transfer.download} · MP4
+                    </a>
+                    <DeleteMediaButton
+                      locale={locale}
+                      kind="jobs"
+                      id={item.id}
+                      name={item.name}
+                      onDeleted={() => removeOutput(item.id)}
+                    />
+                  </div>
+                  <div className="relative aspect-video bg-black">
+                    <video
+                      className="h-full w-full object-contain"
+                      controls
+                      preload="metadata"
+                      poster={item.poster || undefined}
+                      src={item.src}
+                    />
+                    <span className="absolute left-4 top-4 bg-[#25b6a6] px-3 py-1 text-[9px] font-bold tracking-[0.12em] text-white">
+                      RUN 0{index + 1} · {ui.runPassed}
+                    </span>
+                  </div>
+                  <div className="p-6">
+                    <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+                      <div>
+                        <p className="text-base font-extrabold tracking-[0.03em]">
+                          {item.name}
+                        </p>
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          {formatMeta(item.meta)}
+                        </p>
+                      </div>
+                      <Button
+                        onClick={() => {
+                          setSelectedOutput(item);
+                          setTab('sandbox');
+                        }}
+                        variant="outline"
+                        className="rounded-none text-[10px] font-bold tracking-[0.1em]"
+                      >
+                        {ui.useAsPreview}
+                        <ChevronRight className="size-3.5" />
+                      </Button>
+                    </div>
+                    <div className="mt-6 grid grid-cols-3 gap-px bg-border">
+                      <div className="bg-[#fafaf8] p-4">
+                        <Label>{ui.runtime}</Label>
+                        <strong className="text-sm">
+                          {formatRuntime(item.runtime)}
+                        </strong>
+                      </div>
+                      <div className="bg-[#fafaf8] p-4">
+                        <Label>{ui.fileSize}</Label>
+                        <strong className="text-sm">{item.size}</strong>
+                      </div>
+                      <div className="bg-[#fafaf8] p-4">
+                        <Label>{ui.codec}</Label>
+                        <strong className="text-sm">H.264/AAC</strong>
+                      </div>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+            {liveOutputs.length === 0 && (
+              <p className="border border-dashed border-border bg-white p-12 text-center text-sm text-muted-foreground">
+                {locale === 'zh-TW'
+                  ? '尚無產出，完成生成後會顯示於此。'
+                  : locale === 'en'
+                    ? 'No outputs yet. Completed generations will appear here.'
+                    : '作品はありません。生成が完了するとここに表示されます。'}
+              </p>
+            )}
+            <div className="mt-6 border border-border bg-[#171918] p-6 text-white">
+              <div className="grid gap-5 md:grid-cols-[auto_1fr_auto] md:items-center">
+                <div className="grid size-12 place-items-center rounded-full border border-white/15">
+                  <Check className="size-5 text-[#25b6a6]" />
+                </div>
+                <div>
+                  <p className="text-sm font-bold">{ui.workflowConnected}</p>
+                  <p className="mt-1 text-[11px] leading-5 text-white/55">
+                    {ui.workflowNote}
+                  </p>
+                </div>
+                <span className="text-[10px] font-bold tracking-[0.14em] text-[#76d5cb]">
+                  {liveOutputs.length} {ui.outputCount}
+                </span>
               </div>
-            </section>
-          )}
+            </div>
+          </section>
+        )}
+
+        {tab === 'workstation' && (
+          <section>
+            <SectionTitle
+              eyebrow={ui.envEyebrow}
+              title={ui.envTitle}
+              note={ui.envNote}
+            />
+            <WorkstationPanel
+              plan={plan}
+              locale={locale}
+              onPlanChange={(next) => {
+                setPlan(next);
+                setHostVersion((version) => version + 1);
+              }}
+            />
+            <p className="mb-4 border border-border bg-white p-4 text-xs">
+              {transfer.gpu}:{' '}
+              <strong>{computeDevice || transfer.offline}</strong>
+            </p>
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <Stat label={ui.accelerator} value="NVIDIA GB10" accent />
+              <Stat label={ui.unifiedMemory} value="121.69 GiB" />
+              <Stat label={ui.peakResident} value="~42 GiB" />
+              <Stat label={ui.architecture} value="ARM64" />
+            </div>
+            <div className="mt-6 grid gap-6 lg:grid-cols-2">
+              <section className="border border-border bg-white">
+                <div className="border-b border-border px-5 py-4">
+                  <div className="flex items-center gap-2">
+                    <Cpu className="size-4 text-[#e85578]" />
+                    <h2 className="text-xs font-extrabold tracking-[0.13em]">
+                      {ui.runtimeStack}
+                    </h2>
+                  </div>
+                </div>
+                <div className="grid gap-px bg-border sm:grid-cols-2">
+                  {[
+                    ['CUDA', '13.0', Zap],
+                    ['PyTorch', '2.11', Layers3],
+                    [ui.precision, 'BF16', CircleGauge],
+                    [ui.attention, 'SDPA', Gauge],
+                    [ui.swap, '0 GiB', MemoryStick],
+                    [ui.output, 'H.264 + AAC', FileVideo],
+                  ].map(([label, value, Icon]) => {
+                    const I = Icon as typeof Cpu;
+                    return (
+                      <div key={label as string} className="bg-white p-5">
+                        <I className="mb-4 size-4 text-[#25b6a6]" />
+                        <Label>{label as string}</Label>
+                        <strong className="text-lg">{value as string}</strong>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+              <section className="border border-border bg-white">
+                <div className="border-b border-border px-5 py-4">
+                  <div className="flex items-center gap-2">
+                    <Clock3 className="size-4 text-[#e85578]" />
+                    <h2 className="text-xs font-extrabold tracking-[0.13em]">
+                      {ui.measuredPerformance}
+                    </h2>
+                  </div>
+                </div>
+                <div className="p-6">
+                  <div className="space-y-6">
+                    <div>
+                      <div className="mb-2 flex justify-between text-xs font-bold">
+                        <span>384 × 256 · 17F</span>
+                        <span>33.69s</span>
+                      </div>
+                      <div className="h-2 bg-[#efefec]">
+                        <div className="h-full w-[73%] bg-[#25b6a6]" />
+                      </div>
+                    </div>
+                    <div>
+                      <div className="mb-2 flex justify-between text-xs font-bold">
+                        <span>768 × 512 · 49F</span>
+                        <span>46.18s</span>
+                      </div>
+                      <div className="h-2 bg-[#efefec]">
+                        <div className="h-full w-full bg-[#ff6f91]" />
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-8 border-t border-border pt-5 text-[10px] leading-5 text-muted-foreground">
+                    {ui.performanceNote}
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            <div className="mt-6 grid gap-6 xl:grid-cols-[1.1fr_.9fr]">
+              <section className="border border-border bg-white">
+                <div className="border-b border-border px-5 py-4">
+                  <div className="flex items-center gap-2">
+                    <FolderOpen className="size-4 text-[#e85578]" />
+                    <h2 className="text-xs font-extrabold tracking-[0.13em]">
+                      {ui.localPaths}
+                    </h2>
+                  </div>
+                </div>
+                <div className="divide-y divide-border font-mono text-[10px]">
+                  {[
+                    [ui.repository, 'work/ltx-2.3/LTX-2'],
+                    [ui.launcher, 'outputs/run-ltx-2.3.sh'],
+                    [ui.guide, 'outputs/LTX-2.3-使用說明.md'],
+                    [ui.mainOutput, 'outputs/ltx-2.3-512x768.mp4'],
+                    [ui.smokeTest, 'outputs/ltx-2.3-smoke.mp4'],
+                  ].map(([label, path]) => (
+                    <div
+                      key={label}
+                      className="grid gap-2 p-5 sm:grid-cols-[120px_1fr]"
+                    >
+                      <span className="font-sans font-bold text-muted-foreground">
+                        {label}
+                      </span>
+                      <span className="break-all text-[#168f84]">{path}</span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+              <section className="border border-border bg-[#171918] text-white">
+                <div className="border-b border-white/10 px-5 py-4">
+                  <div className="flex items-center gap-2">
+                    <Code2 className="size-4 text-[#25b6a6]" />
+                    <h2 className="text-xs font-extrabold tracking-[0.13em]">
+                      {ui.currentCommand}
+                    </h2>
+                  </div>
+                </div>
+                <div className="p-6">
+                  <code className="block break-words font-mono text-[11px] leading-6 text-white/72">
+                    {command}
+                  </code>
+                  <div className="mt-6 border-t border-white/10 pt-5">
+                    <p className="text-[9px] font-bold tracking-[0.14em] text-white/40">
+                      {ui.compatibility}
+                    </p>
+                    <p className="mt-2 text-[10px] leading-5 text-white/55">
+                      {ui.compatibilityNote}
+                    </p>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </section>
+        )}
         </div>
       </div>
 
