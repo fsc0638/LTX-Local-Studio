@@ -14,6 +14,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import {
+  motionCanvasDependencies,
+  motionCanvasViteConfig,
+} from '@/lib/motion-canvas-project';
 import { serviceFetch } from '@/lib/service-session';
 import type { Asset } from '@/components/media-library';
 import type { InstalledModel } from '@/components/model-composer';
@@ -308,24 +312,13 @@ export function MotionCanvasComposer({
             private: true,
             type: 'module',
             scripts: { start: 'vite --host 127.0.0.1', build: 'vite build' },
-            dependencies: {
-              '@motion-canvas/2d': '^3.17.2',
-              '@motion-canvas/core': '^3.17.2',
-              '@motion-canvas/ffmpeg': '^3.17.2',
-              '@motion-canvas/ui': '^3.17.2',
-              '@motion-canvas/vite-plugin': '^3.17.2',
-              vite: '^5.4.21',
-              typescript: '^5.9.3',
-            },
+            dependencies: motionCanvasDependencies,
           },
           null,
           2,
         ),
       );
-      zip.file(
-        'vite.config.ts',
-        `import {defineConfig} from 'vite';\nimport motionCanvas from '@motion-canvas/vite-plugin';\nimport ffmpeg from '@motion-canvas/ffmpeg';\nexport default defineConfig({plugins: [motionCanvas(), ffmpeg()]});\n`,
-      );
+      zip.file('vite.config.ts', motionCanvasViteConfig);
       zip.file(
         'tsconfig.json',
         JSON.stringify(
