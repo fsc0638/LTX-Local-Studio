@@ -819,6 +819,7 @@ function Studio() {
 
   const [prompt, setPrompt] = useState(initialPrompt);
   const [model, setModel] = useState('ltx23-distilled');
+  const isLtxVideo = model === 'ltx23-distilled' || model === 'ltx25-fast';
   const [models, setModels] = useState<InstalledModel[]>([]);
   const [catalogError, setCatalogError] = useState(false);
   const [mode, setMode] = useState('t2v');
@@ -1294,7 +1295,8 @@ function Studio() {
           if (
             data.active_job &&
             (!data.active_job.model ||
-              data.active_job.model === 'ltx23-distilled')
+              data.active_job.model === 'ltx23-distilled' ||
+              data.active_job.model === 'ltx25-fast')
           ) {
             setActiveJobId(data.active_job.id);
             setGenerating(true);
@@ -1737,7 +1739,7 @@ function Studio() {
                 </SelectTrigger>
                 <SelectContent>
                   {models.map((item) => (
-                    <SelectItem key={item.id} value={item.id}>
+                    <SelectItem key={item.id} value={item.id} disabled={!item.available}>
                       {item.label} · {item.media_type}
                     </SelectItem>
                   ))}
@@ -1760,7 +1762,7 @@ function Studio() {
           </section>
         )}
         {tab === 'sandbox' &&
-          model !== 'ltx23-distilled' &&
+          !isLtxVideo &&
           model !== 'motion-canvas' &&
           models.find((item) => item.id === model) && (
             <ModelComposer
@@ -1776,7 +1778,7 @@ function Studio() {
             onSelectModel={setModel}
           />
         )}
-        {tab === 'sandbox' && model === 'ltx23-distilled' && (
+        {tab === 'sandbox' && isLtxVideo && (
           <section>
             <SectionTitle
               eyebrow={ui.createEyebrow}
@@ -2178,7 +2180,7 @@ function Studio() {
                       <label>
                         <Label>{ui.model}</Label>
                         <Input
-                          value="LTX-2.3 Distilled"
+                          value={models.find((item) => item.id === model)?.label ?? model}
                           readOnly
                           className="rounded-none"
                         />
