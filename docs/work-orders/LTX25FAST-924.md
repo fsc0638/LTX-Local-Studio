@@ -23,13 +23,16 @@
 - 沙盒模型選單可辨識完整 LTX 影片介面；2.5 缺權重時不可選，2.3 仍為預設。
 - 建立固定 seed／解析度／參照圖的三案 A/B 畫質規格於 `docs/LTX25_FAST_EVALUATION.md`。
 - 無權重驗證：Python 448 tests、Node 100 tests、TypeScript、production build 全數通過。
+- 已下載並驗證官方 LTX 2.5 Fast split checkpoint 五個必要元件，catalog 顯示 installed/available。
+- GB10 最小 smoke test 通過：49/49 幀完整解碼、black-frame ratio 0、未 OOM，runtime 45.98s。
+- 三組固定條件 LTX 2.3／2.5 A/B 全數通過技術 QC；2.5 的角色身份、線條與大幅動作一致性較佳，且未硬轉 3D。
+- 實測採 conv video VAE 且穩定；建議第一版暫不啟用 DFR，保留 2.3 預設與回退路徑。
 
 ### 未完成
 
-- 下載官方 gated LTX 2.5 權重（約 66 GiB）。
-- 執行 GB10 真模型 smoke test 與 2.3/2.5 A/B 畫質測試。
-- 依實測結果決定 diffusion VAE 或 conv VAE，以及是否啟用 DFR。
+- 尚未合併或部署；正式站仍維持 `ltx23-distilled`。
+- diffusion VAE／DFR 尚未做獨立 A/B，不列入本工單第一版。
 
 ### 需要阿寶做的事
 
-- 核准模型下載與隔離實機測試後，再使用主機既有的 Hugging Face 登入狀態下載；不在聊天中提供 token。
+- 審閱本分支測試結果；若接受「2.5 可選、2.3 保持預設、conv VAE、DFR 關閉」策略，再決定是否合併。
