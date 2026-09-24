@@ -47,6 +47,7 @@ import {
   ModelComposer,
   type InstalledModel,
 } from '@/components/model-composer';
+import { MotionCanvasComposer } from '@/components/motion-canvas-composer';
 import { DeleteMediaButton } from '@/components/delete-media-button';
 import {
   durationFrames,
@@ -167,6 +168,18 @@ type ApiJob = {
   message?: string;
   error?: string;
 };
+
+const MOTION_CANVAS_MODEL: InstalledModel = {
+  id: 'motion-canvas',
+  label: 'Motion Canvas',
+  media_type: 'video',
+  available: true,
+  description: 'Interactive TypeScript motion-graphics project builder and tool workspace.',
+  accepts_image: true,
+  modes: ['project'],
+  parameters: {},
+};
+
 type Health = {
   ok: boolean;
   runtime?: { cuda_available?: boolean; device?: string; error?: string };
@@ -1255,7 +1268,10 @@ function Studio() {
         return response.json() as Promise<{ models: InstalledModel[] }>;
       })
       .then((data) => {
-        setModels(data.models);
+        setModels([
+          ...data.models.filter((item) => item.id !== MOTION_CANVAS_MODEL.id),
+          MOTION_CANVAS_MODEL,
+        ]);
         setCatalogError(false);
       })
       .catch(() => {
@@ -1747,6 +1763,7 @@ function Studio() {
         )}
         {tab === 'sandbox' &&
           !isLtxVideo &&
+          model !== 'motion-canvas' &&
           models.find((item) => item.id === model) && (
             <ModelComposer
               key={model}
@@ -1754,6 +1771,13 @@ function Studio() {
               locale={locale}
             />
           )}
+        {tab === 'sandbox' && model === 'motion-canvas' && (
+          <MotionCanvasComposer
+            locale={locale}
+            models={models}
+            onSelectModel={setModel}
+          />
+        )}
         {tab === 'sandbox' && isLtxVideo && (
           <section>
             <SectionTitle
