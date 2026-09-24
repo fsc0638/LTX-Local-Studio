@@ -14,8 +14,10 @@ The Sandbox workspace collects:
 - host audio analysis (Whisper/stable-ts/librosa) and links to installed image adapters.
 
 `Download Motion Canvas project` creates a ZIP containing a standalone Motion Canvas 3.17.2
-project, selected private assets, a project manifest, TypeScript scene, FFmpeg exporter config
-and setup instructions. The user opens that project in Motion Canvas Editor and starts the
+project, selected private assets, a parsed LRC timeline, animated TypeScript scene, FFmpeg
+exporter config, macOS launcher and setup instructions. On macOS, `start-mac.command` installs
+missing project-local packages, starts the Editor on port 9000 and opens the browser without
+sudo or global installs. The user reviews the project in Motion Canvas Editor and starts the
 render there. Asset bytes are read through the authenticated same-origin media endpoint and are
 only copied into the user-requested download.
 
