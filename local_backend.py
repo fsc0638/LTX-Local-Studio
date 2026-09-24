@@ -187,7 +187,7 @@ def record_job(job):
 
 
 def generation_provenance(payload):
-    if payload["model"] != "ltx23-distilled":
+    if not model_registry.is_ltx(payload["model"]):
         import inspect
         adapter = model_registry.get(payload["model"])
         source = inspect.getsourcefile(adapter.command)
@@ -195,8 +195,16 @@ def generation_provenance(payload):
                 "contract_version": worker.CONTRACT_VERSION, "runtime": dict(RUNTIME),
                 "adapter_code": file_fingerprint(source, digest=True) if source else None,
                 "weights_content_verified": False, "precision": "adapter_defined"}
-    checkpoint = Path(os.environ.get("LTX_CHECKPOINT_PATH", LTX_REPO_ROOT / "models/LTX-2.3/ltx-2.3-22b-distilled-1.1.safetensors"))
-    upsampler = Path(os.environ.get("LTX_UPSAMPLER_PATH", LTX_REPO_ROOT / "models/LTX-2.3/ltx-2.3-spatial-upscaler-x2-1.1.safetensors"))
+    if payload["model"] == "ltx25-fast":
+        components = model_registry.ltx25_paths()
+        checkpoint = components["transformer"]
+        upsampler = components["upsampler"]
+        launcher = SITE_ROOT / "scripts/run-ltx-2.5-fast.sh"
+    else:
+        checkpoint = Path(os.environ.get("LTX_CHECKPOINT_PATH", LTX_REPO_ROOT / "models/LTX-2.3/ltx-2.3-22b-distilled-1.1.safetensors"))
+        upsampler = Path(os.environ.get("LTX_UPSAMPLER_PATH", LTX_REPO_ROOT / "models/LTX-2.3/ltx-2.3-spatial-upscaler-x2-1.1.safetensors"))
+        components = {}
+        launcher = LAUNCHER
     try:
         revision = subprocess.run(["git", "-C", str(LTX_REPO_ROOT), "rev-parse", "HEAD"],
                                   capture_output=True, text=True, timeout=3, check=True).stdout.strip()
@@ -204,9 +212,11 @@ def generation_provenance(payload):
         revision = "unknown"
     provenance = {"source": "live_generation", "pipeline_commit": revision,
                   "runtime": {key: RUNTIME.get(key) for key in ("device", "torch", "cuda_available")},
-                  "checkpoint": file_fingerprint(checkpoint), "upsampler": file_fingerprint(upsampler),
+                  "model": payload["model"], "checkpoint": file_fingerprint(checkpoint),
+                  "upsampler": file_fingerprint(upsampler),
+                  "components": {name: file_fingerprint(path) for name, path in components.items()},
                   "code": [file_fingerprint(path, digest=True) for path in
-                           (LAUNCHER, SITE_ROOT / "scripts/run_local.py", SITE_ROOT / "local_backend.py",
+                           (launcher, SITE_ROOT / "scripts/run_local.py", SITE_ROOT / "local_backend.py",
                             SITE_ROOT / "worker_contract.py", SITE_ROOT / "scripts/check_output.py")],
                   "contract_version": worker.CONTRACT_VERSION,
                   "profile": payload.get("profile", "compat-v1"),
@@ -594,10 +604,11 @@ def parse_payload(raw: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("請先輸入提示詞。")
     if len(prompt) > 4000:
         raise ValueError("提示詞不可超過 4000 個字元。")
-    if raw.get("model", "ltx23-distilled") != "ltx23-distilled":
-        raise ValueError("目前本機後端已連接 LTX-2.3 Distilled；其他模型尚未安裝對應執行器。")
+    model = raw.get("model", "ltx23-distilled")
+    if not model_registry.is_ltx(model):
+        raise ValueError("目前請求不是已安裝的 LTX 影片模型。")
     if "negative_prompt" in raw and (not isinstance(raw["negative_prompt"], str) or raw["negative_prompt"].strip()):
-        raise ValueError("LTX-2.3 Distilled 不支援負面提示詞（CFG=1）。需安裝 Dev 模型及 guided 執行器；不會默默忽略此欄位。")
+        raise ValueError("LTX Fast Distilled 不支援負面提示詞（CFG=1）；不會默默忽略此欄位。")
     mode = raw.get("mode", "t2v")
     if mode not in {"t2v", "i2v"}:
         raise ValueError("支援文字或圖片生成；影片轉影片尚未接通。")
@@ -668,7 +679,7 @@ def parse_payload(raw: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"timeout_seconds 必須是 30–{worker.MAX_TIMEOUT} 的整數。")
     payload = {
         "prompt": prompt,
-        "model": "ltx23-distilled",
+        "model": model,
         "mode": mode,
         "image_id": image_id,
         "audio": raw.get("audio", True),
@@ -737,8 +748,9 @@ def submit_job(payload, *, key=None, request_hash=None, external=None, requested
             if owner_id and asset.get("owner_id") != owner_id:
                 raise ValueError("Reference asset is not available to this account")
         adapter = model_registry.get(payload["model"])
-        if adapter.requires_cuda and not RUNTIME.get("cuda_available"):
-            return 503, {"error": "CUDA GPU unavailable", "code": "worker_unavailable"}
+        if not adapter.is_available(RUNTIME):
+            reason = adapter.readiness()[1] if adapter.readiness else "CUDA GPU unavailable"
+            return 503, {"error": reason or "CUDA GPU unavailable", "code": "worker_unavailable"}
         if key and STORE is None:
             return 503, {"error": "Durable job store unavailable", "code": "store_unavailable"}
         if owner_id and (STORE is None or STORE.recent_count(owner_id, time.time() - 86400) >= int(os.environ.get("LTX_USER_DAILY_JOB_LIMIT", "20"))):
