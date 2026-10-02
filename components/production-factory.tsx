@@ -387,7 +387,7 @@ function statusTone(status: FactoryShotState): string {
 function requestMeta(request: FactoryRequest): string {
   const duration = Number(request.duration_seconds || 0);
   const model =
-    typeof request.model === 'string' ? request.model : 'ltx23-distilled';
+    typeof request.model === 'string' ? request.model : 'ltx25-fast';
   const mode = typeof request.mode === 'string' ? request.mode : 't2v';
   const aspectRatio =
     typeof request.aspect_ratio === 'string' ? request.aspect_ratio : undefined;

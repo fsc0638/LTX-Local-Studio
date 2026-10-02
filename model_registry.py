@@ -83,6 +83,8 @@ class MediaAdapter:
                 raise ValueError(f"Invalid type for parameter {name}")
             if type(value) in (int, float) and (not math.isfinite(value) or value < rule.get("minimum", -1e12) or value > rule.get("maximum", 1e12)):
                 raise ValueError(f"Parameter out of range: {name}")
+            if type(value) is int and rule.get("step") and (value - rule.get("step_base", 0)) % rule["step"]:
+                raise ValueError(f"Parameter is off the required grid: {name}")
             if isinstance(value, str) and len(value) > rule.get("maxLength", 2000):
                 raise ValueError(f"Parameter too long: {name}")
             if "enum" in rule and value not in rule["enum"]:
@@ -140,6 +142,14 @@ def ltx25_command(payload, output, context):
 LTX_MODELS = frozenset({"ltx23-distilled", "ltx25-fast"})
 
 
+def default_ltx_model():
+    """Prefer 2.5 on this host, but keep portable/test installs from becoming unusable."""
+    configured = os.environ.get("LTX_DEFAULT_MODEL")
+    if configured in LTX_MODELS:
+        return configured
+    return "ltx25-fast" if ltx25_readiness()[0] else "ltx23-distilled"
+
+
 def is_ltx(model_id):
     return model_id in LTX_MODELS
 
@@ -168,14 +178,17 @@ def register(adapter):
 
 
 def load_installed():
-    for name in filter(None, (value.strip() for value in os.environ.get("LTX_MODEL_ADAPTERS", "").split(","))):
+    names = ["local_adapters.controlled_video", *filter(None, (value.strip() for value in os.environ.get("LTX_MODEL_ADAPTERS", "").split(",")))]
+    for name in dict.fromkeys(names):
         if not re.fullmatch(r"local_adapters\.[a-z][a-z0-9_]*", name):
             raise ValueError("Adapters must be trusted local_adapters modules, not paths or URLs")
         module = importlib.import_module(name)
-        register(module.ADAPTER)
+        if module.ADAPTER.id not in ADAPTERS:
+            register(module.ADAPTER)
         # A module may ship a family (local_adapters.imagegen registers two models).
         for extra in getattr(module, "EXTRA_ADAPTERS", ()):
-            register(extra)
+            if extra.id not in ADAPTERS:
+                register(extra)
 
 
 def get(model_id):

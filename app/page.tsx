@@ -818,7 +818,7 @@ function Studio() {
   const [keyframesAttention, setKeyframesAttention] = useState(0);
 
   const [prompt, setPrompt] = useState(initialPrompt);
-  const [model, setModel] = useState('ltx23-distilled');
+  const [model, setModel] = useState('ltx25-fast');
   const isLtxVideo = model === 'ltx23-distilled' || model === 'ltx25-fast';
   const [models, setModels] = useState<InstalledModel[]>([]);
   const [catalogError, setCatalogError] = useState(false);

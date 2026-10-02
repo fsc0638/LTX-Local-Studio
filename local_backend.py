@@ -309,6 +309,18 @@ def job_environment(payload):
             # Resolved here, from an id the owner check at admission already passed; the adapter's
             # client never sees an id, only this path.
             env[f"LTX_IMAGE_{slot}"] = str(asset_path(asset_by_id(reference)))
+    adapter = model_registry.get(payload["model"])
+    for name, rule in adapter.parameters.items():
+        value = (payload.get("parameters") or {}).get(name)
+        env_name = "LTX_PARAM_" + name.upper()
+        env.pop(env_name, None)
+        env.pop("LTX_ASSET_" + name.upper(), None)
+        if value is None:
+            continue
+        if rule.get("asset_kind"):
+            env["LTX_ASSET_" + name.upper()] = str(asset_path(asset_by_id(str(value))))
+        else:
+            env[env_name] = "1" if value is True else "0" if value is False else str(value)
     if payload.get("offload"):
         env["LTX_OFFLOAD"] = "cpu"
     else:
@@ -604,7 +616,7 @@ def parse_payload(raw: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("請先輸入提示詞。")
     if len(prompt) > 4000:
         raise ValueError("提示詞不可超過 4000 個字元。")
-    model = raw.get("model", "ltx23-distilled")
+    model = raw.get("model", model_registry.default_ltx_model())
     if not model_registry.is_ltx(model):
         raise ValueError("目前請求不是已安裝的 LTX 影片模型。")
     if "negative_prompt" in raw and (not isinstance(raw["negative_prompt"], str) or raw["negative_prompt"].strip()):
@@ -731,8 +743,20 @@ def submit_job(payload, *, key=None, request_hash=None, external=None, requested
             return 503, {"error": "Worker is shutting down", "code": "worker_unavailable"}
         if any(job["status"] in {"queued", "running"} for job in JOBS.values()):
             return 409, {"error": "GPU busy; retry this request later with the same idempotency key", "code": "worker_busy", "retry_after_seconds": 5}
+        # Legacy/internal callers may reach admission before request normalization.
+        adapter = model_registry.get(payload.get("model", model_registry.default_ltx_model()))
+        adapter_assets = []
+        for name, rule in adapter.parameters.items():
+            reference_id = (payload.get("parameters") or {}).get(name)
+            if not reference_id or not rule.get("asset_kind"):
+                continue
+            asset = asset_by_id(str(reference_id))
+            if asset.get("kind") != rule["asset_kind"]:
+                raise ValueError(f"{name} must reference an uploaded {rule['asset_kind']} asset")
+            adapter_assets.append(str(reference_id))
         reference_ids = [*character_consistency.reference_ids(payload.get("character"), payload.get("image_id")),
                          payload.get("timeline", {}).get("audio_id"),
+                         *adapter_assets,
                          *(str(v) for k, v in (payload.get("parameters") or {}).items()
                            if (k.startswith("reference_") or k == "mask_image_id") and v)]
         if payload.get("model") == POST_MODEL:
@@ -747,7 +771,6 @@ def submit_job(payload, *, key=None, request_hash=None, external=None, requested
             asset = asset_by_id(reference_id)
             if owner_id and asset.get("owner_id") != owner_id:
                 raise ValueError("Reference asset is not available to this account")
-        adapter = model_registry.get(payload["model"])
         if not adapter.is_available(RUNTIME):
             reason = adapter.readiness()[1] if adapter.readiness else "CUDA GPU unavailable"
             return 503, {"error": reason or "CUDA GPU unavailable", "code": "worker_unavailable"}
@@ -2903,7 +2926,7 @@ def workstation_view(owner):
         queued[station_scheduler.station_of(model, model_registry.ADAPTERS)] += count
     current = FACTORY.inflight_any()
     job = (JOBS.get(current["job_id"]) if current and current.get("job_id") else None) or {}
-    averages = runtime_averages(list(models_queued) + ([current["request"].get("model", "ltx23-distilled")] if current else []))
+    averages = runtime_averages(list(models_queued) + ([current["request"].get("model", model_registry.default_ltx_model())] if current else []))
     # Draining what waits for the station on the GPU is how long until a switch could happen.
     drain = 0.0
     for model, count in models_queued.items():
@@ -2915,8 +2938,8 @@ def workstation_view(owner):
         "queue": queued,
         "current": ({"project_id": str(current["project_id"]), "project_title": current["project_title"],
                      "shot_id": str(current["id"]), "shot_title": current["title"],
-                     "model": (current["request"] or {}).get("model", "ltx23-distilled"),
-                     "station": station_scheduler.station_of((current["request"] or {}).get("model", "ltx23-distilled"), model_registry.ADAPTERS),
+                     "model": (current["request"] or {}).get("model", model_registry.default_ltx_model()),
+                     "station": station_scheduler.station_of((current["request"] or {}).get("model", model_registry.default_ltx_model()), model_registry.ADAPTERS),
                      "progress": job.get("progress"), "phase": job.get("phase"), "started_at": job.get("started_at")}
                     if current else None),
         "switch": {"imagegen_load_seconds": station_scheduler.SWITCH_SECONDS["imagegen"],

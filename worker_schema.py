@@ -23,7 +23,7 @@ def operation(summary, schema, status="200", **extra):
 def openapi_document():
     request_properties = {
         "prompt": {"type": "string", "minLength": 1, "maxLength": 4000, "description": "Must contain non-whitespace characters."},
-        "model": {"type": "string", "enum": sorted(model_registry.LTX_MODELS), "default": "ltx23-distilled"},
+        "model": {"type": "string", "enum": sorted(model_registry.LTX_MODELS), "default": model_registry.default_ltx_model()},
         "profile": {"type": "string", "enum": list(contract.PROFILES), "default": "compat-v1",
                     "description": "Versioned base defaults; explicit fields take precedence. Profiles do not guarantee visual quality or memory capacity."},
         "mode": {"type": "string", "enum": ["t2v", "i2v"], "default": "t2v"},
