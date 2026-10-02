@@ -109,7 +109,7 @@ class ModelAdapterTests(unittest.TestCase):
 
     def test_controlled_video_contracts_are_strict_and_asset_typed(self):
         normalized = controlled_video.CONTROL.normalize({
-            "model": "ltx25-control", "mode": "v2v", "prompt": "walk",
+            "model": "ltx23-control", "mode": "v2v", "prompt": "walk",
             "parameters": {"control_video_id": "a" * 32, "frames": 121},
         })
         self.assertEqual(normalized["parameters"]["control_kind"], "performance")
@@ -118,7 +118,7 @@ class ModelAdapterTests(unittest.TestCase):
         for invalid in ({"frames": 120}, {"audio": False}):
             with self.assertRaises(ValueError):
                 controlled_video.CONTROL.normalize({
-                    "model": "ltx25-control", "mode": "v2v", "prompt": "walk",
+                    "model": "ltx23-control", "mode": "v2v", "prompt": "walk",
                     "parameters": {"control_video_id": "a" * 32, **invalid},
                 })
 

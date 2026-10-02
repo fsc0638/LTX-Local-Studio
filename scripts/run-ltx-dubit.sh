@@ -18,7 +18,7 @@ args=( -m ltx_pipelines.dubit
   --distilled-checkpoint-path "${LTX_CHECKPOINT_PATH:-$root/ltx-2.3-22b-distilled-1.1.safetensors}"
   --gemma-root "${LTX_GEMMA_ROOT:-$repo/models/gemma-3-12b}"
   --spatial-upsampler-path "${LTX_UPSAMPLER_PATH:-$root/ltx-2.3-spatial-upscaler-x2-1.1.safetensors}"
-  --lora "${LTX_DUBIT_LORA_PATH:-$root/ltx-2.3-22b-ic-lora-dubit.safetensors}" 1.0
+  --lora "${LTX_DUBIT_LORA_PATH:-$repo/models/control/ltx-2.3-22b-ic-lora-dubit-0.9.safetensors}" 1.0
   --reference-video "$reference"
   --reference-strength "${LTX_PARAM_REFERENCE_STRENGTH:-1.0}"
   --prompt "${1:?Missing prompt}" --output-path "${2:?Missing output}"

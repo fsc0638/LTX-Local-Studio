@@ -82,7 +82,7 @@ CF-Access-Client-Secret: <service-token-secret>
 
 上傳是原始二進位，不是 multipart：例如 `Content-Type: image/png`，body 為檔案 bytes。
 可上傳 PNG／JPEG／WebP／MP4 與已支援的音訊格式，每檔 50 MiB、共用素材庫 2 GiB。
-圖片可作 I2V 首格；`ltx25-control`／`ltx23-dubit` 使用已上傳 MP4，`ltx25-a2v` 使用已上傳音訊。
+圖片可作 I2V 首格；`ltx23-control`／`ltx23-dubit` 使用已上傳 MP4，`ltx25-a2v` 使用已上傳音訊。
 這些素材 ID 都會驗證類型與帳號所有權，子程序只收到伺服器解析後的私有路徑。不接受遠端 URL、任意本機路徑或外部 callback URL，避免 SSRF 與任意檔案讀取。
 
 ### 送出影片任務
@@ -178,7 +178,8 @@ I2V 改為 `"mode": "i2v"`，另帶上傳回傳的 `"image_id": "..."`。
 
 受控生成是獨立模型契約，不會默默退回純提示詞生成：
 
-- `ltx25-control`：官方 `ic_lora`，以 performance／pose／camera 影片固定動作與鏡頭結構，可另帶角色首格。
+- `ltx23-control`：官方 `ic_lora`，以 motion-track／pose 影片固定表演或骨架，可另帶角色首格。
+- `ltx23-camera`：官方 camera-control LoRA，選擇 dolly／jib／static 等明確運鏡，可另帶角色首格；它不是任意相機路徑影片追蹤。
 - `ltx25-a2v`：官方 `a2vid_two_stage`，以已鎖定音訊驅動說話或歌唱，可另帶角色首格。
 - `ltx23-dubit`：官方 `dubit`，以參考演出保留說話者與表演，再依新語音重做嘴型。
 
