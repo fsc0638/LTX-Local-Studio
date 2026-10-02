@@ -8,7 +8,7 @@ args=( -m ltx_pipelines.a2vid_two_stage
   --text-encoder-path "${LTX25_TEXT_ENCODER_PATH:-$root/text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors}"
   --video-vae-path "${LTX25_VIDEO_VAE_PATH:-$root/vae/ltx-2.5-video-vae-conv-bf16.safetensors}"
   --audio-vae-path "${LTX25_AUDIO_VAE_PATH:-$root/vae/ltx-2.5-audio-vae-bf16.safetensors}"
-  --distilled-lora "${LTX25_DISTILLED_LORA_PATH:-$root/loras/ltx-2.5-22b-distilled-lora-bf16.safetensors}" 1.0
+  --distilled-lora "${LTX25_DISTILLED_LORA_PATH:-$root/loras/ltx-2.5-22b-distilled-lora-450-bf16.safetensors}" 1.0
   --spatial-upsampler-path "${LTX25_UPSAMPLER_PATH:-$root/latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors}"
   --audio-path "${LTX_ASSET_AUDIO_ID:?Missing driving audio}" --a2v-guidance-scale "${LTX_PARAM_A2V_GUIDANCE:-3.0}"
   --prompt "${1:?Missing prompt}" --output-path "${2:?Missing output}"

@@ -37,33 +37,50 @@ def _missing(paths: dict[str, Path]) -> tuple[bool, str]:
     return (not absent, "" if not absent else "Missing controlled-video components: " + ", ".join(absent))
 
 
-def control_readiness() -> tuple[bool, str]:
-    paths = ltx25_paths()
-    loras = {
-        kind: _path(f"LTX_CONTROL_{kind.upper()}_LORA_PATH", Path(os.environ.get("LTX_REPO_ROOT", "")) / "models/control" / f"ltx-2.5-{kind}-ic-lora.safetensors")
-        for kind in ("performance", "pose", "camera")
+def _ltx23_paths() -> dict[str, Path]:
+    root = Path(os.environ.get("LTX_REPO_ROOT", ""))
+    return {
+        "checkpoint": _path("LTX_CHECKPOINT_PATH", root / "models/LTX-2.3/ltx-2.3-22b-distilled-1.1.safetensors"),
+        "upsampler": _path("LTX_UPSAMPLER_PATH", root / "models/LTX-2.3/ltx-2.3-spatial-upscaler-x2-1.1.safetensors"),
+        "gemma": _path("LTX_GEMMA_ROOT", root / "models/gemma-3-12b") / "config.json",
     }
-    ready, reason = _missing({**paths, **{f"{kind}_control_lora": path for kind, path in loras.items()}})
+
+
+def control_readiness() -> tuple[bool, str]:
+    root = Path(os.environ.get("LTX_REPO_ROOT", ""))
+    loras = {
+        "performance": _path("LTX_CONTROL_PERFORMANCE_LORA_PATH", root / "models/control/ltx-2.3-22b-ic-lora-motion-track-control-ref0.5.safetensors"),
+        "pose": _path("LTX_CONTROL_POSE_LORA_PATH", root / "models/control/ltx-2-19b-ic-lora-pose-control.safetensors"),
+    }
+    ready, reason = _missing({**_ltx23_paths(), **{f"{kind}_control_lora": path for kind, path in loras.items()}})
     return ready, reason
+
+
+CAMERA_MOVES = ("dolly-in", "dolly-left", "dolly-out", "dolly-right", "jib-down", "jib-up", "static")
+
+
+def camera_readiness() -> tuple[bool, str]:
+    root = Path(os.environ.get("LTX_REPO_ROOT", ""))
+    loras = {
+        move: _path(f"LTX_CAMERA_{move.replace('-', '_').upper()}_LORA_PATH", root / "models/control" / f"ltx-2-19b-lora-camera-control-{move}.safetensors")
+        for move in CAMERA_MOVES
+    }
+    return _missing({**_ltx23_paths(), **{f"camera_{move}_lora": path for move, path in loras.items()}})
 
 
 def a2v_readiness() -> tuple[bool, str]:
     paths = ltx25_paths()
     root = Path(os.environ.get("LTX_REPO_ROOT", "")) / "models/LTX-2.5"
     paths["full_transformer"] = _path("LTX25_A2V_TRANSFORMER_PATH", root / "diffusion_models/ltx-2.5-22b-dev-transformer-bf16.safetensors")
-    paths["distilled_lora"] = _path("LTX25_DISTILLED_LORA_PATH", root / "loras/ltx-2.5-22b-distilled-lora-bf16.safetensors")
+    paths["distilled_lora"] = _path("LTX25_DISTILLED_LORA_PATH", root / "loras/ltx-2.5-22b-distilled-lora-450-bf16.safetensors")
     paths.pop("transformer", None)
     return _missing(paths)
 
 
 def dubit_readiness() -> tuple[bool, str]:
     root = Path(os.environ.get("LTX_REPO_ROOT", ""))
-    return _missing({
-        "checkpoint": _path("LTX_CHECKPOINT_PATH", root / "models/LTX-2.3/ltx-2.3-22b-distilled-1.1.safetensors"),
-        "upsampler": _path("LTX_UPSAMPLER_PATH", root / "models/LTX-2.3/ltx-2.3-spatial-upscaler-x2-1.1.safetensors"),
-        "gemma": _path("LTX_GEMMA_ROOT", root / "models/gemma-3-12b") / "config.json",
-        "dubit_lora": _path("LTX_DUBIT_LORA_PATH", root / "models/LTX-2.3/ltx-2.3-22b-ic-lora-dubit.safetensors"),
-    })
+    return _missing({**_ltx23_paths(),
+        "dubit_lora": _path("LTX_DUBIT_LORA_PATH", root / "models/control/ltx-2.3-22b-ic-lora-dubit-0.9.safetensors")})
 
 
 def command(script: str):
@@ -73,14 +90,24 @@ def command(script: str):
 
 
 CONTROL = MediaAdapter(
-    id="ltx25-control", label="LTX 2.5 · Performance / Pose / Camera Control",
+    id="ltx23-control", label="LTX 2.3 · Performance / Pose Control",
     media_type="video", command=command("run-ltx-control.sh"), modes=("v2v",), accepts_image=True,
     readiness=control_readiness,
     description="Drive motion or camera structure from an uploaded reference video through an installed IC-LoRA.",
     parameters={**COMMON_VIDEO,
                 "control_video_id": {**VIDEO_ASSET, "title": "Control video"},
-                "control_kind": {"type": "string", "default": "performance", "enum": ["performance", "pose", "camera"]},
+                "control_kind": {"type": "string", "default": "performance", "enum": ["performance", "pose"]},
                 "control_strength": {"type": "number", "default": 1.0, "minimum": 0.0, "maximum": 1.0}},
+)
+
+CAMERA = MediaAdapter(
+    id="ltx23-camera", label="LTX 2.3 · Camera Control",
+    media_type="video", command=command("run-ltx-camera.sh"), modes=("t2v", "i2v"), accepts_image=True,
+    readiness=camera_readiness,
+    description="Apply one official camera-motion LoRA; an optional opening image locks character identity.",
+    parameters={**COMMON_VIDEO,
+                "camera_move": {"type": "string", "default": "static", "enum": list(CAMERA_MOVES)},
+                "camera_strength": {"type": "number", "default": 1.0, "minimum": 0.0, "maximum": 2.0}},
 )
 
 A2V = MediaAdapter(
@@ -102,4 +129,4 @@ DUBIT = MediaAdapter(
 )
 
 ADAPTER = CONTROL
-EXTRA_ADAPTERS = (A2V, DUBIT)
+EXTRA_ADAPTERS = (CAMERA, A2V, DUBIT)
