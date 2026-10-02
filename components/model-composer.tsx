@@ -12,7 +12,7 @@ import { serviceFetch } from "@/lib/service-session";
 import { DeleteMediaButton } from "@/components/delete-media-button";
 
 type Value = string | number | boolean;
-type Rule = { type: "string" | "number" | "integer" | "boolean"; title?: string; description?: string; default?: Value; enum?: Value[]; minimum?: number; maximum?: number; maxLength?: number; required?: boolean };
+type Rule = { type: "string" | "number" | "integer" | "boolean"; title?: string; description?: string; default?: Value; enum?: Value[]; minimum?: number; maximum?: number; maxLength?: number; required?: boolean; asset_kind?: Asset["kind"]; step?: number };
 export type InstalledModel = { id: string; label: string; media_type: "video" | "image" | "text"; available: boolean; description: string; accepts_image: boolean; modes: string[]; parameters: Record<string, Rule> };
 type Job = { id: string; status: string; status_url: string; progress: number; message?: string; media_type: InstalledModel["media_type"]; resolved_parameters: { model: string }; artifacts: { url: string; kind: string }[]; quality_control?: { passed: boolean; warnings?: string[] }; error?: { message?: string } };
 const copy = {
@@ -40,6 +40,7 @@ export function ModelComposer({ model, locale }: { model: InstalledModel; locale
   const [mode, setMode] = useState(model.modes[0]);
   const [values, setValues] = useState<Record<string, Value>>(() => Object.fromEntries(Object.entries(model.parameters).filter(([, r]) => r.default !== undefined).map(([name, r]) => [name, r.default!])));
   const [reference, setReference] = useState<Asset | null>(null);
+  const [assets, setAssets] = useState<Asset[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -68,6 +69,16 @@ export function ModelComposer({ model, locale }: { model: InstalledModel; locale
     const timer = window.setInterval(refresh, 3000);
     return () => { abort.abort(); window.clearInterval(timer); };
   }, [model.id, t.error]);
+
+  useEffect(() => {
+    const abort = new AbortController();
+    serviceFetch("/api/assets", { signal: abort.signal }).then(async (response) => {
+      if (!response.ok) throw new Error();
+      const result = await response.json() as { assets?: Asset[] };
+      if (!abort.signal.aborted) setAssets(result.assets || []);
+    }).catch(() => { if (!abort.signal.aborted) setError(t.error); });
+    return () => abort.abort();
+  }, [t.error]);
 
   const submit = async () => {
     const body = JSON.stringify({ model: model.id, prompt, mode, parameters: values, ...(reference ? { image_id: reference.id } : {}) });
@@ -115,7 +126,7 @@ export function ModelComposer({ model, locale }: { model: InstalledModel; locale
       <label className="block text-xs font-bold">{t.prompt}<Textarea required maxLength={4000} value={prompt} onChange={(e) => setPrompt(e.target.value)} className="mt-2 min-h-40 rounded-none" /></label>
       <label className="block text-xs font-bold">{t.mode}<Select value={mode} onValueChange={(value) => value && setMode(value)}><SelectTrigger className="mt-2 w-full"><SelectValue /></SelectTrigger><SelectContent>{model.modes.map((item) => <SelectItem key={item} value={item}>{item}</SelectItem>)}</SelectContent></Select></label>
       <div className="grid gap-4 sm:grid-cols-2">{Object.entries(model.parameters).map(([name, rule]) => <label key={name} className="block text-xs font-bold">{rule.title || name}{rule.required ? " *" : ""}
-        {rule.type === "boolean" ? <Switch className="ml-3" checked={Boolean(values[name])} onCheckedChange={(value) => update(name, value)} /> : rule.enum ? <Select value={values[name] === undefined ? null : String(values[name])} onValueChange={(value) => update(name, rule.enum!.find((item) => String(item) === value))}><SelectTrigger className="mt-2 w-full"><SelectValue /></SelectTrigger><SelectContent>{rule.enum.map((item) => <SelectItem key={String(item)} value={String(item)}>{String(item)}</SelectItem>)}</SelectContent></Select> : <Input className="mt-2 rounded-none" required={rule.required} type={rule.type === "string" ? "text" : "number"} step={rule.type === "integer" ? 1 : "any"} min={rule.minimum} max={rule.maximum} maxLength={rule.maxLength} value={String(values[name] ?? "")} onChange={(e) => update(name, e.target.value === "" ? undefined : rule.type === "string" ? e.target.value : Number(e.target.value))} />}
+        {rule.asset_kind ? <Select value={values[name] === undefined ? null : String(values[name])} onValueChange={(value) => value && update(name, value)}><SelectTrigger className="mt-2 w-full"><SelectValue placeholder={`Select ${rule.asset_kind}`} /></SelectTrigger><SelectContent>{assets.filter((asset) => asset.kind === rule.asset_kind).map((asset) => <SelectItem key={asset.id} value={asset.id}>{asset.name}</SelectItem>)}</SelectContent></Select> : rule.type === "boolean" ? <Switch className="ml-3" checked={Boolean(values[name])} onCheckedChange={(value) => update(name, value)} /> : rule.enum ? <Select value={values[name] === undefined ? null : String(values[name])} onValueChange={(value) => update(name, rule.enum!.find((item) => String(item) === value))}><SelectTrigger className="mt-2 w-full"><SelectValue /></SelectTrigger><SelectContent>{rule.enum.map((item) => <SelectItem key={String(item)} value={String(item)}>{String(item)}</SelectItem>)}</SelectContent></Select> : <Input className="mt-2 rounded-none" required={rule.required} type={rule.type === "string" ? "text" : "number"} step={rule.type === "integer" ? (rule.step ?? 1) : "any"} min={rule.minimum} max={rule.maximum} maxLength={rule.maxLength} value={String(values[name] ?? "")} onChange={(e) => update(name, e.target.value === "" ? undefined : rule.type === "string" ? e.target.value : Number(e.target.value))} />}
         {rule.description && <span className="mt-1 block text-[10px] font-normal text-muted-foreground">{rule.description}</span>}</label>)}</div>
       {reference && <p className="text-xs">{t.reference}: {reference.name} <button type="button" className="text-[#e85578] underline" onClick={() => setReference(null)}>{t.clear}</button></p>}
       {error && <p role="alert" className="text-xs text-red-700">{error}</p>}

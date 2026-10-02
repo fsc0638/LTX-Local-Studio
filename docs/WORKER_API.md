@@ -80,9 +80,10 @@ CF-Access-Client-Secret: <service-token-secret>
 | 下載影片 | `GET /api/v1/jobs/{id}/video?download=1` | MP4；支援 Range／HEAD |
 | 下載通用產出 | `GET /api/v1/jobs/{id}/artifact?download=1` | MP4／PNG／UTF-8 TXT；支援 Range／HEAD |
 
-上傳是原始二進位，不是 multipart：`Content-Type: image/png`，body 為檔案 bytes。
-可上傳 PNG／JPEG／WebP／MP4，每檔 50 MiB、共用素材庫 2 GiB；目前只有圖片可作生成條件。
-MP4 上傳僅保存，**不是 V2V**。不接受遠端 URL、任意本機路徑或外部 callback URL，避免 SSRF 與任意檔案讀取。
+上傳是原始二進位，不是 multipart：例如 `Content-Type: image/png`，body 為檔案 bytes。
+可上傳 PNG／JPEG／WebP／MP4 與已支援的音訊格式，每檔 50 MiB、共用素材庫 2 GiB。
+圖片可作 I2V 首格；`ltx25-control`／`ltx23-dubit` 使用已上傳 MP4，`ltx25-a2v` 使用已上傳音訊。
+這些素材 ID 都會驗證類型與帳號所有權，子程序只收到伺服器解析後的私有路徑。不接受遠端 URL、任意本機路徑或外部 callback URL，避免 SSRF 與任意檔案讀取。
 
 ### 送出影片任務
 
@@ -159,7 +160,7 @@ I2V 改為 `"mode": "i2v"`，另帶上傳回傳的 `"image_id": "..."`。
 
 上傳照片不會讓模型訓練或只學習人物；I2V 會對**整張第0幀**做條件控制，所以原背景也會影響結果。`reference_background="alpha_neutral"` 可把已去背的透明人物 PNG 合成到中性灰背景，降低原背景污染；所有人物設定集圖片都必須有有效 alpha，普通 JPG／無透明區域的 PNG 會明確拒絕。`image_strength` 可用約0.65–0.8平衡人物與背景自由度；越低越能改背景，也越可能降低人物一致性。
 
-未設定時：model=`ltx23-distilled`、mode=`t2v`、width=768、height=512、frames=49、fps=24、seed=42、audio=true、offload=false。
+未設定時：完整 LTX 2.5 split checkpoint 可用便選 `ltx25-fast`，否則安全退回 `ltx23-distilled`；可用 `LTX_DEFAULT_MODEL` 明確覆寫。其餘為 mode=`t2v`、width=768、height=512、frames=49、fps=24、seed=42、audio=true、offload=false。
 `prompt` 上限 4000 字元、width/height 為 256–1536 且是 64 倍數；整數欄位不得傳浮點或字串。
 
 ### 版本化生成預設
@@ -173,7 +174,15 @@ I2V 改為 `"mode": "i2v"`，另帶上傳回傳的 `"image_id": "..."`。
 
 明確傳入的尺寸、音訊、幀數／秒數等會覆寫 profile；回應 `resolved_parameters` 記錄最終值。
 這些是可重現的參數組，不是經大量盲測後的最佳品質承諾。原先不帶 profile 的客戶端不會被改成無音訊。
-預設安裝仍是 `ltx23-distilled`；固定第一階段8步、第二階段3步。不把不支援的 steps／guidance／negative_prompt 假裝接通。新增模型以 `/api/v1/models` 為準，參數位於各模型的 `parameters`。
+一般 T2V／I2V 固定第一階段8步、第二階段3步。不把不支援的 steps／guidance／negative_prompt 假裝接通。新增模型以 `/api/v1/models` 為準，參數位於各模型的 `parameters`。
+
+受控生成是獨立模型契約，不會默默退回純提示詞生成：
+
+- `ltx25-control`：官方 `ic_lora`，以 performance／pose／camera 影片固定動作與鏡頭結構，可另帶角色首格。
+- `ltx25-a2v`：官方 `a2vid_two_stage`，以已鎖定音訊驅動說話或歌唱，可另帶角色首格。
+- `ltx23-dubit`：官方 `dubit`，以參考演出保留說話者與表演，再依新語音重做嘴型。
+
+缺少對應官方權重時，模型會留在 catalog 並標示 `available=false` 與缺件原因；服務不自動下載權重。
 `audio=false` 停用音訊解碼與輸出，並非移除模型所有聯合音訊推論。
 
 ### 冪等與排程

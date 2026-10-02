@@ -77,7 +77,7 @@ def validate_request(raw, idempotency_key):
 
 
 def parse_request(raw, parse_payload):
-    if not model_registry.is_ltx(raw.get("model", "ltx23-distilled")):
+    if not model_registry.is_ltx(raw.get("model", model_registry.default_ltx_model())):
         payload = dict(raw)
         external = payload.pop("external", {})
         return model_registry.get(raw["model"]).normalize(payload), external, None

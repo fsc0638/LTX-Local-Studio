@@ -7,6 +7,7 @@ from unittest.mock import patch
 import local_backend as backend
 import model_registry as registry
 import worker_contract as contract
+from local_adapters import controlled_video
 import test_backend
 import test_accounts
 from test_worker import run_job_implementation
@@ -105,3 +106,26 @@ class ModelAdapterTests(unittest.TestCase):
         (root / "dist/client/generated/private.mp4").write_bytes(b"test")
         with self.assertRaises(ValueError):
             check_private_layout(root)
+
+    def test_controlled_video_contracts_are_strict_and_asset_typed(self):
+        normalized = controlled_video.CONTROL.normalize({
+            "model": "ltx25-control", "mode": "v2v", "prompt": "walk",
+            "parameters": {"control_video_id": "a" * 32, "frames": 121},
+        })
+        self.assertEqual(normalized["parameters"]["control_kind"], "performance")
+        self.assertEqual(controlled_video.CONTROL.parameters["control_video_id"]["asset_kind"], "video")
+        self.assertEqual(controlled_video.A2V.parameters["audio_id"]["asset_kind"], "audio")
+        for invalid in ({"frames": 120}, {"audio": False}):
+            with self.assertRaises(ValueError):
+                controlled_video.CONTROL.normalize({
+                    "model": "ltx25-control", "mode": "v2v", "prompt": "walk",
+                    "parameters": {"control_video_id": "a" * 32, **invalid},
+                })
+
+    def test_default_model_prefers_ready_25_and_has_safe_fallback(self):
+        with patch.dict(os.environ, {}, clear=True), patch.object(registry, "ltx25_readiness", return_value=(True, "")):
+            self.assertEqual(registry.default_ltx_model(), "ltx25-fast")
+        with patch.dict(os.environ, {}, clear=True), patch.object(registry, "ltx25_readiness", return_value=(False, "missing")):
+            self.assertEqual(registry.default_ltx_model(), "ltx23-distilled")
+        with patch.dict(os.environ, {"LTX_DEFAULT_MODEL": "ltx23-distilled"}):
+            self.assertEqual(registry.default_ltx_model(), "ltx23-distilled")
