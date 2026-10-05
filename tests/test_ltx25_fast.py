@@ -57,6 +57,51 @@ class Ltx25FastCompatibilityTests(unittest.TestCase):
             self.assertNotIn("--gemma-root", args)
             self.assertNotIn("--distilled-checkpoint-path", args)
 
+    def test_a2v_launcher_normalizes_uploaded_audio_to_stereo_48khz(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            ffmpeg_log = root / "ffmpeg-args.txt"
+            fake_ffmpeg = fake_bin / "ffmpeg"
+            fake_ffmpeg.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf '%s\\n' \"$@\" > \"$FFMPEG_LOG\"\n"
+                "touch \"${@: -1}\"\n",
+                encoding="utf-8",
+            )
+            fake_ffmpeg.chmod(0o755)
+            capture = root / "capture.sh"
+            output = root / "args.txt"
+            capture.write_text("#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > \"$CAPTURE_OUTPUT\"\n", encoding="utf-8")
+            capture.chmod(0o755)
+            source = root / "speech.wav"
+            source.touch()
+            env = {
+                **os.environ,
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "LTX_REPO_ROOT": str(root),
+                "LTX_PYTHON": str(capture),
+                "LTX_ASSET_AUDIO_ID": str(source),
+                "FFMPEG_LOG": str(ffmpeg_log),
+                "CAPTURE_OUTPUT": str(output),
+            }
+            subprocess.run(
+                ["bash", str(Path(__file__).parents[1] / "scripts/run-ltx-a2v.sh"),
+                 "test prompt", str(root / "out.mp4")],
+                env=env,
+                check=True,
+            )
+            ffmpeg_args = ffmpeg_log.read_text(encoding="utf-8").splitlines()
+            self.assertIn("-ar", ffmpeg_args)
+            self.assertEqual(ffmpeg_args[ffmpeg_args.index("-ar") + 1], "48000")
+            self.assertIn("-ac", ffmpeg_args)
+            self.assertEqual(ffmpeg_args[ffmpeg_args.index("-ac") + 1], "2")
+            pipeline_args = output.read_text(encoding="utf-8").splitlines()
+            normalized = pipeline_args[pipeline_args.index("--audio-path") + 1]
+            self.assertTrue(normalized.endswith("/driving-audio.wav"))
+            self.assertNotEqual(normalized, str(source))
+
 
 if __name__ == "__main__":
     unittest.main()
