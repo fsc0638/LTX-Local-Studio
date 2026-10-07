@@ -13,6 +13,7 @@ export type FactoryCharacter = {
   description: string;
   references: { image_id: string; view: string }[];
 };
+export type FactoryCharacterLora = { id: string; strength?: number };
 export type FactoryMusic = {
   audio_id: string;
   audio_start_seconds: number;
@@ -29,6 +30,8 @@ export type FactoryOutput = {
 };
 export type FactoryBible = {
   character?: FactoryCharacter;
+  identity_lora?: FactoryCharacterLora;
+  wardrobe_lora?: FactoryCharacterLora;
   visual_style?: string;
   style_anchor?: string;
   /** Sequential character/style lock. Green gates advance; yellow/red pause the line. */
@@ -114,6 +117,8 @@ const runStates = new Set<FactoryRunState>([
 ]);
 const PROJECTED_FIELDS = [
   'character',
+  'identity_lora',
+  'wardrobe_lora',
   'visual_style',
   'mode',
   'image_id',
@@ -178,6 +183,8 @@ export function normalizeFactoryBible(value: unknown): FactoryBible {
     (key) =>
       ![
         'character',
+        'identity_lora',
+        'wardrobe_lora',
         'visual_style',
         'style_anchor',
         'continuity',
@@ -225,6 +232,25 @@ export function normalizeFactoryBible(value: unknown): FactoryBible {
         ),
       } satisfies FactoryCharacter)
     : undefined;
+  const normalizeLora = (value: unknown, label: string) => {
+    if (value === undefined) return undefined;
+    const item = record(value, label);
+    if (
+      Object.keys(item).some((key) => !['id', 'strength'].includes(key)) ||
+      typeof item.id !== 'string' ||
+      !/^[a-z0-9][a-z0-9._-]{2,63}$/.test(item.id) ||
+      (item.strength !== undefined &&
+        (typeof item.strength !== 'number' ||
+          !Number.isFinite(item.strength) ||
+          item.strength < 0 ||
+          item.strength > 2))
+    ) {
+      throw new Error(`${label} is invalid`);
+    }
+    return { id: item.id, ...(item.strength === undefined ? {} : { strength: item.strength }) };
+  };
+  const identityLora = normalizeLora(raw.identity_lora, 'Bible identity LoRA');
+  const wardrobeLora = normalizeLora(raw.wardrobe_lora, 'Bible wardrobe LoRA');
   const visualStyle =
     raw.visual_style === undefined
       ? undefined
@@ -279,6 +305,8 @@ export function normalizeFactoryBible(value: unknown): FactoryBible {
   if (output.profile === 'distilled') output.profile = 'compat-v1';
   const bible = clone({
     ...(character ? { character } : {}),
+    ...(identityLora ? { identity_lora: identityLora } : {}),
+    ...(wardrobeLora ? { wardrobe_lora: wardrobeLora } : {}),
     ...(visualStyle ? { visual_style: visualStyle } : {}),
     ...(styleAnchor ? { style_anchor: styleAnchor } : {}),
     ...(continuityRaw
@@ -319,6 +347,8 @@ export function normalizeFactoryBible(value: unknown): FactoryBible {
 export function hasFactoryBible(bible: FactoryBible): boolean {
   return Boolean(
     bible.character ||
+    bible.identity_lora ||
+    bible.wardrobe_lora ||
     bible.visual_style ||
     bible.style_anchor ||
     bible.continuity ||
@@ -345,6 +375,8 @@ export function projectBible(
     projected.image_id = bible.character.references[0].image_id;
   }
   if (bible.visual_style) projected.visual_style = bible.visual_style;
+  if (bible.identity_lora) projected.identity_lora = clone(bible.identity_lora);
+  if (bible.wardrobe_lora) projected.wardrobe_lora = clone(bible.wardrobe_lora);
   if (bible.music) {
     projected.render_mode = 'sequence';
     projected.audio = true;
@@ -409,6 +441,8 @@ export function bibleFromRequest(requestValue: FactoryRequest): FactoryBible {
   ) as FactoryOutput;
   return normalizeFactoryBible({
     ...(character ? { character } : {}),
+    ...(request.identity_lora ? { identity_lora: clone(request.identity_lora) } : {}),
+    ...(request.wardrobe_lora ? { wardrobe_lora: clone(request.wardrobe_lora) } : {}),
     ...(visualStyle ? { visual_style: visualStyle } : {}),
     ...(music ? { music } : {}),
     output,

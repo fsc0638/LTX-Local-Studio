@@ -125,6 +125,17 @@ test('Bible projects character, music, output and directing into a portable job 
   assert.equal(request.duration_seconds, 6);
 });
 
+test('Bible projects registered identity and wardrobe LoRA selections', () => {
+  const request = projectBible({
+    output: { model: 'ltx25-fast' },
+    lyric_offset_seconds: -0.9,
+    identity_lora: { id: 'mika.identity', strength: 0.8 },
+    wardrobe_lora: { id: 'mika.red-coat', strength: 0.65 },
+  }, { prompt: 'Mika turns toward camera' });
+  assert.deepEqual(request.identity_lora, { id: 'mika.identity', strength: 0.8 });
+  assert.deepEqual(request.wardrobe_lora, { id: 'mika.red-coat', strength: 0.65 });
+});
+
 test('incoming breakdown shots inherit the character while preserving their local timeline', () => {
   const localTimeline = {
     audio_id: 'music-1',

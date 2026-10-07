@@ -31,6 +31,8 @@ def openapi_document():
         "image_strength": {"type": "number", "minimum": 0, "maximum": 1, "default": 0.8},
         "reference_background": {"enum": ["source", "alpha_neutral"], "default": "source", "description": "alpha_neutral requires transparent PNG references and composites the subject on neutral gray to reduce source-background conditioning."},
         "character": ref("Character"),
+        "identity_lora": ref("CharacterLoraSelection"),
+        "wardrobe_lora": ref("CharacterLoraSelection"),
         "width": {"type": "integer", "minimum": 256, "maximum": 1536, "multipleOf": 64},
         "height": {"type": "integer", "minimum": 256, "maximum": 1536, "multipleOf": 64},
         "aspect_ratio": {"type": "string", "enum": [*contract.ASPECT_RATIOS, "source"], "description": "Preset or source image ratio; mutually exclusive with width/height. Source may require letterboxing on the 64px grid."},
@@ -54,6 +56,11 @@ def openapi_document():
     nullable_string = {"type": ["string", "null"]}
     arbitrary_nullable = {"type": ["object", "null"], "additionalProperties": True}
     schemas = {
+        "CharacterLoraSelection": {"type": "object", "additionalProperties": False,
+                                    "required": ["id"], "properties": {
+                                        "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{2,63}$"},
+                                        "strength": {"type": "number", "minimum": 0, "maximum": 2},
+                                    }, "description": "Host registry ID only. Paths and trigger tokens are resolved server-side."},
         "CharacterReference": {"type": "object", "additionalProperties": False,
                                "required": ["image_id", "view"], "properties": {
                                    "image_id": {"type": "string", "pattern": "^[a-f0-9]{32}$"},
@@ -239,6 +246,7 @@ def openapi_document():
                 "/api/v1/openapi.json": {"get": operation("Read this contract", {"type": "object"})},
                 "/api/v1/capabilities": {"get": operation("Read available models, profiles and machine limits", ref("Capabilities"))},
                 "/api/v1/models": {"get": operation("Read installed adapter IDs and parameter schemas", {"type": "object", "additionalProperties": True})},
+                "/api/v1/character-loras": {"get": operation("Read approved host-side character LoRAs", {"type": "object", "additionalProperties": True})},
                 "/api/v1/validate": {"post": operation("Validate and resolve parameters without GPU or job creation", ref("Validation"), requestBody=body)},
                 "/api/v1/jobs": {"post": submit, "get": operation("List authorized job history", {"type": "object", "properties": {
                     "jobs": {"type": "array", "items": ref("Job")}, "total": {"type": "integer"}, "offset": {"type": "integer"}, "limit": {"type": "integer"}}},

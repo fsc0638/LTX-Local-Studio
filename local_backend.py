@@ -39,6 +39,7 @@ from media_deletion import prepare_archive
 from video_settings import image_geometry
 import mv_timeline
 import character_consistency
+import character_lora_registry
 
 
 SITE_ROOT = Path(__file__).resolve().parent
@@ -233,6 +234,8 @@ def generation_provenance(payload):
         provenance["source_audio"] = file_fingerprint(asset_path(asset_by_id(payload["timeline"]["audio_id"])), digest=True)
         provenance["audio_conditioning"] = "experimental_distilled_frozen_audio_v1" if payload["timeline"].get("audio_mode") == "condition" else "soundtrack_only"
     provenance["render_mode"] = payload.get("render_mode", "single")
+    provenance["character_loras"] = [item for item in
+                                      (payload.get("identity_lora"), payload.get("wardrobe_lora")) if item]
     provenance["composition_code"] = [file_fingerprint(SITE_ROOT / name, digest=True) for name in
                                       ("mv_timeline.py", "scripts/sequence_media.py", "scripts/audio_conditioning.py", "video_settings.py")]
     return provenance
@@ -285,12 +288,26 @@ def job_environment(payload):
         "LTX_WORKER_PARENT_PID": str(os.getpid()),
         "PYTHONUNBUFFERED": "1",
     })
-    for key in ("LTX_IMAGE", "LTX_IMAGE_FRAME", "LTX_IMAGE_STRENGTH", "LTX_AUDIO_REFERENCE"):
+    for key in ("LTX_IMAGE", "LTX_IMAGE_FRAME", "LTX_IMAGE_STRENGTH", "LTX_AUDIO_REFERENCE",
+                "LTX_IDENTITY_LORA_PATH", "LTX_IDENTITY_LORA_STRENGTH",
+                "LTX_WARDROBE_LORA_PATH", "LTX_WARDROBE_LORA_STRENGTH"):
         env.pop(key, None)
     if payload.get("image_id"):
         env["LTX_IMAGE"] = str(asset_path(asset_by_id(payload["image_id"])))
         env["LTX_IMAGE_FRAME"] = "0"
         env["LTX_IMAGE_STRENGTH"] = str(payload.get("image_strength", 0.8))
+    for kind in ("identity", "wardrobe"):
+        selection = payload.get(f"{kind}_lora")
+        if not selection:
+            continue
+        _, private = character_lora_registry.resolve(
+            {"id": selection["id"], "strength": selection["strength"]},
+            model=payload["model"], mode=payload["mode"], kind=kind,
+        )
+        if private["weight_sha256"] != selection["weight_sha256"]:
+            raise ValueError(f"{kind.capitalize()} LoRA changed after request validation")
+        env[f"LTX_{kind.upper()}_LORA_PATH"] = private["path"]
+        env[f"LTX_{kind.upper()}_LORA_STRENGTH"] = str(private["strength"])
     for key in ("LTX_POST_INPUT", "LTX_POST_MASK"):
         env.pop(key, None)
     if payload.get("model") == POST_MODEL:
@@ -624,6 +641,10 @@ def parse_payload(raw: dict[str, Any]) -> dict[str, Any]:
     mode = raw.get("mode", "t2v")
     if mode not in {"t2v", "i2v"}:
         raise ValueError("支援文字或圖片生成；影片轉影片尚未接通。")
+    identity_lora, identity_private = character_lora_registry.resolve(
+        raw.get("identity_lora"), model=model, mode=mode, kind="identity")
+    wardrobe_lora, wardrobe_private = character_lora_registry.resolve(
+        raw.get("wardrobe_lora"), model=model, mode=mode, kind="wardrobe")
     render_mode = raw.get("render_mode", "single")
     if render_mode not in {"single", "sequence"}:
         raise ValueError("render_mode must be single or sequence")
@@ -645,6 +666,7 @@ def parse_payload(raw: dict[str, Any]) -> dict[str, Any]:
             directing["angle"] = inferred_angle
     visual_style = character_consistency.normalize_visual_style(raw.get("visual_style"))
     prompt = character_consistency.apply_identity_prompt(prompt, character, visual_style)
+    prompt = character_lora_registry.inject_triggers(prompt, [identity_private, wardrobe_private])
     ratio = raw.get("aspect_ratio")
     dimensions = {}
     source_geometry = image_geometry(asset_by_id(image_id)["width"], asset_by_id(image_id)["height"]) if image_id else None
@@ -706,6 +728,8 @@ def parse_payload(raw: dict[str, Any]) -> dict[str, Any]:
         "image_strength": strength if mode == "i2v" else None,
         "reference_background": reference_background if mode == "i2v" else None,
         "character": character,
+        "identity_lora": identity_lora,
+        "wardrobe_lora": wardrobe_lora,
         "visual_style": visual_style,
         "timeout_seconds": timeout,
         "media_type": "video",
@@ -1227,6 +1251,9 @@ class Handler(AuthHandlerMixin, MediaHandlerMixin, BaseHTTPRequestHandler):
             return
         if path == "/api/v1/models":
             self.send_json(200, model_registry.catalog(RUNTIME))
+            return
+        if path == "/api/v1/character-loras":
+            self.send_json(200, character_lora_registry.public_catalog())
             return
         if path == "/api/v1/capabilities":
             # Whether drafting is configured, not the key itself: the UI needs to know if the
