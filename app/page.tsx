@@ -829,7 +829,10 @@ function Studio() {
 
   const [prompt, setPrompt] = useState(initialPrompt);
   const [model, setModel] = useState('ltx25-fast');
-  const isLtxVideo = model === 'ltx23-distilled' || model === 'ltx25-fast';
+  const isLtxVideo =
+    model === 'ltx23-distilled' ||
+    model === 'ltx25-fast' ||
+    model === 'ltx25-dev';
   const [models, setModels] = useState<InstalledModel[]>([]);
   const [characterLoras, setCharacterLoras] = useState<CharacterLora[]>([]);
   const [identityLora, setIdentityLora] = useState('none');
@@ -1328,7 +1331,8 @@ function Studio() {
             data.active_job &&
             (!data.active_job.model ||
               data.active_job.model === 'ltx23-distilled' ||
-              data.active_job.model === 'ltx25-fast')
+              data.active_job.model === 'ltx25-fast' ||
+              data.active_job.model === 'ltx25-dev')
           ) {
             setActiveJobId(data.active_job.id);
             setGenerating(true);
@@ -2376,7 +2380,7 @@ function Studio() {
                         </label>
                       </section>
                     )}
-                    {model === 'ltx25-fast' && (
+                    {(model === 'ltx25-fast' || model === 'ltx25-dev') && (
                       <section className="grid gap-4 border border-border bg-[#fafafa] p-4 lg:grid-cols-2">
                         {([
                           ['identity', identityLora, setIdentityLora, identityLoraStrength, setIdentityLoraStrength],
@@ -2632,6 +2636,7 @@ function Studio() {
             onIncomingConsumed={() => setFactoryIncoming(null)}
             onPlanChange={setPlan}
             draftAvailable={capabilities?.draft_available === true}
+            models={models}
             profiles={Object.keys(capabilities?.profiles || {})}
             hostVersion={hostVersion}
             section={tab === 'shoot' ? 'queue' : 'bible'}

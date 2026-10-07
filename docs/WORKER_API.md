@@ -160,7 +160,7 @@ LTX 2.5 請求可帶 `identity_lora`／`wardrobe_lora` 的 `{id,strength}`；ID 
 
 上傳照片不會讓模型訓練或只學習人物；I2V 會對**整張第0幀**做條件控制，所以原背景也會影響結果。`reference_background="alpha_neutral"` 可把已去背的透明人物 PNG 合成到中性灰背景，降低原背景污染；所有人物設定集圖片都必須有有效 alpha，普通 JPG／無透明區域的 PNG 會明確拒絕。`image_strength` 可用約0.65–0.8平衡人物與背景自由度；越低越能改背景，也越可能降低人物一致性。
 
-未設定時：完整 LTX 2.5 split checkpoint 可用便選 `ltx25-fast`，否則安全退回 `ltx23-distilled`；可用 `LTX_DEFAULT_MODEL` 明確覆寫。其餘為 mode=`t2v`、width=768、height=512、frames=49、fps=24、seed=42、audio=true、offload=false。
+未設定時：完整 LTX 2.5 split checkpoint 可用便選 `ltx25-fast`，否則安全退回 `ltx23-distilled`；可用 `LTX_DEFAULT_MODEL` 明確覆寫。`ltx25-dev` 是較慢的官方 one-stage Dev lane，專門載入與 Dev checkpoint 相容的人物／服裝 LoRA；它不會取代預設 Fast lane，也不接受把 Dev LoRA 偽裝成 Distilled 相容。其餘為 mode=`t2v`、width=768、height=512、frames=49、fps=24、seed=42、audio=true、offload=false。
 `prompt` 上限 4000 字元、width/height 為 256–1536 且是 64 倍數；整數欄位不得傳浮點或字串。
 
 ### 版本化生成預設
@@ -174,7 +174,7 @@ LTX 2.5 請求可帶 `identity_lora`／`wardrobe_lora` 的 `{id,strength}`；ID 
 
 明確傳入的尺寸、音訊、幀數／秒數等會覆寫 profile；回應 `resolved_parameters` 記錄最終值。
 這些是可重現的參數組，不是經大量盲測後的最佳品質承諾。原先不帶 profile 的客戶端不會被改成無音訊。
-一般 T2V／I2V 固定第一階段8步、第二階段3步。不把不支援的 steps／guidance／negative_prompt 假裝接通。新增模型以 `/api/v1/models` 為準，參數位於各模型的 `parameters`。
+`ltx25-fast` 的一般 T2V／I2V 固定第一階段8步、第二階段3步；`ltx25-dev` 使用伺服器端驗證過的 one-stage 30 步與 guidance 設定。API 不把未接通的 steps／guidance／negative_prompt 假裝成可調欄位。新增模型以 `/api/v1/models` 為準，參數位於各模型的 `parameters`。
 
 受控生成是獨立模型契約，不會默默退回純提示詞生成：
 

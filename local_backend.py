@@ -201,11 +201,19 @@ def generation_provenance(payload):
         checkpoint = components["transformer"]
         upsampler = components["upsampler"]
         launcher = SITE_ROOT / "scripts/run-ltx-2.5-fast.sh"
+        runner = SITE_ROOT / "scripts/run_local.py"
+    elif payload["model"] == "ltx25-dev":
+        components = model_registry.ltx25_dev_paths()
+        checkpoint = components["transformer"]
+        upsampler = None
+        launcher = SITE_ROOT / "scripts/run-ltx-2.5-dev.sh"
+        runner = SITE_ROOT / "scripts/run_local_dev.py"
     else:
         checkpoint = Path(os.environ.get("LTX_CHECKPOINT_PATH", LTX_REPO_ROOT / "models/LTX-2.3/ltx-2.3-22b-distilled-1.1.safetensors"))
         upsampler = Path(os.environ.get("LTX_UPSAMPLER_PATH", LTX_REPO_ROOT / "models/LTX-2.3/ltx-2.3-spatial-upscaler-x2-1.1.safetensors"))
         components = {}
         launcher = LAUNCHER
+        runner = SITE_ROOT / "scripts/run_local.py"
     try:
         revision = subprocess.run(["git", "-C", str(LTX_REPO_ROOT), "rev-parse", "HEAD"],
                                   capture_output=True, text=True, timeout=3, check=True).stdout.strip()
@@ -214,10 +222,10 @@ def generation_provenance(payload):
     provenance = {"source": "live_generation", "pipeline_commit": revision,
                   "runtime": {key: RUNTIME.get(key) for key in ("device", "torch", "cuda_available")},
                   "model": payload["model"], "checkpoint": file_fingerprint(checkpoint),
-                  "upsampler": file_fingerprint(upsampler),
+                  "upsampler": file_fingerprint(upsampler) if upsampler else None,
                   "components": {name: file_fingerprint(path) for name, path in components.items()},
                   "code": [file_fingerprint(path, digest=True) for path in
-                           (launcher, SITE_ROOT / "scripts/run_local.py", SITE_ROOT / "local_backend.py",
+                           (launcher, runner, SITE_ROOT / "local_backend.py",
                             SITE_ROOT / "worker_contract.py", SITE_ROOT / "scripts/check_output.py")],
                   "contract_version": worker.CONTRACT_VERSION,
                   "profile": payload.get("profile", "compat-v1"),
@@ -637,7 +645,7 @@ def parse_payload(raw: dict[str, Any]) -> dict[str, Any]:
     if not model_registry.is_ltx(model):
         raise ValueError("目前請求不是已安裝的 LTX 影片模型。")
     if "negative_prompt" in raw and (not isinstance(raw["negative_prompt"], str) or raw["negative_prompt"].strip()):
-        raise ValueError("LTX Fast Distilled 不支援負面提示詞（CFG=1）；不會默默忽略此欄位。")
+        raise ValueError("目前 LTX API 不接受自訂負面提示詞；各管線使用已驗證的伺服器端設定，不會默默忽略此欄位。")
     mode = raw.get("mode", "t2v")
     if mode not in {"t2v", "i2v"}:
         raise ValueError("支援文字或圖片生成；影片轉影片尚未接通。")
@@ -690,9 +698,9 @@ def parse_payload(raw: dict[str, Any]) -> dict[str, Any]:
     fps = int(raw.get("fps", 24))
     seed = int(raw.get("seed", 42))
     if width < 256 or width > 1536 or width % 64:
-        raise ValueError("二階段生成寬度必須介於 256–1536，且為 64 的倍數。")
+        raise ValueError("LTX 生成寬度必須介於 256–1536，且為 64 的倍數。")
     if height < 256 or height > 1536 or height % 64:
-        raise ValueError("二階段生成高度必須介於 256–1536，且為 64 的倍數。")
+        raise ValueError("LTX 生成高度必須介於 256–1536，且為 64 的倍數。")
     if frames < 9 or frames > worker.MAX_FRAMES or (frames - 1) % 8:
         raise ValueError(f"幀數必須為 8n+1，範圍 9–{worker.MAX_FRAMES}；最長秒數 = {worker.MAX_FRAMES} ÷ FPS。")
     if fps < 8 or fps > 60:
