@@ -13,8 +13,8 @@ default fast renderer and never claim cross-checkpoint LoRA compatibility.
 - [x] API provenance fingerprints the Dev transformer and Dev launcher accurately.
 - [x] Character LoRA Registry rejects Dev-only LoRAs on `ltx25-fast` and accepts them on `ltx25-dev`.
 - [x] Sandbox and Production Factory can select `ltx25-dev` and only show compatible LoRAs.
-- [ ] Targeted Python tests, full Python suite, Node tests, TypeScript, production build, shell syntax and diff checks pass.
-- [ ] A minimal GPU smoke proves the new launcher can load the Dev transformer and a character LoRA.
+- [x] Targeted Python tests, full Python suite, Node tests, TypeScript, production build, shell syntax and diff checks pass.
+- [x] A minimal GPU smoke proves the new launcher can load the Dev transformer and a character LoRA.
 
 ## Progress
 
@@ -22,8 +22,15 @@ default fast renderer and never claim cross-checkpoint LoRA compatibility.
   host-side LoRA Registry, Sandbox selector, and Production Factory Bible projection.
 - Complete: added the Dev adapter, one-stage launcher/runner, provenance branch, Registry compatibility
   regression, Sandbox support, and Factory model selector with compatibility filtering.
-- Verified so far: shell syntax, 10 targeted Python tests, and TypeScript compile.
-- In progress: full regression/build and minimal GPU smoke.
+- Verified: shell syntax and diff check; 10 targeted Python tests; 459 full Python tests with 7
+  skips; 108 Node tests; TypeScript compile; and the production build.
+- Verified on NVIDIA GB10: the new launcher loaded the official LTX 2.5 Dev transformer plus
+  `mikamiu` step-200 identity LoRA at strength 1.0, ran 3 denoise steps, and emitted an H.264
+  256×320, 9-frame, 24 FPS MP4. Smoke SHA-256:
+  `dd5f90cd970b822f72298808a55862a2c196380d7825df37ad38c46293285665`.
+- Complete in branch: implementation and verification.
+- Waiting: user merge, production deployment approval, approved Registry metadata/asset placement,
+  service restart, and authenticated UI smoke.
 - Not started: merge to `main`, formal Registry asset installation, and production service restart.
 
 ## Deployment boundary
