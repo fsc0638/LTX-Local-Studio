@@ -47,7 +47,10 @@ class Ltx25FastCompatibilityTests(unittest.TestCase):
             capture.write_text("#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > \"$CAPTURE_OUTPUT\"\n", encoding="utf-8")
             capture.chmod(0o755)
             env = {**os.environ, "LTX_REPO_ROOT": str(root), "LTX_PYTHON": str(capture),
-                   "CAPTURE_OUTPUT": str(output), "LTX_AUDIO": "0"}
+                   "CAPTURE_OUTPUT": str(output), "LTX_AUDIO": "0",
+                   "LTX_IDENTITY_LORA_PATH": str(root / "identity.safetensors"),
+                   "LTX_IDENTITY_LORA_STRENGTH": "0.75"}
+            (root / "identity.safetensors").touch()
             subprocess.run(["bash", str(Path(__file__).parents[1] / "scripts/run-ltx-2.5-fast.sh"),
                             "test prompt", str(root / "out.mp4")], env=env, check=True)
             args = output.read_text(encoding="utf-8").splitlines()
@@ -56,6 +59,10 @@ class Ltx25FastCompatibilityTests(unittest.TestCase):
                 self.assertIn(flag, args)
             self.assertNotIn("--gemma-root", args)
             self.assertNotIn("--distilled-checkpoint-path", args)
+            self.assertIn("--lora", args)
+            lora_index = args.index("--lora")
+            self.assertEqual(args[lora_index + 1], str(root / "identity.safetensors"))
+            self.assertEqual(args[lora_index + 2], "0.75")
 
     def test_a2v_launcher_normalizes_uploaded_audio_to_stereo_48khz(self):
         with tempfile.TemporaryDirectory() as temp:

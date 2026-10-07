@@ -12,7 +12,7 @@ import mv_timeline
 import character_consistency
 
 
-CONTRACT_VERSION = "1.7.0"
+CONTRACT_VERSION = "1.8.0"
 # Immutable named defaults. Explicit request fields override a profile; return
 # all resolved values so clients never have to reconstruct them from defaults.
 PROFILES = {
@@ -22,7 +22,7 @@ PROFILES = {
     "portrait-v1": {"width": 576, "height": 1024, "frames": 97, "fps": 24, "audio": False},
 }
 MAX_TIMEOUT = 7200
-PARAMETERS = ("model", "profile", "mode", "prompt", "visual_style", "image_id", "image_strength", "reference_background", "character", "width", "height",
+PARAMETERS = ("model", "profile", "mode", "prompt", "visual_style", "image_id", "image_strength", "reference_background", "character", "identity_lora", "wardrobe_lora", "width", "height",
               "frames", "fps", "seed", "audio", "offload", "timeout_seconds", "parameters", "media_type", "aspect_ratio",
               "render_mode", "directing", "timeline", "segment_seconds", "duration_seconds", "segments", "source_geometry")
 
@@ -54,7 +54,8 @@ def validate_request(raw, idempotency_key):
     allowed = {"prompt", "model", "mode", "image_id", "width", "height", "frames", "fps",
                "duration_seconds", "seed", "audio", "offload", "external", "profile",
                "image_strength", "timeout_seconds", "parameters", "aspect_ratio", "negative_prompt",
-               "render_mode", "directing", "timeline", "segment_seconds", "character", "reference_background", "visual_style"}
+               "render_mode", "directing", "timeline", "segment_seconds", "character", "reference_background", "visual_style",
+               "identity_lora", "wardrobe_lora"}
     if set(raw) - allowed:
         raise ValueError("Unsupported request field; query the generic worker contract.")
     if not isinstance(idempotency_key, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{8,128}", idempotency_key):
@@ -199,6 +200,9 @@ def capabilities(runtime):
                                       "views": sorted(character_consistency.REFERENCE_VIEWS),
                                       "strategy": "locked_identity_prompt_fixed_seed_angle_matched_per_shot",
                                       "visual_review_required": True},
-            "music_conditioning": False, "character_database": False, "automatic_training": False,
+            "music_conditioning": False, "character_database": True,
+            "character_lora_registry": {"catalog_url": "/api/v1/character-loras", "client_selects": ["id", "strength"],
+                                        "private_paths": True, "server_injects_trigger": True},
+            "automatic_training": False,
             "automatic_updates": False, "webhooks": False, "tenant_isolation": False,
             "service_key_scope": "privileged_host_access"}

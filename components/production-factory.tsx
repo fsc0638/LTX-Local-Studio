@@ -93,6 +93,17 @@ type WorkerJob = {
   artifacts?: { kind: string; url: string }[];
 };
 
+type CharacterLora = {
+  id: string;
+  label: string;
+  kind: 'identity' | 'wardrobe';
+  default_strength: number;
+  validated_strength_range: { min: number; max: number };
+  compatible_models: string[];
+  compatible_modes: string[];
+  version: string;
+};
+
 const copy = {
   'zh-TW': {
     eyebrow: '02 / 製片工廠',
@@ -118,6 +129,11 @@ const copy = {
     calibrationBad: '不是校準報告：{reason}',
     calibrationLines: 'cj {cj} · dino {cj_dino} · sj {sj}（嚴格 {scj} · {sdino} · {ssj}）',
     bibleHint: '先固定角色、音樂與輸出規格；新增鏡頭會繼承這些設定。',
+    identityLora: '人物 Identity LoRA',
+    wardrobeLora: '服裝 Wardrobe LoRA',
+    noLora: '不使用 LoRA',
+    loraStrength: '強度',
+    loraHint: '只列出主機已核准的 Registry ID；權重路徑與 trigger token 由 API 安全注入。',
     visualStyle: '視覺畫風鎖',
     visualStyleHint: '請具體寫出媒材、線條、上色、材質與色盤；每個鏡頭都會繼承。',
     visualStylePlaceholder: '2D 手繪日系動畫、清晰線稿、平面賽璐璐上色、細緻繪製背景、青綠與奶油色盤。',
@@ -204,6 +220,11 @@ const copy = {
     calibrationLines: 'cj {cj} · dino {cj_dino} · sj {sj} (strict {scj} · {sdino} · {ssj})',
     bibleHint:
       'Lock character, music and output defaults before adding inherited shots.',
+    identityLora: 'Identity LoRA',
+    wardrobeLora: 'Wardrobe LoRA',
+    noLora: 'No LoRA',
+    loraStrength: 'Strength',
+    loraHint: 'Only approved host registry IDs are shown. The API injects private paths and trigger tokens.',
     visualStyle: 'Visual style lock',
     visualStyleHint: 'Describe the medium, linework, shading, texture and palette. Every shot inherits it.',
     visualStylePlaceholder: '2D hand-drawn anime, clean line art, flat cel shading, painterly backgrounds, teal and cream palette.',
@@ -295,6 +316,11 @@ const copy = {
     calibrationBad: '校正レポートではありません：{reason}',
     calibrationLines: 'cj {cj} · dino {cj_dino} · sj {sj}（厳格 {scj} · {sdino} · {ssj}）',
     bibleHint: '人物、音楽、出力設定を固定してから継承ショットを追加します。',
+    identityLora: '人物 Identity LoRA',
+    wardrobeLora: '衣装 Wardrobe LoRA',
+    noLora: 'LoRA なし',
+    loraStrength: '強度',
+    loraHint: '承認済み Registry ID のみ表示し、パスと trigger token は API が注入します。',
     visualStyle: '視覚スタイル固定',
     visualStyleHint: '媒体、線画、陰影、質感、色調を具体的に記述し、全ショットで継承します。',
     visualStylePlaceholder: '2D手描きアニメ、明確な線画、セルシェーディング、絵画的な背景、青緑とクリームの色調。',
@@ -655,6 +681,7 @@ export function ProductionFactory({
   const [legacyOwner, setLegacyOwner] = useState('');
   const [notice, setNotice] = useState('');
   const [assets, setAssets] = useState<Asset[]>([]);
+  const [characterLoras, setCharacterLoras] = useState<CharacterLora[]>([]);
   // Drafts the user has not accepted yet, kept per shot. A draft only lands here when the prompt
   // is pinned - that is, when the user has already written something the draft must not replace.
   const [drafts, setDrafts] = useState<
@@ -811,6 +838,19 @@ export function ProductionFactory({
   }, []);
 
   useEffect(() => {
+    const abort = new AbortController();
+    void serviceFetch('/api/v1/character-loras', { signal: abort.signal })
+      .then(async (response) =>
+        response.ok
+          ? (response.json() as Promise<{ loras?: CharacterLora[] }>)
+          : Promise.reject(),
+      )
+      .then((result) => setCharacterLoras(result.loras || []))
+      .catch(() => setCharacterLoras([]));
+    return () => abort.abort();
+  }, []);
+
+  useEffect(() => {
     if (!hydrated) return;
     onPlanChange?.(plan);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the callback is a stable page setter.
@@ -932,6 +972,8 @@ export function ProductionFactory({
   };
   const audioAssets = assets.filter((asset) => asset.kind === 'audio');
   const imageAssets = assets.filter((asset) => asset.kind === 'image');
+  const identityLoras = characterLoras.filter((item) => item.kind === 'identity');
+  const wardrobeLoras = characterLoras.filter((item) => item.kind === 'wardrobe');
 
   const updateBible = (change: (bible: FactoryBible) => FactoryBible) => {
     const overrideCount = countPinnedShots(plan);
@@ -1198,6 +1240,70 @@ export function ProductionFactory({
                   }))
                 }
               />
+            </fieldset>
+            <fieldset disabled={!editable} className="grid gap-4 border border-border bg-[#fafafa] p-4 lg:grid-cols-2">
+              {([
+                ['identity_lora', text.identityLora, identityLoras],
+                ['wardrobe_lora', text.wardrobeLora, wardrobeLoras],
+              ] as const).map(([field, label, options]) => {
+                const selected = plan.bible[field];
+                const metadata = options.find((item) => item.id === selected?.id);
+                return (
+                  <div key={field} className="space-y-2">
+                    <label className="text-[10px] font-bold">{label}</label>
+                    <Select
+                      value={selected?.id || 'none'}
+                      onValueChange={(id) =>
+                        updateBible((bible) => ({
+                          ...bible,
+                          [field]: id === 'none'
+                            ? undefined
+                            : {
+                                id,
+                                strength:
+                                  options.find((item) => item.id === id)?.default_strength ?? 1,
+                              },
+                        }))
+                      }
+                    >
+                      <SelectTrigger className="rounded-none bg-white text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">{text.noLora}</SelectItem>
+                        {options.map((item) => (
+                          <SelectItem key={item.id} value={item.id}>
+                            {item.label} · v{item.version}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {selected && metadata && (
+                      <label className="block text-[10px] font-bold">
+                        {text.loraStrength}: {selected.strength ?? metadata.default_strength}
+                        <Input
+                          type="range"
+                          step="0.05"
+                          min={metadata.validated_strength_range.min}
+                          max={metadata.validated_strength_range.max}
+                          value={selected.strength ?? metadata.default_strength}
+                          onChange={(event) =>
+                            updateBible((bible) => ({
+                              ...bible,
+                              [field]: bible[field]
+                                ? { ...bible[field], strength: Number(event.target.value) }
+                                : undefined,
+                            }))
+                          }
+                        />
+                      </label>
+                    )}
+                  </div>
+                );
+              })}
+              <p className="text-[10px] leading-5 text-muted-foreground lg:col-span-2">
+                {text.loraHint}
+              </p>
             </fieldset>
             <fieldset disabled={!editable} className="grid gap-4 lg:grid-cols-2">
               <label className="text-[10px] font-bold lg:col-span-2">

@@ -746,6 +746,16 @@ function Label({ children }: { children: React.ReactNode }) {
   );
 }
 
+type CharacterLora = {
+  id: string;
+  label: string;
+  kind: 'identity' | 'wardrobe';
+  default_strength: number;
+  validated_strength_range: { min: number; max: number };
+  compatible_models: string[];
+  compatible_modes: string[];
+};
+
 function ToggleRow({
   label,
   note,
@@ -821,6 +831,11 @@ function Studio() {
   const [model, setModel] = useState('ltx25-fast');
   const isLtxVideo = model === 'ltx23-distilled' || model === 'ltx25-fast';
   const [models, setModels] = useState<InstalledModel[]>([]);
+  const [characterLoras, setCharacterLoras] = useState<CharacterLora[]>([]);
+  const [identityLora, setIdentityLora] = useState('none');
+  const [identityLoraStrength, setIdentityLoraStrength] = useState(1);
+  const [wardrobeLora, setWardrobeLora] = useState('none');
+  const [wardrobeLoraStrength, setWardrobeLoraStrength] = useState(1);
   const [catalogError, setCatalogError] = useState(false);
   const [mode, setMode] = useState('t2v');
   const [aspectRatio, setAspectRatio] = useState('16:9');
@@ -1201,6 +1216,12 @@ function Studio() {
     image_strength: mode === 'i2v' ? imageStrength : undefined,
     reference_background: mode === 'i2v' ? referenceBackground : undefined,
     directing,
+    ...(identityLora !== 'none'
+      ? { identity_lora: { id: identityLora, strength: identityLoraStrength } }
+      : {}),
+    ...(wardrobeLora !== 'none'
+      ? { wardrobe_lora: { id: wardrobeLora, strength: wardrobeLoraStrength } }
+      : {}),
     ...(mode === 'i2v' && character.enabled
       ? {
           character: {
@@ -1276,6 +1297,17 @@ function Studio() {
       })
       .catch(() => {
         if (!abort.signal.aborted) setCatalogError(true);
+      });
+    serviceFetch('/api/v1/character-loras', { signal: abort.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error();
+        return response.json() as Promise<{ loras?: CharacterLora[] }>;
+      })
+      .then((data) => {
+        if (!abort.signal.aborted) setCharacterLoras(data.loras || []);
+      })
+      .catch(() => {
+        if (!abort.signal.aborted) setCharacterLoras([]);
       });
     return () => abort.abort();
   }, []);
@@ -2342,6 +2374,65 @@ function Studio() {
                                 : '中立モードには背景を除去した透過PNGが必要です。'}
                           </span>
                         </label>
+                      </section>
+                    )}
+                    {model === 'ltx25-fast' && (
+                      <section className="grid gap-4 border border-border bg-[#fafafa] p-4 lg:grid-cols-2">
+                        {([
+                          ['identity', identityLora, setIdentityLora, identityLoraStrength, setIdentityLoraStrength],
+                          ['wardrobe', wardrobeLora, setWardrobeLora, wardrobeLoraStrength, setWardrobeLoraStrength],
+                        ] as const).map(([kind, selected, setSelected, strength, setStrength]) => {
+                          const options = characterLoras.filter(
+                            (item) => item.kind === kind && item.compatible_models.includes(model) && item.compatible_modes.includes(mode),
+                          );
+                          const metadata = options.find((item) => item.id === selected);
+                          return (
+                            <div key={kind} className="space-y-2">
+                              <label className="text-[10px] font-bold">
+                                {kind === 'identity'
+                                  ? locale === 'zh-TW' ? '人物 Identity LoRA' : locale === 'en' ? 'Identity LoRA' : '人物 Identity LoRA'
+                                  : locale === 'zh-TW' ? '服裝 Wardrobe LoRA' : locale === 'en' ? 'Wardrobe LoRA' : '衣装 Wardrobe LoRA'}
+                              </label>
+                              <Select
+                                value={selected}
+                                onValueChange={(id) => {
+                                  if (!id) return;
+                                  setSelected(id);
+                                  const next = options.find((item) => item.id === id);
+                                  if (next) setStrength(next.default_strength);
+                                }}
+                              >
+                                <SelectTrigger className="rounded-none bg-white text-xs"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="none">
+                                    {locale === 'zh-TW' ? '不使用 LoRA' : locale === 'en' ? 'No LoRA' : 'LoRA なし'}
+                                  </SelectItem>
+                                  {options.map((item) => <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>)}
+                                </SelectContent>
+                              </Select>
+                              {metadata && (
+                                <label className="block text-[10px] font-bold">
+                                  {locale === 'en' ? 'Strength' : locale === 'ja' ? '強度' : '強度'}: {strength}
+                                  <Input
+                                    type="range"
+                                    step="0.05"
+                                    min={metadata.validated_strength_range.min}
+                                    max={metadata.validated_strength_range.max}
+                                    value={strength}
+                                    onChange={(event) => setStrength(Number(event.target.value))}
+                                  />
+                                </label>
+                              )}
+                            </div>
+                          );
+                        })}
+                        <p className="text-[10px] leading-5 text-muted-foreground lg:col-span-2">
+                          {locale === 'zh-TW'
+                            ? '只列出主機已核准的 Registry ID；API 會核對模型、用途、SHA-256 與強度範圍。'
+                            : locale === 'en'
+                              ? 'Approved host registry IDs only. The API verifies model, purpose, SHA-256 and strength range.'
+                              : '承認済み Registry ID のみ。API がモデル、用途、SHA-256、強度範囲を検証します。'}
+                        </p>
                       </section>
                     )}
                     {mode === 'i2v' && (

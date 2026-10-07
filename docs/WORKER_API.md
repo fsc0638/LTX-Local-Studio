@@ -126,7 +126,7 @@ Authorization: Bearer <worker-api-key>
 
 I2V 改為 `"mode": "i2v"`，另帶上傳回傳的 `"image_id": "..."`。
 參照使用第 0 幀；`image_strength` 可設0–1，預設0.8；T2V 不接受圖片條件。
-目前仍不接受角色 LoRA、姿態／影片條件等額外欄位。需要更高的一致性可使用下方人物鎖定；它不等於訓練，也不保證通過視覺審片。
+LTX 2.5 請求可帶 `identity_lora`／`wardrobe_lora` 的 `{id,strength}`；ID 必須來自主機 `GET /api/v1/character-loras`。瀏覽器不得傳權重路徑或 trigger token；API 會核對核准狀態、模型、模式、SHA-256 與已驗證 strength 範圍，再由主機端解析與注入。完整安裝格式見 [Character LoRA Registry](CHARACTER_LORA_REGISTRY.md)。人物鎖定參照圖仍不等於訓練，也不保證通過視覺審片。
 
 ### 人物一致性鎖定
 

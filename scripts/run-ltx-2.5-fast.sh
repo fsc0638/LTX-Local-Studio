@@ -53,6 +53,12 @@ fi
 if [[ -n "${LTX_OFFLOAD:-}" ]]; then
     args+=(--offload "$LTX_OFFLOAD")
 fi
+if [[ -n "${LTX_IDENTITY_LORA_PATH:-}" ]]; then
+    args+=(--lora "$LTX_IDENTITY_LORA_PATH" "${LTX_IDENTITY_LORA_STRENGTH:-1.0}")
+fi
+if [[ -n "${LTX_WARDROBE_LORA_PATH:-}" ]]; then
+    args+=(--lora "$LTX_WARDROBE_LORA_PATH" "${LTX_WARDROBE_LORA_STRENGTH:-1.0}")
+fi
 
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 export CUDA_MODULE_LOADING="${CUDA_MODULE_LOADING:-LAZY}"
