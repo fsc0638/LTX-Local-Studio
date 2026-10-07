@@ -135,11 +135,34 @@ def ltx25_readiness():
     return (not missing, "" if not missing else "Missing LTX 2.5 components: " + ", ".join(missing))
 
 
+def ltx25_dev_paths():
+    paths = ltx25_paths()
+    model_root = Path(os.environ.get("LTX_REPO_ROOT", "")) / "models/LTX-2.5"
+    return {
+        "transformer": Path(os.environ.get(
+            "LTX25_DEV_TRANSFORMER_PATH",
+            model_root / "diffusion_models/ltx-2.5-22b-dev-transformer-bf16.safetensors",
+        )),
+        "text_encoder": paths["text_encoder"],
+        "video_vae": paths["video_vae"],
+        "audio_vae": paths["audio_vae"],
+    }
+
+
+def ltx25_dev_readiness():
+    missing = [name for name, path in ltx25_dev_paths().items() if not path.is_file()]
+    return (not missing, "" if not missing else "Missing LTX 2.5 Dev components: " + ", ".join(missing))
+
+
 def ltx25_command(payload, output, context):
     return ["bash", str(context["root"] / "scripts/run-ltx-2.5-fast.sh"), payload["prompt"], str(output)]
 
 
-LTX_MODELS = frozenset({"ltx23-distilled", "ltx25-fast"})
+def ltx25_dev_command(payload, output, context):
+    return ["bash", str(context["root"] / "scripts/run-ltx-2.5-dev.sh"), payload["prompt"], str(output)]
+
+
+LTX_MODELS = frozenset({"ltx23-distilled", "ltx25-fast", "ltx25-dev"})
 
 
 def default_ltx_model():
@@ -161,6 +184,9 @@ ADAPTERS = {
     "ltx25-fast": MediaAdapter("ltx25-fast", "LTX-2.5 Fast", "video", ltx25_command,
                                modes=("t2v", "i2v"), accepts_image=True, readiness=ltx25_readiness,
                                description="Official split-checkpoint LTX 2.5 distilled pipeline"),
+    "ltx25-dev": MediaAdapter("ltx25-dev", "LTX-2.5 Dev · Character LoRA", "video", ltx25_dev_command,
+                              modes=("t2v", "i2v"), accepts_image=True, readiness=ltx25_dev_readiness,
+                              description="Official one-stage LTX 2.5 Dev pipeline for checkpoint-compatible character LoRAs"),
 }
 
 

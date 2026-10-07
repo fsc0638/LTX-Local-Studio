@@ -34,6 +34,7 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import type { Asset } from '@/components/media-library';
+import type { InstalledModel } from '@/components/model-composer';
 import { serviceFetch } from '@/lib/service-session';
 import * as factory from '@/lib/factory-client';
 import {
@@ -642,6 +643,7 @@ export function ProductionFactory({
   section = 'all',
   draftAvailable = false,
   hostVersion = 0,
+  models = [],
   profiles = [...FACTORY_PROFILE_FALLBACKS],
 }: {
   locale: Locale;
@@ -655,6 +657,8 @@ export function ProductionFactory({
    * next save from 03 would write the old one back over it.
    */
   hostVersion?: number;
+  /** Installed model catalog reported by the host. */
+  models?: InstalledModel[];
   /** Versioned worker profiles reported by /api/v1/capabilities. */
   profiles?: string[];
   incoming: FactoryIncoming | null;
@@ -972,8 +976,16 @@ export function ProductionFactory({
   };
   const audioAssets = assets.filter((asset) => asset.kind === 'audio');
   const imageAssets = assets.filter((asset) => asset.kind === 'image');
-  const identityLoras = characterLoras.filter((item) => item.kind === 'identity');
-  const wardrobeLoras = characterLoras.filter((item) => item.kind === 'wardrobe');
+  const bibleModel = plan.bible.output.model || 'ltx25-fast';
+  const identityLoras = characterLoras.filter(
+    (item) => item.kind === 'identity' && item.compatible_models.includes(bibleModel),
+  );
+  const wardrobeLoras = characterLoras.filter(
+    (item) => item.kind === 'wardrobe' && item.compatible_models.includes(bibleModel),
+  );
+  const videoModels = models.filter(
+    (item) => item.media_type === 'video' && item.available,
+  );
 
   const updateBible = (change: (bible: FactoryBible) => FactoryBible) => {
     const overrideCount = countPinnedShots(plan);
@@ -1499,27 +1511,56 @@ export function ProductionFactory({
                 {text.output}
               </h3>
               <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                {(['model', 'aspect_ratio'] as const).map(
-                  (field) => (
-                    <label key={field} className="text-[10px] font-bold">
-                      {field}
-                      <Input
-                        disabled={!editable}
-                        value={String(plan.bible.output[field] || '')}
-                        onChange={(event) =>
-                          updateBible((bible) => ({
-                            ...bible,
-                            output: {
-                              ...bible.output,
-                              [field]: event.target.value || undefined,
-                            },
-                          }))
-                        }
-                        className="mt-2 rounded-none"
-                      />
-                    </label>
-                  ),
-                )}
+                <label className="text-[10px] font-bold">
+                  model
+                  <Select
+                    disabled={!editable}
+                    value={bibleModel}
+                    onValueChange={(value) => {
+                      if (!value) return;
+                      updateBible((bible) => {
+                        const identityCompatible = characterLoras.some(
+                          (item) => item.id === bible.identity_lora?.id && item.compatible_models.includes(value),
+                        );
+                        const wardrobeCompatible = characterLoras.some(
+                          (item) => item.id === bible.wardrobe_lora?.id && item.compatible_models.includes(value),
+                        );
+                        return {
+                          ...bible,
+                          identity_lora: identityCompatible ? bible.identity_lora : undefined,
+                          wardrobe_lora: wardrobeCompatible ? bible.wardrobe_lora : undefined,
+                          output: { ...bible.output, model: value },
+                        };
+                      });
+                    }}
+                  >
+                    <SelectTrigger className="mt-2 w-full rounded-none">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {videoModels.map((item) => (
+                        <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </label>
+                <label className="text-[10px] font-bold">
+                  aspect_ratio
+                  <Input
+                    disabled={!editable}
+                    value={String(plan.bible.output.aspect_ratio || '')}
+                    onChange={(event) =>
+                      updateBible((bible) => ({
+                        ...bible,
+                        output: {
+                          ...bible.output,
+                          aspect_ratio: event.target.value || undefined,
+                        },
+                      }))
+                    }
+                    className="mt-2 rounded-none"
+                  />
+                </label>
                 <label className="text-[10px] font-bold">
                   {text.profile}
                   <Select

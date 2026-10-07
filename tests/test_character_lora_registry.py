@@ -12,7 +12,7 @@ import worker_contract
 
 
 class CharacterLoraRegistryTests(unittest.TestCase):
-    def install(self, root: Path, identity="mika.identity", kind="identity"):
+    def install(self, root: Path, identity="mika.identity", kind="identity", compatible_models=None):
         weight = root / f"{identity}.safetensors"
         weight.write_bytes(b"safe-test-weight")
         digest = hashlib.sha256(weight.read_bytes()).hexdigest()
@@ -26,7 +26,7 @@ class CharacterLoraRegistryTests(unittest.TestCase):
             "trigger_token": "mikaPerson",
             "default_strength": 0.8,
             "validated_strength_range": {"min": 0.5, "max": 1.1},
-            "compatible_models": ["ltx25-fast"],
+            "compatible_models": compatible_models or ["ltx25-fast"],
             "compatible_modes": ["t2v", "i2v"],
             "approval_status": "approved",
             "version": "1.0.0",
@@ -63,6 +63,20 @@ class CharacterLoraRegistryTests(unittest.TestCase):
                 backend.parse_payload({"model": "ltx25-fast", "prompt": "test", "identity_lora": {"id": "unknown.person"}})
             with self.assertRaisesRegex(ValueError, "validated range"):
                 backend.parse_payload({"model": "ltx25-fast", "prompt": "test", "identity_lora": {"id": metadata["id"], "strength": 1.5}})
+
+    def test_dev_only_lora_is_accepted_on_dev_and_rejected_on_fast(self):
+        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {"LTX_CHARACTER_LORA_DIR": temp}):
+            metadata = self.install(Path(temp), compatible_models=["ltx25-dev"])
+            payload = backend.parse_payload({
+                "model": "ltx25-dev", "prompt": "turns toward camera",
+                "identity_lora": {"id": metadata["id"]},
+            })
+            self.assertEqual(payload["identity_lora"]["id"], metadata["id"])
+            with self.assertRaisesRegex(ValueError, "incompatible"):
+                backend.parse_payload({
+                    "model": "ltx25-fast", "prompt": "turns toward camera",
+                    "identity_lora": {"id": metadata["id"]},
+                })
 
 
 if __name__ == "__main__":
