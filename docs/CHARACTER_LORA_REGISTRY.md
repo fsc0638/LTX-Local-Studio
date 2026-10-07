@@ -52,4 +52,3 @@ API 驗證 kind、模型、模式及 strength，再注入 metadata 的 trigger t
 3. 固定 prompt、seed、參照、尺寸及 frames，比較無 LoRA、Identity、Identity＋reference、Identity＋Wardrobe。
 4. 分別驗正面、3/4、側面、全身、說話、遮擋與不同背景；逐幀人工審查。
 5. 只有通過的 strength 範圍才能寫入 metadata；未通過不得標 `approved`。
-
