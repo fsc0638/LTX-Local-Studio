@@ -387,6 +387,21 @@ export function projectBible(
   return normalizeFactoryRequest(projected);
 }
 
+/**
+ * Project a Bible into an editable request without rejecting a transiently empty prompt.
+ *
+ * The strict projector is still used as soon as the prompt is valid. Keeping the incomplete
+ * request untouched lets controlled textareas pass through the normal select-all/delete state;
+ * submission controls remain responsible for disabling actions until text is present again.
+ */
+export function projectBibleForDraft(
+  bibleValue: FactoryBible,
+  requestValue: FactoryRequest,
+): FactoryRequest {
+  if (!requestValue.prompt.trim()) return requestValue;
+  return projectBible(bibleValue, requestValue);
+}
+
 /** Apply the project Bible while keeping fields intentionally overridden by one shot. */
 export function projectBiblePreservingPins(
   bibleValue: FactoryBible,

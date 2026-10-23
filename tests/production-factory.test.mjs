@@ -13,6 +13,7 @@ import {
   parseFactoryImport,
   pinFactoryField,
   projectBible,
+  projectBibleForDraft,
   projectBiblePreservingPins,
   reprojectShots,
   reopenFactoryShot,
@@ -123,6 +124,21 @@ test('Bible projects character, music, output and directing into a portable job 
   assert.equal(request.render_mode, 'sequence');
   assert.equal(request.aspect_ratio, '16:9');
   assert.equal(request.duration_seconds, 6);
+});
+
+test('Bible projection tolerates an empty prompt while the user is editing', () => {
+  const emptyDraft = { prompt: '', duration_seconds: 6 };
+  const whitespaceDraft = { prompt: '   ', duration_seconds: 6 };
+
+  assert.deepEqual(projectBibleForDraft(bible, emptyDraft), emptyDraft);
+  assert.deepEqual(projectBibleForDraft(bible, whitespaceDraft), whitespaceDraft);
+
+  const completed = projectBibleForDraft(bible, {
+    prompt: 'Performer returns to frame',
+    duration_seconds: 6,
+  });
+  assert.equal(completed.model, bible.output.model);
+  assert.equal(completed.prompt, 'Performer returns to frame');
 });
 
 test('Bible projects registered identity and wardrobe LoRA selections', () => {

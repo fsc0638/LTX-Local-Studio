@@ -94,7 +94,7 @@ import { STAGE_KEYS, UNAVAILABLE_STAGES, type StageKey } from '@/lib/stages';
 import {
   bibleFromRequest,
   hasFactoryBible,
-  projectBible,
+  projectBibleForDraft,
   type FactoryPlan,
 } from '@/lib/production-factory';
 import {
@@ -1254,7 +1254,7 @@ function Studio() {
   };
   const factoryRequest =
     plan && hasFactoryBible(plan.bible)
-      ? projectBible(plan.bible, generationRequest)
+      ? projectBibleForDraft(plan.bible, generationRequest)
       : generationRequest;
   const breakdownEntries = breakdown
     ? breakdownFactoryEntries(factoryRequest, breakdown.shots)
@@ -2185,6 +2185,7 @@ function Studio() {
                       <Textarea
                         value={prompt}
                         onChange={(e) => setPrompt(e.target.value)}
+                        maxLength={4000}
                         className="min-h-40 resize-none rounded-none bg-[#fafaf8] text-sm leading-6 shadow-none focus-visible:ring-[#ff6f91]/25"
                       />
                       <span className="mt-2 block text-right text-[10px] text-muted-foreground">
