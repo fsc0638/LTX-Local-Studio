@@ -3,7 +3,9 @@ import fcntl
 import importlib.util
 import json
 from pathlib import Path
-import sqlite3
+import psycopg
+
+import conftest
 import tempfile
 import time
 import unittest
@@ -115,7 +117,7 @@ class DeletionTests(unittest.TestCase):
         job = self.job()
         with patch.object(backend, "prepare_archive", side_effect=OSError()):
             self.assertEqual(self.remove("jobs", job["id"])[0], 503)
-        with patch.object(self.fixture.store, "record", side_effect=sqlite3.OperationalError()):
+        with patch.object(self.fixture.store, "record", side_effect=psycopg.OperationalError()):
             self.assertEqual(self.remove("jobs", job["id"])[0], 503)
         self.assertEqual((self.fixture.output / job["filename"]).read_bytes(), b"video")
         self.assertNotIn("deleted_at", self.fixture.store.get(job["id"]))
@@ -128,7 +130,10 @@ class DeletionTests(unittest.TestCase):
         self.assertEqual(self.call("GET", job["output_url"], cookie=self.cookie)[0], 404)
 
 
-class ArchiveTests(unittest.TestCase):
+class ArchiveTests(conftest.DatabaseFixture, unittest.TestCase):
+    def setUp(self):
+        self.start_database()
+
     def test_symlink_and_changed_source_are_not_deleted(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -154,7 +159,8 @@ class ArchiveTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             state = root / "data/worker"
-            store = ProductionStore(state / "jobs.sqlite3")
+            state.mkdir(parents=True)
+            store = ProductionStore()
             store.record({"id": "abcdef123456", "status": "succeeded", "filename": "old.mp4"})
             output = state / "outputs"
             output.mkdir()
@@ -173,9 +179,9 @@ class ArchiveTests(unittest.TestCase):
             self.assertEqual(store.list_jobs()["total"], 0)
             self.assertEqual((state / "accounts.sqlite3").read_bytes(), b"do not touch")
             self.assertTrue((public / ".gitkeep").exists())
-            backup = sqlite3.connect(Path(result["archive"]) / "jobs-before.sqlite3")
-            self.assertNotIn("deleted_at", json.loads(backup.execute("SELECT snapshot FROM jobs").fetchone()[0]))
-            backup.close()
+            saved = json.loads((Path(result["archive"]) / "jobs-before.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(saved), 1)
+            self.assertNotIn("deleted_at", saved[0]["snapshot"])
             self.assertEqual(module.clear(root, apply=True)["files"], 0)
 
 

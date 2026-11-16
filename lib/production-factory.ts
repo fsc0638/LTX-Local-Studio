@@ -1,12 +1,19 @@
 export const FACTORY_FORMAT = 'ltx-production-factory';
 export const FACTORY_VERSION = 2;
 export const MAX_FACTORY_SHOTS = 100;
+export const FACTORY_PROFILE_FALLBACKS = [
+  'compat-v1',
+  'preview-v1',
+  'landscape-v1',
+  'portrait-v1',
+] as const;
 
 export type FactoryCharacter = {
   name: string;
   description: string;
   references: { image_id: string; view: string }[];
 };
+export type FactoryCharacterLora = { id: string; strength?: number };
 export type FactoryMusic = {
   audio_id: string;
   audio_start_seconds: number;
@@ -23,10 +30,25 @@ export type FactoryOutput = {
 };
 export type FactoryBible = {
   character?: FactoryCharacter;
+  identity_lora?: FactoryCharacterLora;
+  wardrobe_lora?: FactoryCharacterLora;
+  visual_style?: string;
+  style_anchor?: string;
+  /** Sequential character/style lock. Green gates advance; yellow/red pause the line. */
+  continuity?: {
+    mode: 'relay';
+    gate: 'strict';
+    identity_board_id?: string;
+    identity_sources?: string[];
+  };
   music?: FactoryMusic;
   output: FactoryOutput;
   directing?: Record<string, string>;
   lyric_offset_seconds: number;
+  /** Judge thresholds (C3/C4). Absent means the placeholder defaults; see lib/review.ts. */
+  thresholds?: import('./calibration').BibleThresholds;
+  /** The line producer's ceiling (D4). Over budget is a warning, never a stop. */
+  budget?: { gpu_seconds?: number; openai_tokens?: number };
 };
 
 export type FactoryRunState = 'draft' | 'running' | 'paused' | 'completed';
@@ -54,6 +76,8 @@ export type FactoryShot = {
   progress: number;
   message?: string;
   error?: string;
+  /** The take that goes to assembly, chosen in review (C2). Server state; absent until then. */
+  acceptedTakeId?: string;
 };
 
 export type FactoryPlan = {
@@ -93,6 +117,9 @@ const runStates = new Set<FactoryRunState>([
 ]);
 const PROJECTED_FIELDS = [
   'character',
+  'identity_lora',
+  'wardrobe_lora',
+  'visual_style',
   'mode',
   'image_id',
   'timeline',
@@ -129,7 +156,12 @@ export function normalizeFactoryRequest(value: unknown): FactoryRequest {
   ) {
     throw new Error('Every shot requires a prompt of 1–4000 characters');
   }
-  const encoded = JSON.stringify(raw);
+  const migrated = { ...raw };
+  // `primary_action` was display-only metadata from the drafting response. Older clients stored
+  // it inside the portable worker request even though the worker contract never accepted it.
+  delete migrated.primary_action;
+  if (migrated.profile === 'distilled') migrated.profile = 'compat-v1';
+  const encoded = JSON.stringify(migrated);
   if (encoded.length > 128_000) {
     throw new Error('A shot request cannot exceed 128000 JSON characters');
   }
@@ -151,10 +183,17 @@ export function normalizeFactoryBible(value: unknown): FactoryBible {
     (key) =>
       ![
         'character',
+        'identity_lora',
+        'wardrobe_lora',
+        'visual_style',
+        'style_anchor',
+        'continuity',
         'music',
         'output',
         'directing',
         'lyric_offset_seconds',
+        'thresholds',
+        'budget',
       ].includes(key),
   );
   if (extra.length)
@@ -193,6 +232,64 @@ export function normalizeFactoryBible(value: unknown): FactoryBible {
         ),
       } satisfies FactoryCharacter)
     : undefined;
+  const normalizeLora = (value: unknown, label: string) => {
+    if (value === undefined) return undefined;
+    const item = record(value, label);
+    if (
+      Object.keys(item).some((key) => !['id', 'strength'].includes(key)) ||
+      typeof item.id !== 'string' ||
+      !/^[a-z0-9][a-z0-9._-]{2,63}$/.test(item.id) ||
+      (item.strength !== undefined &&
+        (typeof item.strength !== 'number' ||
+          !Number.isFinite(item.strength) ||
+          item.strength < 0 ||
+          item.strength > 2))
+    ) {
+      throw new Error(`${label} is invalid`);
+    }
+    return { id: item.id, ...(item.strength === undefined ? {} : { strength: item.strength }) };
+  };
+  const identityLora = normalizeLora(raw.identity_lora, 'Bible identity LoRA');
+  const wardrobeLora = normalizeLora(raw.wardrobe_lora, 'Bible wardrobe LoRA');
+  const visualStyle =
+    raw.visual_style === undefined
+      ? undefined
+      : typeof raw.visual_style === 'string' &&
+          raw.visual_style.trim() &&
+          raw.visual_style.trim().length <= 1200
+        ? raw.visual_style
+        : (() => {
+            throw new Error(
+              'Bible visual_style must contain 1–1200 characters',
+            );
+          })();
+  const styleAnchor =
+    raw.style_anchor === undefined
+      ? undefined
+      : typeof raw.style_anchor === 'string' &&
+          /^[a-f0-9]{32}$/.test(raw.style_anchor)
+        ? raw.style_anchor
+        : (() => {
+            throw new Error('Bible style_anchor must be an image asset ID');
+          })();
+  const continuityRaw = raw.continuity
+    ? record(raw.continuity, 'Bible continuity')
+    : undefined;
+  if (
+    continuityRaw &&
+    (continuityRaw.mode !== 'relay' ||
+      continuityRaw.gate !== 'strict' ||
+      (continuityRaw.identity_board_id !== undefined &&
+        (typeof continuityRaw.identity_board_id !== 'string' ||
+          !/^[a-f0-9]{32}$/.test(continuityRaw.identity_board_id))) ||
+      (continuityRaw.identity_sources !== undefined &&
+        (!Array.isArray(continuityRaw.identity_sources) ||
+          continuityRaw.identity_sources.some(
+            (id) => typeof id !== 'string' || !/^[a-f0-9]{32}$/.test(id),
+          ))))
+  ) {
+    throw new Error('Bible continuity must use relay + strict gate');
+  }
   const musicRaw = raw.music ? record(raw.music, 'Bible music') : undefined;
   if (
     musicRaw &&
@@ -204,13 +301,37 @@ export function normalizeFactoryBible(value: unknown): FactoryBible {
   ) {
     throw new Error('Bible music is invalid');
   }
+  const output = clone(raw.output ? record(raw.output, 'Bible output') : {});
+  if (output.profile === 'distilled') output.profile = 'compat-v1';
   const bible = clone({
     ...(character ? { character } : {}),
+    ...(identityLora ? { identity_lora: identityLora } : {}),
+    ...(wardrobeLora ? { wardrobe_lora: wardrobeLora } : {}),
+    ...(visualStyle ? { visual_style: visualStyle } : {}),
+    ...(styleAnchor ? { style_anchor: styleAnchor } : {}),
+    ...(continuityRaw
+      ? {
+          continuity: {
+            mode: 'relay' as const,
+            gate: 'strict' as const,
+            ...(continuityRaw.identity_board_id
+              ? { identity_board_id: continuityRaw.identity_board_id as string }
+              : {}),
+            ...(continuityRaw.identity_sources
+              ? { identity_sources: continuityRaw.identity_sources as string[] }
+              : {}),
+          },
+        }
+      : {}),
     ...(musicRaw ? { music: musicRaw } : {}),
-    output: raw.output ? record(raw.output, 'Bible output') : {},
+    output,
     ...(raw.directing
       ? { directing: record(raw.directing, 'Bible directing') }
       : {}),
+    ...(raw.thresholds
+      ? { thresholds: record(raw.thresholds, 'Bible thresholds') }
+      : {}),
+    ...(raw.budget ? { budget: record(raw.budget, 'Bible budget') } : {}),
     lyric_offset_seconds:
       typeof raw.lyric_offset_seconds === 'number' &&
       Number.isFinite(raw.lyric_offset_seconds)
@@ -226,6 +347,11 @@ export function normalizeFactoryBible(value: unknown): FactoryBible {
 export function hasFactoryBible(bible: FactoryBible): boolean {
   return Boolean(
     bible.character ||
+    bible.identity_lora ||
+    bible.wardrobe_lora ||
+    bible.visual_style ||
+    bible.style_anchor ||
+    bible.continuity ||
     bible.music ||
     bible.directing ||
     Object.keys(bible.output).length,
@@ -248,6 +374,9 @@ export function projectBible(
     projected.mode = 'i2v';
     projected.image_id = bible.character.references[0].image_id;
   }
+  if (bible.visual_style) projected.visual_style = bible.visual_style;
+  if (bible.identity_lora) projected.identity_lora = clone(bible.identity_lora);
+  if (bible.wardrobe_lora) projected.wardrobe_lora = clone(bible.wardrobe_lora);
   if (bible.music) {
     projected.render_mode = 'sequence';
     projected.audio = true;
@@ -255,6 +384,36 @@ export function projectBible(
   }
   if (bible.directing) projected.directing = clone(bible.directing);
   Object.assign(projected, clone(bible.output));
+  return normalizeFactoryRequest(projected);
+}
+
+/**
+ * Project a Bible into an editable request without rejecting a transiently empty prompt.
+ *
+ * The strict projector is still used as soon as the prompt is valid. Keeping the incomplete
+ * request untouched lets controlled textareas pass through the normal select-all/delete state;
+ * submission controls remain responsible for disabling actions until text is present again.
+ */
+export function projectBibleForDraft(
+  bibleValue: FactoryBible,
+  requestValue: FactoryRequest,
+): FactoryRequest {
+  if (!requestValue.prompt.trim()) return requestValue;
+  return projectBible(bibleValue, requestValue);
+}
+
+/** Apply the project Bible while keeping fields intentionally overridden by one shot. */
+export function projectBiblePreservingPins(
+  bibleValue: FactoryBible,
+  requestValue: FactoryRequest,
+  pinned: string[] = [],
+): FactoryRequest {
+  const source = normalizeFactoryRequest(requestValue);
+  const projected = projectBible(bibleValue, source);
+  for (const field of new Set(pinned)) {
+    if (field in source) projected[field] = clone(source[field]);
+    else delete projected[field];
+  }
   return normalizeFactoryRequest(projected);
 }
 
@@ -268,6 +427,8 @@ export function bibleFromRequest(requestValue: FactoryRequest): FactoryBible {
     request.character && typeof request.character === 'object'
       ? (clone(request.character) as FactoryCharacter)
       : undefined;
+  const visualStyle =
+    typeof request.visual_style === 'string' ? request.visual_style : undefined;
   const directing =
     request.directing && typeof request.directing === 'object'
       ? (clone(request.directing) as Record<string, string>)
@@ -295,6 +456,9 @@ export function bibleFromRequest(requestValue: FactoryRequest): FactoryBible {
   ) as FactoryOutput;
   return normalizeFactoryBible({
     ...(character ? { character } : {}),
+    ...(request.identity_lora ? { identity_lora: clone(request.identity_lora) } : {}),
+    ...(request.wardrobe_lora ? { wardrobe_lora: clone(request.wardrobe_lora) } : {}),
+    ...(visualStyle ? { visual_style: visualStyle } : {}),
     ...(music ? { music } : {}),
     output,
     ...(directing ? { directing } : {}),
@@ -368,6 +532,8 @@ export function restoreFactoryPlan(value: unknown): FactoryPlan {
       ? (shot.status as FactoryShotState)
       : 'draft';
     const jobId = typeof shot.jobId === 'string' ? shot.jobId : undefined;
+    const acceptedTakeId =
+      typeof shot.acceptedTakeId === 'string' ? shot.acceptedTakeId : undefined;
     const statusUrl = safePath(shot.statusUrl, '/api/');
     if (status === 'validating' || status === 'submitting') status = 'queued';
     if (status === 'running' && (!jobId || !statusUrl)) status = 'queued';
@@ -394,6 +560,7 @@ export function restoreFactoryPlan(value: unknown): FactoryPlan {
           : `factory-${shot.id}`,
       jobId,
       statusUrl,
+      ...(acceptedTakeId ? { acceptedTakeId } : {}),
       outputUrl: safePath(shot.outputUrl, '/'),
       posterUrl: safePath(shot.posterUrl, '/'),
       progress:

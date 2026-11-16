@@ -55,3 +55,6 @@ next-env.d.ts
 *.pth
 *.log
 *.tsbuildinfo
+
+# C4 calibration material: character photos, never committed.
+calibration/

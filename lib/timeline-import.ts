@@ -7,7 +7,7 @@
  */
 const MAX_SECONDS = 180;
 const MAX_CUES = 60;
-const MAX_ACTION = 600;
+const MAX_ACTION = 4000;
 const MAX_LRC = 16000;
 const TIMELINE_FIELDS = [
   'audio_id',

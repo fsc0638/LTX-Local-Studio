@@ -1,0 +1,28 @@
+# Post tools (Real-ESRGAN, LaMa, RIFE) for stage 05. Install with:
+#   cp infra/systemd/ltx-post.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now ltx-post.service
+# Not enabled by the sync script: activating a unit is a system-level change.
+#
+# Verify before trusting it - systemd-analyze reports a bad line but still exits 0:
+#   systemd-analyze --user verify infra/systemd/ltx-post.service   # must print nothing
+[Unit]
+Description=LTX Local Studio post tools (upscale, clean, interpolate)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/kwayrdc/LTX Local Studio
+# Quoted: Environment= splits an unquoted value on whitespace, and this path has a space in it.
+Environment="LTX_SITE_ROOT=/home/kwayrdc/LTX Local Studio"
+Environment=STUDIO_REALESRGAN_WEIGHTS=/opt/studio/models/realesrgan/RealESRGAN_x4plus.pth
+Environment=STUDIO_RIFE_ROOT=/opt/studio/tools/rife
+Environment=TORCH_HOME=/opt/studio/models/torch
+# The vision venv holds realesrgan, basicsr and simple-lama-inpainting (infra/gb10/50-post.sh).
+ExecStart=/opt/studio/venvs/vision/bin/python "/home/kwayrdc/LTX Local Studio/services/post/server.py"
+Restart=on-failure
+RestartSec=5
+Environment=LTX_POST_HOST=127.0.0.1
+Environment=LTX_POST_PORT=8793
+
+[Install]
+WantedBy=default.target

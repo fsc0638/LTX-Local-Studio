@@ -80,9 +80,10 @@ CF-Access-Client-Secret: <service-token-secret>
 | 下載影片 | `GET /api/v1/jobs/{id}/video?download=1` | MP4；支援 Range／HEAD |
 | 下載通用產出 | `GET /api/v1/jobs/{id}/artifact?download=1` | MP4／PNG／UTF-8 TXT；支援 Range／HEAD |
 
-上傳是原始二進位，不是 multipart：`Content-Type: image/png`，body 為檔案 bytes。
-可上傳 PNG／JPEG／WebP／MP4，每檔 50 MiB、共用素材庫 2 GiB；目前只有圖片可作生成條件。
-MP4 上傳僅保存，**不是 V2V**。不接受遠端 URL、任意本機路徑或外部 callback URL，避免 SSRF 與任意檔案讀取。
+上傳是原始二進位，不是 multipart：例如 `Content-Type: image/png`，body 為檔案 bytes。
+可上傳 PNG／JPEG／WebP／MP4 與已支援的音訊格式，每檔 50 MiB、共用素材庫 2 GiB。
+圖片可作 I2V 首格；`ltx23-control`／`ltx23-dubit` 使用已上傳 MP4，`ltx25-a2v` 使用已上傳音訊。
+這些素材 ID 都會驗證類型與帳號所有權，子程序只收到伺服器解析後的私有路徑。不接受遠端 URL、任意本機路徑或外部 callback URL，避免 SSRF 與任意檔案讀取。
 
 ### 送出影片任務
 
@@ -125,7 +126,7 @@ Authorization: Bearer <worker-api-key>
 
 I2V 改為 `"mode": "i2v"`，另帶上傳回傳的 `"image_id": "..."`。
 參照使用第 0 幀；`image_strength` 可設0–1，預設0.8；T2V 不接受圖片條件。
-目前仍不接受角色 LoRA、姿態／影片條件等額外欄位。需要更高的一致性可使用下方人物鎖定；它不等於訓練，也不保證通過視覺審片。
+LTX 2.5 請求可帶 `identity_lora`／`wardrobe_lora` 的 `{id,strength}`；ID 必須來自主機 `GET /api/v1/character-loras`。瀏覽器不得傳權重路徑或 trigger token；API 會核對核准狀態、模型、模式、SHA-256 與已驗證 strength 範圍，再由主機端解析與注入。完整安裝格式見 [Character LoRA Registry](CHARACTER_LORA_REGISTRY.md)。人物鎖定參照圖仍不等於訓練，也不保證通過視覺審片。
 
 ### 人物一致性鎖定
 
@@ -159,7 +160,7 @@ I2V 改為 `"mode": "i2v"`，另帶上傳回傳的 `"image_id": "..."`。
 
 上傳照片不會讓模型訓練或只學習人物；I2V 會對**整張第0幀**做條件控制，所以原背景也會影響結果。`reference_background="alpha_neutral"` 可把已去背的透明人物 PNG 合成到中性灰背景，降低原背景污染；所有人物設定集圖片都必須有有效 alpha，普通 JPG／無透明區域的 PNG 會明確拒絕。`image_strength` 可用約0.65–0.8平衡人物與背景自由度；越低越能改背景，也越可能降低人物一致性。
 
-未設定時：model=`ltx23-distilled`、mode=`t2v`、width=768、height=512、frames=49、fps=24、seed=42、audio=true、offload=false。
+未設定時：完整 LTX 2.5 split checkpoint 可用便選 `ltx25-fast`，否則安全退回 `ltx23-distilled`；可用 `LTX_DEFAULT_MODEL` 明確覆寫。`ltx25-dev` 是較慢的官方 one-stage Dev lane，專門載入與 Dev checkpoint 相容的人物／服裝 LoRA；它不會取代預設 Fast lane，也不接受把 Dev LoRA 偽裝成 Distilled 相容。其餘為 mode=`t2v`、width=768、height=512、frames=49、fps=24、seed=42、audio=true、offload=false。
 `prompt` 上限 4000 字元、width/height 為 256–1536 且是 64 倍數；整數欄位不得傳浮點或字串。
 
 ### 版本化生成預設
@@ -173,7 +174,16 @@ I2V 改為 `"mode": "i2v"`，另帶上傳回傳的 `"image_id": "..."`。
 
 明確傳入的尺寸、音訊、幀數／秒數等會覆寫 profile；回應 `resolved_parameters` 記錄最終值。
 這些是可重現的參數組，不是經大量盲測後的最佳品質承諾。原先不帶 profile 的客戶端不會被改成無音訊。
-預設安裝仍是 `ltx23-distilled`；固定第一階段8步、第二階段3步。不把不支援的 steps／guidance／negative_prompt 假裝接通。新增模型以 `/api/v1/models` 為準，參數位於各模型的 `parameters`。
+`ltx25-fast` 的一般 T2V／I2V 固定第一階段8步、第二階段3步；`ltx25-dev` 使用伺服器端驗證過的 one-stage 30 步與 guidance 設定。API 不把未接通的 steps／guidance／negative_prompt 假裝成可調欄位。新增模型以 `/api/v1/models` 為準，參數位於各模型的 `parameters`。
+
+受控生成是獨立模型契約，不會默默退回純提示詞生成：
+
+- `ltx23-control`：官方 `ic_lora`，以 motion-track／pose 影片固定表演或骨架，可另帶角色首格。
+- `ltx23-camera`：官方 camera-control LoRA，選擇 dolly／jib／static 等明確運鏡，可另帶角色首格；它不是任意相機路徑影片追蹤。
+- `ltx25-a2v`：官方 `a2vid_two_stage`，以已鎖定音訊驅動說話或歌唱，可另帶角色首格。
+- `ltx23-dubit`：官方 `dubit`，以參考演出保留說話者與表演，再依新語音重做嘴型。
+
+缺少對應官方權重時，模型會留在 catalog 並標示 `available=false` 與缺件原因；服務不自動下載權重。
 `audio=false` 停用音訊解碼與輸出，並非移除模型所有聯合音訊推論。
 
 ### 冪等與排程
@@ -273,6 +283,20 @@ UI 使用 `9:16`、`16:9`、`1:1`、`4:3`、`3:4`、`3:2` 比例，不再要求�
 上述模型未因此被自動下載或安裝；既有平面角色的母版、版號、授權都留在上游。
 v1.2 已提供圖片／文字／影片轉接器介面，共用本 worker 的单一執行名額；實際其他模型仍須另行安裝與驗收，不會同時執行兩個模型任務。
 
+## 製片工廠（Factory）
+
+`/api/v1/factory/*` 是通用影片服務之上的**編排層**：它把一份工作單的鏡頭依序送進既有的
+`/api/v1/validate` → `/api/v1/jobs`，不新增任何碰模型命令或檔案路徑的程式碼。
+
+計畫、鏡頭與 take 存在本機 PostgreSQL，排程迴圈跑在 `ltx-api` 內，所以關閉瀏覽器不會停止生產，
+API 重啟也會從資料庫續跑（中途狀態的鏡頭退回排隊，冪等鍵不變 —— 已送達 worker 的任務是重播）。
+
+端點、資料形狀與錯誤碼以 `/api/v1/openapi.json` 為準（`FactoryPlan`／`FactoryShot`／`FactoryTake`）。
+完整說明見 [製片工廠](PRODUCTION_FACTORY.md)。
+
+租戶邊界是帳號；`LTX_FACTORY_QUEUE_LIMIT`（預設 100）限制每帳號在途鏡頭數，超過回 429
+`factory_queue_limit`。GPU 忙碌時鏡頭保留順位重試，不算失敗；worker 拒絕的請求會暫停整條線等人處理。
+
 ## 本機資料與維運
 
 - `data/worker/jobs.sqlite3`：任務、參數、外部 ID、狀態與來源指紋；重啟可查，不保存完整企劃。
@@ -346,6 +370,6 @@ An operator-approved recovery can place a private `data/worker/resume-request.js
 
 ## 主機 Git 自動同步
 
-本機可由使用者層級的 `ltx-git-sync.timer` 定期執行 `scripts/git-sync-main.sh`。同步器只允許乾淨 `main` 的 fast-forward；依差異執行前端或 Python 測試，UI 通過正式 build 後才重啟 Web，後端則在沒有生成任務時才重啟 API。依賴清單改動、工作樹不乾淨、分支分岔、測試或 build 失敗都會停止部署並保留 journal 紀錄；不會自動安裝套件或強制覆寫本機內容。
+本機可由使用者層級的 `ltx-git-sync.timer` 定期執行 `scripts/git-sync-main.sh`。同步器只允許乾淨 `main` 的 fast-forward；依差異執行前端或 Python 測試，UI 通過正式 build 後才重啟 Web，後端則在沒有生成任務時才重啟 API；`services/<name>/` 有變更時，對應的 loopback 服務（ltx-audio／judge／imagegen／post）也在同一個沒有任務的時刻重啟，並等其 `/health` 回 200。依賴清單改動、工作樹不乾淨、分支分岔、測試或 build 失敗都會停止部署並保留 journal 紀錄；不會自動安裝套件或強制覆寫本機內容。
 
 部署範圍以 `data/worker/git-sync/deployed` 記錄的「已上線 commit」為起點，而不是本機 HEAD：直接在主機上 commit 並 push 的變更也會在下一輪被 build 與重啟，不會因為本機與 origin 相同而被略過。首次執行時若沒有這個印記，會以當時的 HEAD 建立，不會無故重啟服務。驗證中途失敗留下的 pending 狀態，只要 HEAD 是往前走的（pending commit 是 HEAD 的祖先），下一輪會把驗證視窗延伸到 HEAD 繼續；reset、rebase 或印記不在 HEAD 歷史中的情況仍會停下等人處理。`tests/test_git_sync.sh` 在拋棄式 origin 上演練這些情境，同步腳本或該測試本身改動時會自動執行。
