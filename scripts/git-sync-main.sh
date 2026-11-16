@@ -6,6 +6,9 @@ sync_state_dir="${sync_root}/data/worker/git-sync"
 sync_python="${LTX_SYNC_PYTHON:-/usr/bin/python3}"
 sync_node="${LTX_SYNC_NODE:-/usr/bin/node}"
 sync_npm="${LTX_SYNC_NPM:-/usr/bin/npm}"
+# The Python suite needs a throwaway database: since B0 the stores are PostgreSQL, and every test
+# truncates. This must never point at ltx_studio; conftest refuses a name without "test" in it.
+sync_test_database_url="${LTX_TEST_DATABASE_URL:-postgresql:///ltx_studio_test?host=/var/run/postgresql}"
 # npm is a script that resolves `node` through PATH, and so is everything it spawns. Under systemd
 # that PATH holds only the system Node, so a build would run on a different runtime than the tests.
 # Put the chosen runtime first.
@@ -55,9 +58,18 @@ sync_deployed_commit() {
   printf '%s' "${sync_value}"
 }
 
+# Ask the API rather than reading its store: the jobs now live in PostgreSQL, and only the API
+# holds the DSN. A failure here must read as "busy" so a restart is deferred, never as zero.
 sync_active_jobs() {
-  /usr/bin/sqlite3 -readonly data/worker/jobs.sqlite3 \
-    "SELECT count(*) FROM jobs WHERE json_extract(snapshot,'$.status') IN ('queued','running');"
+  local sync_body sync_count
+  sync_body="$(/usr/bin/curl -sS --max-time 5 http://127.0.0.1:8787/api/internal/active-jobs || true)"
+  sync_count="$(sed -n 's/.*"count"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' <<<"${sync_body}")"
+  if [[ -z "${sync_count}" ]]; then
+    sync_log "Could not read active job count from the API; treating the worker as busy." >&2
+    printf '%s' "unknown"
+    return 0
+  fi
+  printf '%s' "${sync_count}"
 }
 
 sync_wait_active() {
@@ -93,19 +105,43 @@ sync_apply_restarts() {
     rm -f "${sync_state_dir}/restart-web"
   fi
 
-  if [[ -f "${sync_state_dir}/restart-api" ]]; then
-    local sync_jobs
-    sync_jobs="$(sync_active_jobs)"
-    if [[ "${sync_jobs}" != "0" ]]; then
-      sync_log "Deferring ltx-api.service restart; ${sync_jobs} generation job(s) are active."
-      return 0
+  # ltx-api and the loopback services wait for the same quiet moment: a running generation or
+  # post job would die with the unit it is talking to. One gate, then each pending unit in turn.
+  local sync_pending="" sync_service sync_port sync_jobs
+  for sync_service in api audio judge imagegen post; do
+    if [[ -f "${sync_state_dir}/restart-${sync_service}" ]]; then
+      sync_pending="${sync_pending} ${sync_service}"
     fi
+  done
+  if [[ -z "${sync_pending}" ]]; then
+    return 0
+  fi
+  sync_jobs="$(sync_active_jobs)"
+  if [[ "${sync_jobs}" != "0" ]]; then
+    sync_log "Deferring restart of${sync_pending}; ${sync_jobs} generation job(s) are active."
+    return 0
+  fi
+  if [[ -f "${sync_state_dir}/restart-api" ]]; then
     sync_log "Restarting ltx-api.service after verified backend tests."
     /usr/bin/systemctl --user restart ltx-api.service
     sync_wait_active ltx-api.service
     sync_wait_http http://127.0.0.1:8787/api/auth/config 200
     rm -f "${sync_state_dir}/restart-api"
   fi
+  for sync_service in audio judge imagegen post; do
+    [[ -f "${sync_state_dir}/restart-${sync_service}" ]] || continue
+    case "${sync_service}" in
+      audio) sync_port=8790 ;;
+      judge) sync_port=8791 ;;
+      imagegen) sync_port=8792 ;;
+      post) sync_port=8793 ;;
+    esac
+    sync_log "Restarting ltx-${sync_service}.service after verified service tests."
+    /usr/bin/systemctl --user restart "ltx-${sync_service}.service"
+    sync_wait_active "ltx-${sync_service}.service"
+    sync_wait_http "http://127.0.0.1:${sync_port}/health" 200
+    rm -f "${sync_state_dir}/restart-${sync_service}"
+  done
 }
 
 sync_branch="$(/usr/bin/git symbolic-ref --quiet --short HEAD || true)"
@@ -192,7 +228,15 @@ sync_runtime_changes="$(grep -Ev '^scripts/git-sync-main\.sh$' <<<"${sync_change
 if grep -Eq '(^[^/]+\.py$|^scripts/.*\.(py|sh)$|^local_adapters/)' <<<"${sync_runtime_changes}"; then
   sync_backend=1
 fi
-if grep -Eq '(^|/)tests/.*\.py$' <<<"${sync_changes}" || [[ "${sync_backend}" == "1" ]]; then
+# A loopback service (services/<name>/) is its own unit: a change to it restarts that unit, not
+# ltx-api. Its tests are part of the Python suite (the service module runs in process, fake mode).
+sync_services=""
+for sync_service in audio judge imagegen post; do
+  if grep -Eq "^services/${sync_service}/" <<<"${sync_runtime_changes}"; then
+    sync_services="${sync_services} ${sync_service}"
+  fi
+done
+if grep -Eq '(^|/)tests/.*\.py$' <<<"${sync_changes}" || [[ "${sync_backend}" == "1" || -n "${sync_services}" ]]; then
   sync_python_tests=1
 fi
 
@@ -204,7 +248,7 @@ if [[ "${sync_js_tests}" == "1" ]]; then
   "${sync_node}" --test tests/studio-controls.test.mjs
 fi
 if [[ "${sync_python_tests}" == "1" ]]; then
-  PYTHONPATH=tests "${sync_python}" -m unittest discover -s tests -p 'test_*.py'
+  LTX_TEST_DATABASE_URL="${sync_test_database_url}" PYTHONPATH=tests "${sync_python}" -m unittest discover -s tests -p 'test_*.py'
 fi
 if [[ "${sync_web}" == "1" ]]; then
   sync_log "Building the UI with node $("${sync_node}" --version) and npm $("${sync_npm}" --version)."
@@ -214,6 +258,9 @@ fi
 if [[ "${sync_backend}" == "1" ]]; then
   printf '%s\n' "${sync_to}" >"${sync_state_dir}/restart-api"
 fi
+for sync_service in ${sync_services}; do
+  printf '%s\n' "${sync_to}" >"${sync_state_dir}/restart-${sync_service}"
+done
 
 rm -f "${sync_pending_from}" "${sync_pending_to}"
 printf '%s\n' "${sync_to}" >"${sync_state_dir}/deployed"

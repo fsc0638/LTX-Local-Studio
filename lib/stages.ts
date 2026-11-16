@@ -8,6 +8,14 @@ export type PlanSnapshot = {
   total: number;
   completed: number;
   failed: number;
+  /** Finished shots nobody has judged yet. */
+  awaitingReview: number;
+  /** Shots with an accepted take. */
+  accepted: number;
+  /** Shots whose image_id came from an approved keyframe. */
+  keyframed: number;
+  /** Shots whose newest keyframe is red or yellow and waiting on a person. */
+  keyframesAttention: number;
 };
 
 /** What the line looks like before a plan exists at all. */
@@ -17,6 +25,10 @@ export const EMPTY_PLAN_SNAPSHOT: PlanSnapshot = {
   total: 0,
   completed: 0,
   failed: 0,
+  awaitingReview: 0,
+  accepted: 0,
+  keyframed: 0,
+  keyframesAttention: 0,
 };
 
 export type StageKey =
@@ -41,8 +53,8 @@ export const STAGE_KEYS: StageKey[] = [
   'assembly',
 ];
 
-/** Keyframes, review and post need the judge and imagegen services (phases C and D). */
-export const UNAVAILABLE_STAGES: StageKey[] = ['keyframes', 'review', 'post'];
+/** Every stage is implemented now; the list stays so a future stage can be marked before it lands. */
+export const UNAVAILABLE_STAGES: StageKey[] = [];
 
 export type StageOwner = 'user' | 'worker' | 'none';
 
@@ -62,7 +74,13 @@ function baseStatuses(plan: PlanSnapshot): Record<StageKey, StageStatus> {
   return {
     bible: plan.hasBible ? 'done' : 'idle',
     breakdown: plan.total ? 'done' : 'idle',
-    keyframes: 'disabled',
+    // Keyframes are optional before shooting: idle until there are shots, attention while a
+    // candidate waits on a person, done once every shot starts from an approved keyframe.
+    keyframes: plan.keyframesAttention
+      ? 'attention'
+      : plan.total > 0 && plan.keyframed === plan.total
+        ? 'done'
+        : 'idle',
     shoot: plan.failed
       ? 'attention'
       : plan.status === 'running'
@@ -70,8 +88,15 @@ function baseStatuses(plan: PlanSnapshot): Record<StageKey, StageStatus> {
         : allDone
           ? 'done'
           : 'idle',
-    review: 'disabled',
-    post: 'disabled',
+    // Review asks for a person as soon as one finished shot has no verdict; it is done when every
+    // shot has an accepted take. Between those it is simply idle - nothing to look at yet.
+    review: plan.awaitingReview
+      ? 'attention'
+      : plan.total > 0 && plan.accepted === plan.total
+        ? 'done'
+        : 'idle',
+    // Post is optional after review: never 'you are here' on its own, never required for assembly.
+    post: 'idle',
     assembly: plan.status === 'completed' ? 'done' : 'idle',
   };
 }
@@ -84,14 +109,20 @@ export function planProgress(plan: PlanSnapshot): PlanProgress {
   const statuses = baseStatuses(plan);
 
   // "You are here" is the first stage that is neither finished nor out of scope this phase.
+  // Keyframes and post are optional: idle, they are skipped over. Keyframes asks to be current
+  // only while a candidate is waiting on a person; post never does.
   const pending = STAGE_KEYS.find(
-    (key) => statuses[key] !== 'done' && statuses[key] !== 'disabled',
+    (key) =>
+      statuses[key] !== 'done' &&
+      statuses[key] !== 'disabled' &&
+      !((key === 'keyframes' || key === 'post') && statuses[key] === 'idle'),
   );
   const current = pending ?? 'assembly';
   if (pending && statuses[pending] === 'idle') statuses[pending] = 'active';
 
   let lastResult = 'resultNone';
   if (plan.failed) lastResult = 'resultFailed';
+  else if (plan.total > 0 && plan.accepted === plan.total) lastResult = 'resultReviewed';
   else if (plan.status === 'completed') lastResult = 'resultCompleted';
   else if (plan.completed) lastResult = 'resultShots';
   else if (plan.total) lastResult = 'resultBreakdown';
@@ -110,6 +141,10 @@ export function planProgress(plan: PlanSnapshot): PlanProgress {
     nextAction = 'nextShots';
   } else if (current === 'shoot') {
     nextAction = 'nextRun';
+  } else if (current === 'review') {
+    nextAction = plan.awaitingReview ? 'nextReview' : 'nextRun';
+  } else if (current === 'keyframes') {
+    nextAction = plan.keyframesAttention ? 'nextKeyframesReview' : 'nextKeyframes';
   } else if (current === 'assembly') {
     nextAction = 'nextAssemble';
   } else {

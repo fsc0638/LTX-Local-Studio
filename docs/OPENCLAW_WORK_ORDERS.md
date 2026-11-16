@@ -13,15 +13,22 @@
 3. 系統層級動作（apt、`systemctl --user enable/start`、`/etc`、unit 檔啟用）先發核准區塊；需要 sudo 的指令列給人自己跑。
 4. 15 分鐘紀律：每則任務結束於乾淨狀態 — commit（訊息以「<工單號>: 」開頭）、push 分支、更新 `docs/work-orders/<工單號>.md` 進度區（已完成／未完成／需要人做的事）。
 5. 驗收是獨立的一則任務，不修改程式；每條 PASS／FAIL 附證據；最後一行「<工單號> 可合併」或「<工單號> 退回」。
+5a. **本機服務先查再起**：工單引入的 loopback 服務（ltx-audio 8790、ltx-judge 8791、ltx-imagegen 8792）可能已由開發手動啟動。先 `ss -ltn | grep :<port>` 或打 `/health`；有人在聽就直接用，不要重複啟動，也不要停掉別人的 —— 啟停不屬於驗收動作。
+5c. **新增 systemd unit 要用 `systemd-analyze --user verify <檔案>` 驗，且要求輸出為空**：它對格式錯誤只印警告、exit code 仍是 0，看 exit 0 等於沒驗。最常見的是含空格的路徑 —— `Environment=X=/a/b c` 會被空白切開只吃到 `/a/b`，必須寫成 `Environment="X=/a/b c"`。**裝好但沒啟動過的 unit 等於沒測過**：B2 的 ltx-audio 就是這樣把 `LTX_SITE_ROOT` 截成半截帶進 main，驗收因為測的是手動起的 process（環境變數由 shell 正確帶入）而沒抓到。
 5b. **Python 測試一律用 LTX venv 的 python**（`/home/kwayrdc/Documents/Codex/2026-08-28/new-chat-2/work/ltx-2.3/LTX-2/.venv/bin/python`），不是 `python3`：系統 python 有 psycopg 但沒有 `av`，`test_quality` 與 `test_mv_timeline` 會 import 失敗（97 tests 而非 120）。`git-sync-main.sh` 本來就用這個直譯器跑 Python 測試。
-6. 合併：在主 checkout `git fetch origin && git merge --ff-only origin/wo/<id> && git push origin main`；由人在主機執行。之後 `git worktree remove ~/LTX-worktrees/wo-<id> && git branch -d wo/<id>`。
+6. **開發前先開分支**：新階段開發、優化、新功能、Bug 除錯，一律先建分支＋worktree，不在主 checkout 動手。工單用 `wo/<小寫工單號>`，非工單用 `fix/<slug>`、`feat/<slug>`、`perf/<slug>`；worktree 放 `~/LTX-worktrees/<分支名>`。
+7. **合併**：由人在主機執行。main 若已前進，`--ff-only` 會失敗 —— 先在分支上 `git rebase origin/main && git push --force-with-lease`，再 `git fetch origin && git merge --ff-only origin/<分支> && git push origin main`。合併前跑完整測試套件。
+9. **架構先建、素材後補**（阿寶 2026-09-06）：工單裡需要真素材（校準照片、真實拍攝、真模型跑分）才能做的那一步，**不停工單**——把結構（UI、規則、匯入路徑、欄位、mock 測試）做完並驗證，真素材那一步寫進 `docs/work-orders/<id>.md` 的「待素材測試」清單（需要什麼、怎麼跑、預期看什麼）。**不要自己生圖或抓圖湊數。**驗收時素材相關條目回報「待素材」，不判 FAIL；結構部分照常 PASS／FAIL。合併不等素材；「未校準」之類的誠實標示留在 UI 上直到素材到位。
+8. **合併後立刻清乾淨**：`git worktree remove ~/LTX-worktrees/<分支名> && git branch -d <分支> && git push origin --delete <分支>`，並確認主 checkout 回到 main。分支殘留會讓下次 `--ff-only` 失敗。
 
 ## 第 0 步：開工設定（只傳一次）
 
 ```text
 阿寶要開一條長期工作線，請把下面寫進 USER.md（active directives）與 MEMORY.md，之後每個「工單」任務都照做：
 1. 專案：LTX Local Studio，目錄 "/home/kwayrdc/LTX Local Studio"（路徑有空格，一律加引號）。規格在 docs/PRODUCTION_ROADMAP.md，工作規則在 docs/OPENCLAW_WORK_ORDERS.md。
-2. 分支紀律：主 checkout 永遠停在 main、不在裡面 checkout 其他分支或改檔；每張工單在自己的 worktree ~/LTX-worktrees/wo-<小寫工單號>（分支 wo/<小寫工單號>，ln -s 主 checkout 的 node_modules）工作；絕對不 push、merge、rebase 到 main — main 一推就由 ltx-git-sync 自動部署到正式站 ltx.mikamiu.studio。合併只有阿寶做。
+2. 分支紀律：主 checkout 永遠停在 main、不在裡面 checkout 其他分支或改檔；絕對不 push、merge、rebase 到 main — main 一推就由 ltx-git-sync 自動部署到正式站 ltx.mikamiu.studio。合併只有阿寶做。
+   **任何改動都先開分支**（新階段、優化、新功能、Bug 除錯都算），在自己的 worktree ~/LTX-worktrees/<分支名>（ln -s 主 checkout 的 node_modules）工作：工單用 wo/<小寫工單號>，非工單用 fix/<slug>、feat/<slug>、perf/<slug>。
+   合併後該分支要清乾淨（worktree、本地分支、遠端分支）並回到 main —— 這是合併流程的一部分，不是額外工作。
 3. 服務紀律：不重啟 ltx-web、ltx-api、ltx-cloudflared；正式站 3000 與 API 8787 不可占用，dev server 只用 3001；不動 /opt/studio 的模型權重。
 4. 系統層級動作（apt、systemctl enable/start、/etc、unit 檔啟用）先發核准區塊；需要 sudo 的指令列出來給阿寶自己跑。
 5. 15 分鐘紀律：每則任務在 15 分鐘內結束於乾淨狀態 — commit、push 分支、更新 docs/work-orders/<工單號>.md 的進度區（已完成／未完成／需要阿寶做的事），回報做到哪。
@@ -29,6 +36,12 @@
 7. 兩種 runtime 不能混：前端測試用 nvm 的 node；Python 測試一律用 LTX venv 的 python
    （/home/kwayrdc/Documents/Codex/2026-08-28/new-chat-2/work/ltx-2.3/LTX-2/.venv/bin/python），不要用 python3 — 系統 python 沒有 av，test_quality 與
    test_mv_timeline 會 import 失敗。
+8. 本機 loopback 服務（ltx-audio 8790、ltx-judge 8791、ltx-imagegen 8792）先查再起：
+   `ss -ltn | grep :<port>` 或打 /health，有人在聽就直接用；不要重複啟動，也不要停掉別人的。
+9. 新增 systemd unit 檔要跑 `systemd-analyze --user verify <檔>`，輸出必須是空的
+   （格式錯只印警告，exit code 仍是 0）；Environment= 的值含空格一定要加引號。
+10. 架構先建、素材後補：需要真素材才能跑的那一步不停工單，結構做完用 mock 驗，真素材那步寫進工單檔的
+    「待素材測試」清單；驗收時那些條目回報「待素材」不判 FAIL；絕不自己生圖或抓圖湊數。
 確認寫入後，回覆你記下了哪幾條。
 ```
 
@@ -184,6 +197,7 @@
 專案目錄 "/home/kwayrdc/LTX Local Studio"（主 checkout，只能讀、不切分支）。git fetch origin；到 worktree ~/LTX-worktrees/wo-b2 驗收（沒有就 git worktree add ~/LTX-worktrees/wo-b2 wo/b2 並 ln -s 主 checkout 的 node_modules；分支不存在就回報並停止）。這是驗收不是開發：不修改程式與文件；只允許為了讓測試跑起來準備測試資料庫或暫存目錄，且做完要清掉。
 依 docs/PRODUCTION_ROADMAP.md「B2」節的驗收清單逐條執行，每條回報 PASS 或 FAIL 並附證據（指令、輸出摘要、數字、路徑）。另外必跑並附結果：LTX_TEST_DATABASE_URL=postgresql:///ltx_studio_test?host=/var/run/postgresql PYTHONPATH=tests /home/kwayrdc/Documents/Codex/2026-08-28/new-chat-2/work/ltx-2.3/LTX-2/.venv/bin/python -m unittest discover -s tests -p 'test_*.py'。
 額外檢查：用 uploads/ 裡三首沖縄 wav 之一打 /beats，BPM 與 docs/GB10_SETUP.md 記錄一致（104.2 等）；curl 從非 loopback 位址打 8790 應連不上。
+對時門檻是 p50 ≤ 0.5s 且 p90 ≤ 1.5s，p90 用 nearest-rank：殘差排序後取索引 ceil(0.9n)-1。 這個索引要照寫的算 —— int(0.9n) 不等於 ceil(0.9n)，在 n=40 會差一格，同一份殘差換算法 差得到 0.1s 以上。門檻由來記在 docs/PRODUCTION_ROADMAP.md 的 B2 節，完整分布在 docs/GB10_SETUP.md。
 任何 FAIL 不要自己修：寫出重現步驟、你懷疑的檔案與行號。最後一行只能是「B2 可合併」或「B2 退回」。
 ```
 
@@ -209,6 +223,8 @@
 背景任務：【工單 B3 · 驗收】
 專案目錄 "/home/kwayrdc/LTX Local Studio"（主 checkout，只能讀、不切分支）。git fetch origin；到 worktree ~/LTX-worktrees/wo-b3 驗收（沒有就 git worktree add ~/LTX-worktrees/wo-b3 wo/b3 並 ln -s 主 checkout 的 node_modules；分支不存在就回報並停止）。這是驗收不是開發：不修改程式與文件；只允許為了讓測試跑起來準備測試資料庫或暫存目錄，且做完要清掉。
 依 docs/PRODUCTION_ROADMAP.md「B3」節的驗收清單逐條執行，每條回報 PASS 或 FAIL 並附證據（指令、輸出摘要、數字、路徑）。另外必跑並附結果：node --test tests/*.test.mjs && npx --no-install tsc --noEmit -p tsconfig.json。
+鏡數與切點以 tests/breakdown.test.mjs 的驗收案例（166.4 s、segment_seconds=10）為準，另外實跑一次真素材當佐證：ltx-audio 現在是常駐 unit，照規則 5a 先 `ss -ltn | grep :8790` 或打 /health，有在聽就直接用、不要重啟；POST /beats 拿 uploads/ 裡沖縄那首的 beats 與 sections，餵進 lib/breakdown.ts，確認鏡數落在 17–24、無一鏡超過 segment_seconds、每個切點都出現在 beats 陣列裡。
+「預覽分鏡」正常與 01 頁面外觀需要登入瀏覽器，**不是你能跑的**：那一條照 docs/work-orders/B3.md 的紀錄回報「已由阿寶於 2026-09-06 確認」，不要自己宣稱看過，也不要因為看不到就判 FAIL。
 任何 FAIL 不要自己修：寫出重現步驟、你懷疑的檔案與行號。最後一行只能是「B3 可合併」或「B3 退回」。
 ```
 
@@ -234,6 +250,10 @@
 背景任務：【工單 B4 · 驗收】
 專案目錄 "/home/kwayrdc/LTX Local Studio"（主 checkout，只能讀、不切分支）。git fetch origin；到 worktree ~/LTX-worktrees/wo-b4 驗收（沒有就 git worktree add ~/LTX-worktrees/wo-b4 wo/b4 並 ln -s 主 checkout 的 node_modules；分支不存在就回報並停止）。這是驗收不是開發：不修改程式與文件；只允許為了讓測試跑起來準備測試資料庫或暫存目錄，且做完要清掉。
 依 docs/PRODUCTION_ROADMAP.md「B4」節的驗收清單逐條執行，每條回報 PASS 或 FAIL 並附證據（指令、輸出摘要、數字、路徑）。另外必跑並附結果：LTX_TEST_DATABASE_URL=postgresql:///ltx_studio_test?host=/var/run/postgresql PYTHONPATH=tests /home/kwayrdc/Documents/Codex/2026-08-28/new-chat-2/work/ltx-2.3/LTX-2/.venv/bin/python -m unittest discover -s tests -p 'test_*.py' && node --test tests/*.test.mjs && npx --no-install tsc --noEmit -p tsconfig.json。
+**不要打真的 OpenAI**：驗收跑 tests/test_factory_draft.py 就好，那裡全是 mock。真呼叫要花錢，而且驗收不該花錢。
+「按鈕停用並說明」這條要小心誤判：正式站的 ltx-api 跑在 main 上，沒有 /draft 也不回 draft_available，所以把 dev UI 指向它時**按鈕本來就該是灰的** —— 那是正確行為，不是 FAIL。
+真 OpenAI 的端到端與瀏覽器流程已用隔離實例（8788、ltx_studio_test 資料庫）驗過，照 docs/work-orders/B4.md 的紀錄回報「已由阿寶於 2026-09-06 確認」，不要自己宣稱點過，也不要為了驗它去起第二支 API 或重啟服務。
+可機驗的另外兩條：db/migrations/0003_draft_usage.sql 存在且用 ADD COLUMN IF NOT EXISTS（可重跑）；grep 確認 local_backend.py 不會把 key 寫進回應或 log。
 任何 FAIL 不要自己修：寫出重現步驟、你懷疑的檔案與行號。最後一行只能是「B4 可合併」或「B4 退回」。
 ```
 
@@ -262,7 +282,14 @@
 背景任務：【工單 C1 · 驗收】
 專案目錄 "/home/kwayrdc/LTX Local Studio"（主 checkout，只能讀、不切分支）。git fetch origin；到 worktree ~/LTX-worktrees/wo-c1 驗收（沒有就 git worktree add ~/LTX-worktrees/wo-c1 wo/c1 並 ln -s 主 checkout 的 node_modules；分支不存在就回報並停止）。這是驗收不是開發：不修改程式與文件；只允許為了讓測試跑起來準備測試資料庫或暫存目錄，且做完要清掉。
 依 docs/PRODUCTION_ROADMAP.md「C1」節的驗收清單逐條執行，每條回報 PASS 或 FAIL 並附證據（指令、輸出摘要、數字、路徑）。另外必跑並附結果：LTX_TEST_DATABASE_URL=postgresql:///ltx_studio_test?host=/var/run/postgresql PYTHONPATH=tests /home/kwayrdc/Documents/Codex/2026-08-28/new-chat-2/work/ltx-2.3/LTX-2/.venv/bin/python -m unittest discover -s tests -p 'test_*.py'。
-額外檢查：同一張圖對自己 CJ face 接近 1.0；nvidia-smi 顯示服務常駐記憶體約 2 GB 以內。
+**方向驗證要用 vision venv 跑**：預設的 LTX venv 沒有 cv2 也沒有那些模型，會靜靜 skip 掉 5 個測試 —— 而那 5 個正是「同一張圖對自己接近 1.0、不同角色明顯低」這條驗收：
+  HF_HOME=/opt/studio/models/hf TORCH_HOME=/opt/studio/models/torch LTX_JUDGE_INTEGRATION=1 \
+  PYTHONPATH=tests /opt/studio/venvs/vision/bin/python -m unittest tests.test_judge_service
+必跑自檢那行仍用 LTX venv 跑全套（後端判分測試需要 psycopg，vision venv 沒有）。兩個直譯器各跑一半，合起來才是全部。
+色塊沒有臉，所以走 DINOv2 而非 facenet，回應的 method_per_frame 會這樣寫；要驗 facenet 那條路得用真人像。
+**不要啟用 ltx-judge.service**：unit 檔還在分支上，enable 一個指向未合併檔案的 unit 會得到持續失敗的服務（OP-BACKUP01 就是這樣）。驗收只跑 `systemd-analyze --user verify infra/systemd/ltx-judge.service`，**要求輸出為空**（規則 5c：格式錯只印警告，exit code 仍是 0）。
+服務只回數字、不判通過是刻意的，門檻是 C4 的事：回應裡沒有 pass／fail 不是缺漏。
+nvidia-smi 看服務常駐記憶體。
 任何 FAIL 不要自己修：寫出重現步驟、你懷疑的檔案與行號。最後一行只能是「C1 可合併」或「C1 退回」。
 ```
 
@@ -288,6 +315,10 @@
 背景任務：【工單 C2 · 驗收】
 專案目錄 "/home/kwayrdc/LTX Local Studio"（主 checkout，只能讀、不切分支）。git fetch origin；到 worktree ~/LTX-worktrees/wo-c2 驗收（沒有就 git worktree add ~/LTX-worktrees/wo-c2 wo/c2 並 ln -s 主 checkout 的 node_modules；分支不存在就回報並停止）。這是驗收不是開發：不修改程式與文件；只允許為了讓測試跑起來準備測試資料庫或暫存目錄，且做完要清掉。
 依 docs/PRODUCTION_ROADMAP.md「C2」節的驗收清單逐條執行，每條回報 PASS 或 FAIL 並附證據（指令、輸出摘要、數字、路徑）。另外必跑並附結果：LTX_TEST_DATABASE_URL=postgresql:///ltx_studio_test?host=/var/run/postgresql PYTHONPATH=tests /home/kwayrdc/Documents/Codex/2026-08-28/new-chat-2/work/ltx-2.3/LTX-2/.venv/bin/python -m unittest discover -s tests -p 'test_*.py' && node --test tests/*.test.mjs && npx --no-install tsc --noEmit -p tsconfig.json。
+測試在 tests/test_factory_verdicts.py，用 LTX venv 跑；其中 RecycleBinTests 走**真正的** DELETE /api/v1/jobs 路由（session 驗證）。
+「修改／重做改為建立新 take」在前端沿用既有 reopenFactoryShot（換 idempotency key 就是新 take），**不要因為前端沒有新按鈕就判 FAIL** —— 審片頁的按鈕與 verdict 呈現是 C3。
+多驗一條：replace_shots 已從「整批刪除再插入」改成 upsert。之前 takes 對 shots 是 ON DELETE CASCADE，前端每存一次計畫所有 take 就被清光（B1 遺留）。驗：編輯／重排計畫後 take 與 acceptedTakeId 仍在（test_editing_the_plan_keeps_every_take），且送別的專案的 shot id 會被拒（invalid_shots）。
+accepted_take_id 唯一是**部分唯一索引**，測試用直接 SQL 違反它驗證；遷移 0004 用 IF NOT EXISTS 可重跑。驗收只用測試庫，不重啟服務。
 任何 FAIL 不要自己修：寫出重現步驟、你懷疑的檔案與行號。最後一行只能是「C2 可合併」或「C2 退回」。
 ```
 
@@ -313,6 +344,11 @@
 背景任務：【工單 C3 · 驗收】
 專案目錄 "/home/kwayrdc/LTX Local Studio"（主 checkout，只能讀、不切分支）。git fetch origin；到 worktree ~/LTX-worktrees/wo-c3 驗收（沒有就 git worktree add ~/LTX-worktrees/wo-c3 wo/c3 並 ln -s 主 checkout 的 node_modules；分支不存在就回報並停止）。這是驗收不是開發：不修改程式與文件；只允許為了讓測試跑起來準備測試資料庫或暫存目錄，且做完要清掉。
 依 docs/PRODUCTION_ROADMAP.md「C3」節的驗收清單逐條執行，每條回報 PASS 或 FAIL 並附證據（指令、輸出摘要、數字、路徑）。另外必跑並附結果：node --test tests/*.test.mjs && npx --no-install tsc --noEmit -p tsconfig.json。
+測試：`node --test tests/review.test.mjs tests/stages.test.mjs` 與 LTX venv 跑 tests/test_factory_review.py（全 mock，不打 OpenAI）。「換臉 take CJ 低於門檻、紅燈、不自動進組片、仍可接受並留 overridden」對應 test_factory_review.py 的 RED fixture 那幾條，看 verdict=overridden 且 overriddenBy／overriddenAt 有值、acceptedTakeId 只在人按了才出現。
+**未判分不是紅燈**是刻意設計：裁判掛掉、沒參照圖、靜態圖都回 unscored，採用時記 accepted 不記 overridden。看到這樣不要判 FAIL。
+**`overridden` 的意思在 C3 改了**：C2 曾拿它標「被另一個 take 取代」，現在依規格專指「紅燈下人仍接受」；被取代的 take 回 pending。C2 的測試已同步改，不是回歸。
+04 頁面外觀需要登入瀏覽器，且正式站 API（main）沒有 C3 路由——dev UI 指向它會顯示「讀不到 take 清單」，那是正確行為。這一條照 docs/work-orders/C3.md 的紀錄回報：若寫著已由阿寶確認就照抄，否則回報「需要阿寶在瀏覽器確認」，**不要判 FAIL、不要自己起第二支 API**。
+多驗一條：`hostVersion`——退回後 03 頁面應重載到含「避免：…」的 prompt（見 production-factory.tsx 的 hostVersion effect）。
 額外檢查：用兩個不同角色的參照各生成一個 take，換臉的那個是否紅燈且未自動進組片。
 任何 FAIL 不要自己修：寫出重現步驟、你懷疑的檔案與行號。最後一行只能是「C3 可合併」或「C3 退回」。
 ```
@@ -338,6 +374,9 @@
 背景任務：【工單 C4 · 驗收】
 專案目錄 "/home/kwayrdc/LTX Local Studio"（主 checkout，只能讀、不切分支）。git fetch origin；到 worktree ~/LTX-worktrees/wo-c4 驗收（沒有就 git worktree add ~/LTX-worktrees/wo-c4 wo/c4 並 ln -s 主 checkout 的 node_modules；分支不存在就回報並停止）。這是驗收不是開發：不修改程式與文件；只允許為了讓測試跑起來準備測試資料庫或暫存目錄，且做完要清掉。
 依 docs/PRODUCTION_ROADMAP.md「C4」節的驗收清單逐條執行，每條回報 PASS 或 FAIL 並附證據（指令、輸出摘要、數字、路徑）。另外必跑並附結果：node --test tests/*.test.mjs && npx --no-install tsc --noEmit -p tsconfig.json。
+可機驗的標的：`node --test tests/calibration.test.mjs tests/review.test.mjs`（手寫 fixture 報告的匯入、note-only metric 不寫、第二份小報告不抹掉第一份、DINO fixture 同一個 median 在臉線紅、在 dino 線綠）；LTX venv 跑 tests/test_factory_review.py （review_rules 的同一組 fixture）。`bible.thresholds` 現在是 normalizeFactoryBible 白名單內的鍵——匯入後存檔不會被丟掉，這條也驗。
+**架構先建、素材後補（規則 9）**：calibration/ 目前不存在，這不擋工單。要做完的是結構——Bible 的 `thresholds` 欄位（含 `cj_dino`、`strict.*`、`calibrated`、`report` 摘要）、「匯入校準報告」UI（讀腳本輸出的 JSON，解析 `metrics[].thresholds.fpr_05/fpr_01`；`face_facenet` 只有 note 時只寫 `cj_dino` 並說明臉部仍未校準）、review_rules.py 與 lib/review.ts 依 `method_per_frame` 選 `cj` 或 `cj_dino`、無臉圖（`missing_faces`）在 UI 列出。用一份**手寫的 fixture 報告**（形狀見 docs/work-orders/C4.md）驗匯入與分線；真素材的校準跑分寫進「待素材測試」。
+素材到了才做的：主 checkout 的 calibration/（已 gitignore）放 ≥2 角色、每個 ≥10 張，用 vision venv 跑 infra/gb10/tools/calibrate_embeddings.py（HF_HOME=/opt/studio/models/hf TORCH_HOME=/opt/studio/models/torch），匯入後 04 的「未校準」banner 才會消失。**驗收時這一條回報「待素材」，不判 FAIL；不要自己生圖或抓圖湊數。**
 任何 FAIL 不要自己修：寫出重現步驟、你懷疑的檔案與行號。最後一行只能是「C4 可合併」或「C4 退回」。
 ```
 
@@ -367,6 +406,9 @@
 背景任務：【工單 D1 · 驗收】
 專案目錄 "/home/kwayrdc/LTX Local Studio"（主 checkout，只能讀、不切分支）。git fetch origin；到 worktree ~/LTX-worktrees/wo-d1 驗收（沒有就 git worktree add ~/LTX-worktrees/wo-d1 wo/d1 並 ln -s 主 checkout 的 node_modules；分支不存在就回報並停止）。這是驗收不是開發：不修改程式與文件；只允許為了讓測試跑起來準備測試資料庫或暫存目錄，且做完要清掉。
 依 docs/PRODUCTION_ROADMAP.md「D1」節的驗收清單逐條執行，每條回報 PASS 或 FAIL 並附證據（指令、輸出摘要、數字、路徑）。另外必跑並附結果：LTX_TEST_DATABASE_URL=postgresql:///ltx_studio_test?host=/var/run/postgresql PYTHONPATH=tests /home/kwayrdc/Documents/Codex/2026-08-28/new-chat-2/work/ltx-2.3/LTX-2/.venv/bin/python -m unittest discover -s tests -p 'test_*.py'。
+可機驗：LTX venv 跑 tests/test_gpu_lease.py（假工站）與 tests/test_imagegen_adapter.py（真服務模組的 LTX_IMAGEGEN_FAKE=1 模式，程序內起在隨機 port）——「20 張只付一次載入」「換模型卸載另一個」「LTX 進行中拒絕 imagegen」「服務不放手就逾時」都在裡面。`systemd-analyze --user verify infra/systemd/ltx-imagegen.service` 輸出須為空。
+**真模型那幾條（Z-Image 23 GB、Qwen 61 GB／載入約 6 分鐘）回報「待實測」，不判 FAIL**：unit 檔還在分支上不要 enable，也不要自己起服務載模型；就算要做，**先查 GET /api/internal/active-jobs，有 LTX job 進行中絕對不載 Qwen**。正式站 ltx-api 的 LTX_MODEL_ADAPTERS 尚未含 local_adapters.imagegen，/api/v1/models 沒有這兩個模型是預期的。
+「排隊不 OOM」在這個系統的語意是 409 worker_busy＋重試（工廠排程器會自動重送），不是伺服器端排隊；看到 409 不是 FAIL。
 額外檢查：LTX job 進行中送 imagegen job → 排隊不 OOM；連續 20 張只付一次載入（看服務日誌）；閒置超時後 nvidia-smi 無 imagegen 程序。
 任何 FAIL 不要自己修：寫出重現步驟、你懷疑的檔案與行號。最後一行只能是「D1 可合併」或「D1 退回」。
 ```
@@ -392,6 +434,10 @@
 背景任務：【工單 D2 · 驗收】
 專案目錄 "/home/kwayrdc/LTX Local Studio"（主 checkout，只能讀、不切分支）。git fetch origin；到 worktree ~/LTX-worktrees/wo-d2 驗收（沒有就 git worktree add ~/LTX-worktrees/wo-d2 wo/d2 並 ln -s 主 checkout 的 node_modules；分支不存在就回報並停止）。這是驗收不是開發：不修改程式與文件；只允許為了讓測試跑起來準備測試資料庫或暫存目錄，且做完要清掉。
 依 docs/PRODUCTION_ROADMAP.md「D2」節的驗收清單逐條執行，每條回報 PASS 或 FAIL 並附證據（指令、輸出摘要、數字、路徑）。另外必跑並附結果：node --test tests/*.test.mjs && npx --no-install tsc --noEmit -p tsconfig.json。
+可機驗：LTX venv 跑 tests/test_keyframes.py（真 imagegen 服務模組的 LTX_IMAGEGEN_FAKE=1 模式＋腳本化 judge）——「每鏡一張、依 angle 選參照」「紅燈換 seed 重生一次後交人」「混入另一角色（連兩次紅）停在紅燈、不自動進 03」「核准後 image_id 更新、pin、keyframe_id 標記、他人帳號讀不到」都在裡面；再加 node --test tests/keyframes.test.mjs tests/stages.test.mjs。
+**「24 鏡 ≈ 336 s＋24×26 s」是真模型項目，回報「待實測」不判 FAIL**：需要沒有 LTX job 的時段，且會真的載 61 GB；不要在驗收裡按「產生全部關鍵格」。登入後的 02 頁面照 docs/work-orders/D2.md 的紀錄回報，沒紀錄就寫「需要阿寶在瀏覽器確認」。
+測試裡 submit_job 被包成「admission 後同步跑 job」，那是因為 fixture 把背景 job 執行緒 stub 掉（同 run_job_implementation 慣例），不是繞過 admission。
+keyframes 階段是**可略過的**：idle 不會成為「你在這裡」，只有候選等人時才 attention——看到 03 是 current 而 02 是 idle 不是 FAIL。
 任何 FAIL 不要自己修：寫出重現步驟、你懷疑的檔案與行號。最後一行只能是「D2 可合併」或「D2 退回」。
 ```
 
@@ -416,6 +462,9 @@
 背景任務：【工單 D3 · 驗收】
 專案目錄 "/home/kwayrdc/LTX Local Studio"（主 checkout，只能讀、不切分支）。git fetch origin；到 worktree ~/LTX-worktrees/wo-d3 驗收（沒有就 git worktree add ~/LTX-worktrees/wo-d3 wo/d3 並 ln -s 主 checkout 的 node_modules；分支不存在就回報並停止）。這是驗收不是開發：不修改程式與文件；只允許為了讓測試跑起來準備測試資料庫或暫存目錄，且做完要清掉。
 依 docs/PRODUCTION_ROADMAP.md「D3」節的驗收清單逐條執行，每條回報 PASS 或 FAIL 並附證據（指令、輸出摘要、數字、路徑）。另外必跑並附結果：LTX_TEST_DATABASE_URL=postgresql:///ltx_studio_test?host=/var/run/postgresql PYTHONPATH=tests /home/kwayrdc/Documents/Codex/2026-08-28/new-chat-2/work/ltx-2.3/LTX-2/.venv/bin/python -m unittest discover -s tests -p 'test_*.py'。
+可機驗：LTX venv 跑 tests/test_post_adapter.py——真 post 服務模組的 LTX_POST_FAKE=1 模式加**真 ffmpeg** 畫的 24 fps 片：放大後幾何加倍、幀數與 fps 不變、QC 過、MQ 分數落在新 take、鏡狀態不動；清理要自己的遮罩；他人 take 404；不收路徑；不佔 GPU 租約。`systemd-analyze --user verify infra/systemd/ltx-post.service` 輸出須為空。
+**RIFE 權重不在主機**（/opt/studio/tools/rife/train_log 不存在）：「24 fps 補到 48 fps」回報「待素材」不判 FAIL；服務對 interpolate 回 503 rife_weights_missing、job 失敗、新 take 帶原因——那是正確行為。「清理後 CJ 不低於清理前」需要真模型與有臉素材，回報「待實測」。不要自己起服務、不要 enable unit、不要下載權重。
+後製 adapter 是 media_type video 但 gpu_tenant=none：看到它不走租約不是缺漏，規格說裁判、音訊、後製不受限。
 任何 FAIL 不要自己修：寫出重現步驟、你懷疑的檔案與行號。最後一行只能是「D3 可合併」或「D3 退回」。
 ```
 
@@ -441,6 +490,9 @@
 背景任務：【工單 D4 · 驗收】
 專案目錄 "/home/kwayrdc/LTX Local Studio"（主 checkout，只能讀、不切分支）。git fetch origin；到 worktree ~/LTX-worktrees/wo-d4 驗收（沒有就 git worktree add ~/LTX-worktrees/wo-d4 wo/d4 並 ln -s 主 checkout 的 node_modules；分支不存在就回報並停止）。這是驗收不是開發：不修改程式與文件；只允許為了讓測試跑起來準備測試資料庫或暫存目錄，且做完要清掉。
 依 docs/PRODUCTION_ROADMAP.md「D4」節的驗收清單逐條執行，每條回報 PASS 或 FAIL 並附證據（指令、輸出摘要、數字、路徑）。另外必跑並附結果：LTX_TEST_DATABASE_URL=postgresql:///ltx_studio_test?host=/var/run/postgresql PYTHONPATH=tests /home/kwayrdc/Documents/Codex/2026-08-28/new-chat-2/work/ltx-2.3/LTX-2/.venv/bin/python -m unittest discover -s tests -p 'test_*.py' && node --test tests/*.test.mjs && npx --no-install tsc --noEmit -p tsconfig.json。
+可機驗：LTX venv 跑 tests/test_station_scheduler.py（純規則）與 tests/test_workstation.py（真 store 驅動 scheduler_pick）——「12 張關鍵格＋12 鏡 LTX 恰好切換 1 次」在兩層都有；`/api/v1/factory/workstation` 與 `/projects/{id}/budget` 的回應形狀、預算只警告不擋（超預算的專案仍能 /run）也在裡面。
+**「預估總時數誤差 < 20%」是真跑的量測**：需要有 runtime_seconds 歷史的真 job，回報「待實測」不判 FAIL。沒歷史時估算用 docs/GB10_SETUP.md／D1 量測的預設值，回應的 assumed_models 會列出來——看到 assumed 不是 FAIL，是誠實。
+工站頁需要登入看，照 D4.md 紀錄回報，不要自己起服務。
 額外檢查：混合 12 張關鍵格 + 12 鏡 LTX 的佇列恰好切換 1 次。
 任何 FAIL 不要自己修：寫出重現步驟、你懷疑的檔案與行號。最後一行只能是「D4 可合併」或「D4 退回」。
 ```
@@ -466,5 +518,7 @@
 背景任務：【工單 D5 · 驗收】
 專案目錄 "/home/kwayrdc/LTX Local Studio"（主 checkout，只能讀、不切分支）。git fetch origin；到 worktree ~/LTX-worktrees/wo-d5 驗收（沒有就 git worktree add ~/LTX-worktrees/wo-d5 wo/d5 並 ln -s 主 checkout 的 node_modules；分支不存在就回報並停止）。這是驗收不是開發：不修改程式與文件；只允許為了讓測試跑起來準備測試資料庫或暫存目錄，且做完要清掉。
 依 docs/PRODUCTION_ROADMAP.md「D5」節的驗收清單逐條執行，每條回報 PASS 或 FAIL 並附證據（指令、輸出摘要、數字、路徑）。另外必跑並附結果：LTX_TEST_DATABASE_URL=postgresql:///ltx_studio_test?host=/var/run/postgresql PYTHONPATH=tests /home/kwayrdc/Documents/Codex/2026-08-28/new-chat-2/work/ltx-2.3/LTX-2/.venv/bin/python -m unittest discover -s tests -p 'test_*.py' && node --test tests/*.test.mjs && npx --no-install tsc --noEmit -p tsconfig.json。
+可機驗：LTX venv 跑 tests/test_assembly.py——真 ffmpeg 畫的 take、真 assembler、真技術檢查：只取 accepted take、依鏡序、幀數＝Σ 各 take、原曲從 Bible 起點鋪底（合成 WAV）、他人帳號 404。「任一鏡無 accepted take → 400 shots_without_take 並列出」與「manifest 每鏡只有 title/request/pinned（A1 可匯入）、edl 記 take/seed/參照指紋/模型/裁決」都在裡面。
+06 頁面外觀需要登入，照 D5.md 紀錄回報；不要在正式站按「組片」（會真的產出一支 job）。
 任何 FAIL 不要自己修：寫出重現步驟、你懷疑的檔案與行號。最後一行只能是「D5 可合併」或「D5 退回」。
 ```

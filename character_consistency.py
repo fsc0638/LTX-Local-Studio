@@ -1,5 +1,7 @@
 """Character identity constraints and angle-aware reference selection."""
 
+import re
+
 REFERENCE_VIEWS = {
     "front",
     "left_three_quarter",
@@ -10,6 +12,7 @@ REFERENCE_VIEWS = {
     "full_body",
 }
 MAX_REFERENCES = 8
+MAX_VISUAL_STYLE = 1200
 
 
 def normalize_character(raw, primary_image_id, asset_lookup):
@@ -48,17 +51,47 @@ def normalize_character(raw, primary_image_id, asset_lookup):
     return {"name": name.strip(), "description": description.strip(), "references": clean}
 
 
-def apply_identity_prompt(prompt, character):
-    if not character:
+def normalize_visual_style(raw):
+    if raw is None:
+        return None
+    if not isinstance(raw, str) or not raw.strip() or len(raw.strip()) > MAX_VISUAL_STYLE:
+        raise ValueError(f"visual_style must contain 1–{MAX_VISUAL_STYLE} characters")
+    return raw.strip()
+
+
+def apply_style_prompt(prompt, visual_style=None, preserve_reference=False):
+    style = normalize_visual_style(visual_style)
+    if style:
+        lock = (
+            f"Visual style lock: {style} Match this medium, line treatment, shading method, "
+            "surface texture, colour palette and level of detail in every frame."
+        )
+    elif preserve_reference:
+        lock = (
+            "Visual style lock: render in exactly the same visual medium and art style as the "
+            "source reference, matching its line treatment, shading method, surface texture, "
+            "colour palette and level of detail in every frame."
+        )
+    else:
         return prompt
+    result = lock + " " + prompt
+    if len(result) > 7200:
+        raise ValueError("Visual style and prompt are too long together")
+    return result
+
+
+def apply_identity_prompt(prompt, character, visual_style=None):
+    result = apply_style_prompt(prompt, visual_style, preserve_reference=bool(character))
+    if not character:
+        return result
     identity = (
         f"Character identity lock for {character['name']}: {character['description']} "
         "The subject is the exact same person in every shot: preserve facial geometry, "
         "hair, skin tone, body proportions, age, wardrobe identity and distinguishing features."
     )
-    result = identity + " " + prompt
-    if len(result) > 5200:
-        raise ValueError("Character description and prompt are too long together")
+    result = identity + " " + result
+    if len(result) > 7200:
+        raise ValueError("Character, visual style and prompt are too long together")
     return result
 
 
@@ -66,6 +99,25 @@ def reference_ids(character, primary_image_id):
     if not character:
         return [primary_image_id] if primary_image_id else []
     return [item["image_id"] for item in character["references"]]
+
+
+def infer_angle(prompt):
+    """Recover a structured angle from legacy director prompts that stored camera prose only."""
+    text = str(prompt or "").lower()
+    aliases = (
+        (r"left[^.]{0,40}(?:profile|side view)|(?:profile|side view)[^.]{0,40}left", "left_profile"),
+        (r"right[^.]{0,40}(?:profile|side view)|(?:profile|side view)[^.]{0,40}right", "right_profile"),
+        (r"left[^.]{0,40}(?:three[- ]quarter|3/4)|(?:three[- ]quarter|3/4)[^.]{0,40}left", "left_three_quarter"),
+        (r"right[^.]{0,40}(?:three[- ]quarter|3/4)|(?:three[- ]quarter|3/4)[^.]{0,40}right", "right_three_quarter"),
+        (r"over[- ]the[- ]shoulder|over shoulder", "over_shoulder"),
+        (r"three[- ]quarter|3/4", "three_quarter"),
+        (r"\bprofile\b|\bside view\b", "profile"),
+        (r"\bback view\b|\bfrom behind\b", "back"),
+        (r"\blow[- ]angle\b", "low"),
+        (r"\bhigh[- ]angle\b|\boverhead\b|bird.?s[- ]eye", "high"),
+        (r"\bfront view\b|\bfrontal\b|\bhead[- ]on\b", "front"),
+    )
+    return next((angle for pattern, angle in aliases if re.search(pattern, text)), None)
 
 
 def select_reference(character, directing, primary_image_id):

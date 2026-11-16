@@ -10,6 +10,7 @@ import {
   Clock3,
   Code2,
   Cpu,
+  ExternalLink,
   FileImage,
   FileVideo,
   FolderOpen,
@@ -46,6 +47,7 @@ import {
   ModelComposer,
   type InstalledModel,
 } from '@/components/model-composer';
+import { MotionCanvasComposer } from '@/components/motion-canvas-composer';
 import { DeleteMediaButton } from '@/components/delete-media-button';
 import {
   durationFrames,
@@ -72,10 +74,34 @@ import {
   type FactoryIncoming,
 } from '@/components/production-factory';
 import { StageRail, stageCopy, type RailKey } from '@/components/stage-rail';
+import { BreakdownEditor } from '@/components/breakdown-editor';
+import { DirectorSummary, directorCopy } from '@/components/director-analysis';
+import { ReviewBoard } from '@/components/review-board';
+import { KeyframesBoard } from '@/components/keyframes-board';
+import { PostBoard } from '@/components/post-board';
+import { WorkstationPanel } from '@/components/workstation-panel';
+import { AssemblyPanel } from '@/components/assembly-panel';
+import {
+  breakdownCues,
+  planBreakdown,
+  type BreakdownLyric,
+  type BreakdownShot,
+} from '@/lib/breakdown';
+import { parseLrcRows } from '@/lib/lrc-editor';
+import { breakdownFactoryEntries } from '@/lib/breakdown-factory';
 import { StatusBoard, progressOf } from '@/components/status-board';
-import type { FactoryPlan } from '@/lib/production-factory';
 import { STAGE_KEYS, UNAVAILABLE_STAGES, type StageKey } from '@/lib/stages';
-import { bibleFromRequest } from '@/lib/production-factory';
+import {
+  bibleFromRequest,
+  hasFactoryBible,
+  projectBibleForDraft,
+  type FactoryPlan,
+} from '@/lib/production-factory';
+import {
+  applyDirectorSuggestions,
+  canRunDirectorAnalysis,
+  type DirectorAnalysis,
+} from '@/lib/director-analysis';
 
 const initialPrompt =
   '電影感近景，一位穿著深色外套的女性站在潮濕的台北街口。鏡頭緩慢向前推進，霓虹燈在積水中形成珊瑚紅與青綠色倒影，微風帶動髮絲，自然環境音，細緻膠片顆粒。';
@@ -104,6 +130,13 @@ type OutputItem = {
   runtime: string;
   size: string;
   download?: string;
+};
+
+type DirectorRun = {
+  id: string;
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  analysis?: DirectorAnalysis;
+  code?: string;
 };
 
 const outputItems: OutputItem[] = [];
@@ -135,6 +168,18 @@ type ApiJob = {
   message?: string;
   error?: string;
 };
+
+const MOTION_CANVAS_MODEL: InstalledModel = {
+  id: 'motion-canvas',
+  label: 'Motion Canvas',
+  media_type: 'video',
+  available: true,
+  description: 'Interactive TypeScript motion-graphics project builder and tool workspace.',
+  accepts_image: true,
+  modes: ['project'],
+  parameters: {},
+};
+
 type Health = {
   ok: boolean;
   runtime?: { cuda_available?: boolean; device?: string; error?: string };
@@ -163,11 +208,14 @@ type Locale = 'zh-TW' | 'en' | 'ja';
 // Browser traffic stays same-origin. Only the server knows the worker address.
 const API_BASE = '';
 const MEDIA_BASE = '';
+const OPENCLAW_URL =
+  process.env.NEXT_PUBLIC_OPENCLAW_URL || '/openclaw';
 
 const translations = {
   'zh-TW': {
     topStrip: '本機生成 · 檔案保留在此裝置 · NVIDIA GB10',
     console: 'GB10 控制台',
+    openClaw: '開啟 OpenClaw',
     createTab: '沙盒',
     factoryTab: '拍攝',
     assetsTab: '素材庫',
@@ -178,7 +226,13 @@ const translations = {
     bibleNote: '這裡設定一次，之後每一鏡都繼承。改這裡會套用到所有還沒生產的鏡頭；你手動改過的欄位會保留。',
     breakdownEyebrow: '01 / 分鏡',
     breakdownTitle: '把歌切成鏡頭',
-    breakdownNote: '上傳音樂與歌詞，設定每一鏡的主要動作與運鏡。拍點與逐字對時的自動分鏡在 B 期接上。',
+    breakdownNote: '上傳音樂與歌詞後按「自動分鏡」，切點會跟著段落與歌詞走並吸附到拍點；再逐鏡調整。',
+    breakdownAuto: '自動分鏡',
+    breakdownBusy: '分析中…',
+    breakdownNeedsMusic: '先在下方選好音樂，才能分析拍點。',
+    breakdownUnavailable: '音訊分析服務目前不可用；分鏡可以手動做，生成不受影響。',
+    breakdownFailed: '分析失敗，請稍後再試。',
+    breakdownApplied: '分鏡已寫入下方時間軸的 cue，用既有的「預覽分鏡」檢視。',
     shootEyebrow: '03 / 拍攝',
     shootTitle: '製片工廠佇列',
     shootNote: '一次送一個 GPU 任務；失敗會暫停整條線等人處理。',
@@ -188,8 +242,14 @@ const translations = {
     unavailableTitle: '這個階段本期未啟用',
     unavailableNote: '模型都已安裝，但還沒接上介面。實作進度見 docs/PRODUCTION_ROADMAP.md。',
     unavailableKeyframes: '需要把 Qwen-Image-Edit 註冊成 adapter，並接上一致性裁判（D 期）。',
+    keyframesTitle: '每鏡先定一張關鍵格',
+    keyframesNote: '整批生成，每鏡依運鏡角度選參照、經一致性裁判亮燈；紅燈自動換 seed 重生一次再請你決定。核准的圖成為該鏡的起始畫面。',
     unavailableReview: '需要裁判服務與 take 概念（C 期）。',
+    reviewTitle: '審每一鏡的 take',
+    reviewNote: '三個裁判只亮燈、不否決：紅燈下你仍可採用，但會記錄是誰、何時推翻。門檻在校準前是暫定值。',
     unavailablePost: '需要後製 adapter：補幀、放大、清理（D 期）。',
+    postTitle: '把核准的 take 再加工',
+    postNote: '放大（Real-ESRGAN）、清理（LaMa，塗遮罩）、補幀（RIFE）。每次加工都是同一鏡的新版本，完成後自動經過動態裁判。',
     backToBoard: '回狀態板',
     ready: '已就緒',
     connecting: '連線中',
@@ -321,6 +381,7 @@ const translations = {
   en: {
     topStrip: 'Local generation · Files stay on this device · NVIDIA GB10',
     console: 'GB10 Console',
+    openClaw: 'Open OpenClaw',
     createTab: 'SANDBOX',
     factoryTab: 'GENERATION',
     assetsTab: 'MEDIA',
@@ -331,7 +392,13 @@ const translations = {
     bibleNote: 'Set once here and every shot inherits it. Changes apply to shots that have not run yet; fields you edited by hand keep their values.',
     breakdownEyebrow: '01 / BREAKDOWN',
     breakdownTitle: 'Cut the song into shots',
-    breakdownNote: 'Load the music and lyrics, then set each shot\u2019s main action and camera. Beat-aligned automatic breakdown arrives in phase B.',
+    breakdownNote: 'Load the music and lyrics, press Auto breakdown, and the cuts follow the sections and lyrics, snapped to the beat. Adjust shot by shot afterwards.',
+    breakdownAuto: 'Auto breakdown',
+    breakdownBusy: 'Analysing\u2026',
+    breakdownNeedsMusic: 'Choose the music below before the beats can be analysed.',
+    breakdownUnavailable: 'The audio analysis service is unavailable. Build the breakdown by hand; generation is unaffected.',
+    breakdownFailed: 'Analysis failed. Try again in a moment.',
+    breakdownApplied: 'The breakdown is written to the cues below. Use the existing preview to check it.',
     shootEyebrow: '03 / GENERATION',
     shootTitle: 'Production factory queue',
     shootNote: 'One GPU job at a time; a failure pauses the whole line for a person.',
@@ -341,8 +408,14 @@ const translations = {
     unavailableTitle: 'This stage is not enabled yet',
     unavailableNote: 'The models are installed; nothing is wired to the interface yet. See docs/PRODUCTION_ROADMAP.md.',
     unavailableKeyframes: 'Needs Qwen-Image-Edit registered as an adapter and the consistency judge (phase D).',
+    keyframesTitle: 'A keyframe for every shot',
+    keyframesNote: 'Generated as one batch: each shot picks a reference by its camera angle and is lit by the consistency judge; red is regenerated once with a new seed, then it is your call. An approved keyframe becomes the shot\u2019s starting frame.',
     unavailableReview: 'Needs the judge service and the take model (phase C).',
+    reviewTitle: 'Review each shot\u2019s takes',
+    reviewNote: 'The three judges light up; they do not veto. You can accept under a red light, and who did so and when is recorded. Thresholds are placeholders until calibrated.',
     unavailablePost: 'Needs the post adapters: interpolation, upscaling, cleanup (phase D).',
+    postTitle: 'Work on the accepted takes',
+    postNote: 'Upscale (Real-ESRGAN), clean under a painted mask (LaMa), interpolate (RIFE). Each is a new version of the same shot and goes through the motion judge when it finishes.',
     backToBoard: 'Back to the board',
     ready: 'READY',
     connecting: 'CONNECTING',
@@ -475,6 +548,7 @@ const translations = {
   ja: {
     topStrip: 'ローカル生成 · ファイルはこのデバイスに保存 · NVIDIA GB10',
     console: 'GB10 コンソール',
+    openClaw: 'OpenClaw を開く',
     createTab: 'サンドボックス',
     factoryTab: '生成',
     assetsTab: '素材ライブラリ',
@@ -485,7 +559,13 @@ const translations = {
     bibleNote: 'ここで一度決めれば各ショットが継承します。未生成のショットに反映され、手動で変更した項目はそのまま残ります。',
     breakdownEyebrow: '01 / 絵コンテ',
     breakdownTitle: '曲をショットに割る',
-    breakdownNote: '音楽と歌詞を読み込み、各ショットの主要アクションとカメラを設定します。拍に合わせた自動分割はフェーズBで対応します。',
+    breakdownNote: '音楽と歌詞を読み込んで「自動割り」を押すと、セクションと歌詞に沿って拍にスナップしたカットが作られます。その後ショットごとに調整できます。',
+    breakdownAuto: '自動割り',
+    breakdownBusy: '解析中…',
+    breakdownNeedsMusic: '拍を解析するには、先に下で音楽を選んでください。',
+    breakdownUnavailable: '音声解析サービスが利用できません。手動で作成できます。生成には影響しません。',
+    breakdownFailed: '解析に失敗しました。しばらくしてからお試しください。',
+    breakdownApplied: '割り結果を下の cue に書き込みました。既存の「プレビュー」で確認できます。',
     shootEyebrow: '03 / 生成',
     shootTitle: '制作工場キュー',
     shootNote: 'GPUジョブは一度に1件。失敗するとライン全体が停止し、人の判断を待ちます。',
@@ -495,8 +575,14 @@ const translations = {
     unavailableTitle: 'この段階は今期未対応です',
     unavailableNote: 'モデルは導入済みですが、まだ画面につながっていません。docs/PRODUCTION_ROADMAP.md を参照してください。',
     unavailableKeyframes: 'Qwen-Image-Edit のアダプター登録と一貫性判定が必要です（フェーズD）。',
+    keyframesTitle: '各ショットのキーフレーム',
+    keyframesNote: '一括生成：各ショットはカメラアングルで参照を選び、一貫性判定でランプが点きます。赤は seed を変えて1回再生成し、その後はあなたの判断です。承認した画像がそのショットの開始フレームになります。',
     unavailableReview: '判定サービスとテイク概念が必要です（フェーズC）。',
+    reviewTitle: '各ショットのテイクをレビュー',
+    reviewNote: '3つの判定はランプを点けるだけで拒否はしません。赤でも採用できますが、誰がいつ覆したかは記録されます。しきい値は校正前は暫定値です。',
     unavailablePost: '仕上げアダプター（補間・拡大・除去）が必要です（フェーズD）。',
+    postTitle: '採用テイクを仕上げる',
+    postNote: '拡大（Real-ESRGAN）、マスクでクリーン（LaMa）、補間（RIFE）。いずれも同じショットの新しいバージョンになり、完了後に動き判定を通ります。',
     backToBoard: 'ボードに戻る',
     ready: '準備完了',
     connecting: '接続中',
@@ -660,6 +746,16 @@ function Label({ children }: { children: React.ReactNode }) {
   );
 }
 
+type CharacterLora = {
+  id: string;
+  label: string;
+  kind: 'identity' | 'wardrobe';
+  default_strength: number;
+  validated_strength_range: { min: number; max: number };
+  compatible_models: string[];
+  compatible_modes: string[];
+};
+
 function ToggleRow({
   label,
   note,
@@ -726,9 +822,23 @@ function Studio() {
   const [tab, setTab] = useState<TabKey>('board');
   // The factory owns the plan; the page keeps a mirror so the rail and the board can read it.
   const [plan, setPlan] = useState<FactoryPlan | null>(null);
+  // Counts host-side plan changes made outside the factory component (review verdicts).
+  const [hostVersion, setHostVersion] = useState(0);
+  // Reported by the keyframes page: candidates waiting on a person, for the stage rail.
+  const [keyframesAttention, setKeyframesAttention] = useState(0);
+
   const [prompt, setPrompt] = useState(initialPrompt);
-  const [model, setModel] = useState('ltx23-distilled');
+  const [model, setModel] = useState('ltx25-fast');
+  const isLtxVideo =
+    model === 'ltx23-distilled' ||
+    model === 'ltx25-fast' ||
+    model === 'ltx25-dev';
   const [models, setModels] = useState<InstalledModel[]>([]);
+  const [characterLoras, setCharacterLoras] = useState<CharacterLora[]>([]);
+  const [identityLora, setIdentityLora] = useState('none');
+  const [identityLoraStrength, setIdentityLoraStrength] = useState(1);
+  const [wardrobeLora, setWardrobeLora] = useState('none');
+  const [wardrobeLoraStrength, setWardrobeLoraStrength] = useState(1);
   const [catalogError, setCatalogError] = useState(false);
   const [mode, setMode] = useState('t2v');
   const [aspectRatio, setAspectRatio] = useState('16:9');
@@ -763,6 +873,223 @@ function Studio() {
   });
   const [directing, setDirecting] = useState<Directing>({});
   const [timeline, setTimeline] = useState<TimelineDraft>({ ...emptyTimeline });
+  const [breakdown, setBreakdown] = useState<{
+    shots: BreakdownShot[];
+    lyrics: BreakdownLyric[];
+    beats: number[];
+    sections: number[];
+    durationSeconds: number;
+    beatSeconds: number;
+    energy: number[];
+    energyHopSeconds: number;
+  } | null>(null);
+  const [breakdownBusy, setBreakdownBusy] = useState(false);
+  const [breakdownNotice, setBreakdownNotice] = useState<
+    'none' | 'applied' | 'unavailable' | 'failed'
+  >('none');
+  const [directorAnalysis, setDirectorAnalysis] = useState<DirectorAnalysis | null>(null);
+  const [directorBusy, setDirectorBusy] = useState(false);
+  const [directorNotice, setDirectorNotice] = useState<
+    'none' | 'failed' | 'budget' | 'unavailable'
+  >('none');
+
+  const applyDirector = (shotIds?: Set<string>) => {
+    if (!breakdown || !directorAnalysis) return;
+    const shots = applyDirectorSuggestions(breakdown.shots, directorAnalysis.shots, shotIds);
+    setBreakdown({ ...breakdown, shots });
+    setTimeline((current) => ({ ...current, cues: breakdownCues(shots) }));
+  };
+
+  /**
+   * Ask the host for beats and sections, then cut the song. The cues go straight into the timeline
+   * draft: the breakdown is the thing that decides where shots begin, and the existing "preview
+   * shot plan" button below reads those cues, so there is no second preview to keep in step.
+   */
+  const runBreakdown = async () => {
+    const audioId = timeline.music?.id;
+    if (!audioId || breakdownBusy) return null;
+    setBreakdownBusy(true);
+    setBreakdownNotice('none');
+    try {
+      const response = await serviceFetch(`${API_BASE}/api/v1/audio/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ audio_id: audioId }),
+      });
+      if (!response.ok) {
+        // 503 is the documented answer when the analysis service is down, and it is not an error
+        // the user has to act on: the page keeps working without it.
+        setBreakdownNotice(response.status === 503 ? 'unavailable' : 'failed');
+        return null;
+      }
+      // Only the fields the breakdown reads are named; the response also carries the alignment
+      // and the cache flag, which belong to other stages.
+      const data = (await response.json()) as {
+        beats?: {
+          duration_seconds?: number;
+          beats?: number[];
+          sections?: number[];
+          energy_db?: number[];
+          energy_hop_seconds?: number;
+        };
+        lyric_offset_seconds?: number;
+      };
+      const measured = data?.beats ?? {};
+      const rows = parseLrcRows(timeline.lrc);
+      const bibleLyricOffset = plan?.bible.lyric_offset_seconds;
+      const result = planBreakdown({
+        durationSeconds: Number(measured.duration_seconds) || 0,
+        beats: Array.isArray(measured.beats) ? measured.beats : [],
+        sections: Array.isArray(measured.sections) ? measured.sections : [],
+        lyrics: rows,
+        lyricOffsetSeconds: Number.isFinite(bibleLyricOffset)
+          ? bibleLyricOffset
+          : Number(data?.lyric_offset_seconds) || 0,
+        segmentSeconds: timeline.segmentSeconds,
+        directing: plan?.bible.directing ?? {},
+      });
+      const nextBreakdown = {
+        shots: result.shots,
+        lyrics: result.shots.flatMap((shot) => shot.lyrics),
+        beats: Array.isArray(measured.beats) ? measured.beats : [],
+        sections: Array.isArray(measured.sections) ? measured.sections : [],
+        durationSeconds: Number(measured.duration_seconds) || 0,
+        beatSeconds: result.beatSeconds,
+        energy: Array.isArray(measured.energy_db) ? measured.energy_db : [],
+        energyHopSeconds: Number(measured.energy_hop_seconds) || 0.1,
+      };
+      setBreakdown(nextBreakdown);
+      setDirectorAnalysis(null);
+      setDirectorNotice('none');
+      setTimeline((current) => ({ ...current, cues: breakdownCues(result.shots) }));
+      setBreakdownNotice('applied');
+      return nextBreakdown;
+    } catch {
+      setBreakdownNotice('failed');
+      return null;
+    } finally {
+      setBreakdownBusy(false);
+    }
+  };
+
+  const pollDirectorAnalysis = async (
+    projectId: string,
+    runId: string,
+    signal?: AbortSignal,
+  ) => {
+    const deadline = Date.now() + 7 * 60 * 1000;
+    while (!signal?.aborted && Date.now() < deadline) {
+      const response = await serviceFetch(
+        `/api/v1/factory/projects/${projectId}/director-draft`,
+        signal ? { signal } : {},
+      );
+      if (!response.ok) throw new Error('director poll failed');
+      const result = (await response.json()) as { run?: DirectorRun | null };
+      const run = result.run;
+      if (!run || run.id !== runId) throw new Error('director run changed');
+      if (run.status === 'completed' && run.analysis) {
+        setDirectorAnalysis(run.analysis);
+        setDirectorNotice('none');
+        return;
+      }
+      if (run.status === 'failed') {
+        setDirectorNotice(
+          run.code === 'draft_budget_spent'
+            ? 'budget'
+            : run.code === 'draft_unavailable' || run.code === 'director_interrupted'
+              ? 'unavailable'
+              : 'failed',
+        );
+        return;
+      }
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 2000));
+    }
+    if (!signal?.aborted) setDirectorNotice('unavailable');
+  };
+
+  const runDirectorAnalysis = async () => {
+    if (!plan?.id || directorBusy) return;
+    const source = breakdown ?? (await runBreakdown());
+    if (!source?.shots.length) return;
+    setDirectorBusy(true);
+    setDirectorNotice('none');
+    try {
+      const response = await serviceFetch(
+        `/api/v1/factory/projects/${plan.id}/director-draft`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            locale,
+            audio_analysis: {
+              duration_seconds: source.durationSeconds,
+              beat_seconds: source.beatSeconds,
+              section_seconds: source.sections,
+              energy_db: source.energy,
+              energy_hop_seconds: source.energyHopSeconds,
+            },
+            shots: source.shots.map((shot) => ({
+              shot_id: shot.id,
+              start_seconds: shot.start,
+              end_seconds: shot.end,
+              kind: shot.kind,
+              lyrics: shot.lyrics.map((line) => line.text),
+            })),
+          }),
+        },
+      );
+      const result = (await response.json()) as {
+        run?: DirectorRun;
+        code?: string;
+      };
+      if (!response.ok || !result.run) {
+        setDirectorNotice(
+          response.status === 429
+            ? 'budget'
+            : response.status === 503
+              ? 'unavailable'
+              : 'failed',
+        );
+        return;
+      }
+      await pollDirectorAnalysis(plan.id, result.run.id);
+    } catch {
+      setDirectorNotice('failed');
+    } finally {
+      setDirectorBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!plan?.id) return;
+    const abort = new AbortController();
+    void (async () => {
+      try {
+        const response = await serviceFetch(
+          `/api/v1/factory/projects/${plan.id}/director-draft`,
+          { signal: abort.signal },
+        );
+        if (!response.ok || abort.signal.aborted) return;
+        const result = (await response.json()) as { run?: DirectorRun | null };
+        if (!result.run) return;
+        if (result.run.status === 'completed' && result.run.analysis) {
+          setDirectorAnalysis(result.run.analysis);
+          return;
+        }
+        if (result.run.status === 'queued' || result.run.status === 'running') {
+          setDirectorBusy(true);
+          await pollDirectorAnalysis(plan.id, result.run.id, abort.signal);
+        }
+      } catch {
+        if (!abort.signal.aborted) setDirectorNotice('failed');
+      } finally {
+        if (!abort.signal.aborted) setDirectorBusy(false);
+      }
+    })();
+    return () => abort.abort();
+    // A project change is the only event that should resume its durable analysis.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan?.id]);
   const [factoryIncoming, setFactoryIncoming] =
     useState<FactoryIncoming | null>(null);
   const [referenceUploading, setReferenceUploading] = useState(false);
@@ -892,6 +1219,12 @@ function Studio() {
     image_strength: mode === 'i2v' ? imageStrength : undefined,
     reference_background: mode === 'i2v' ? referenceBackground : undefined,
     directing,
+    ...(identityLora !== 'none'
+      ? { identity_lora: { id: identityLora, strength: identityLoraStrength } }
+      : {}),
+    ...(wardrobeLora !== 'none'
+      ? { wardrobe_lora: { id: wardrobeLora, strength: wardrobeLoraStrength } }
+      : {}),
     ...(mode === 'i2v' && character.enabled
       ? {
           character: {
@@ -919,6 +1252,13 @@ function Studio() {
         }
       : {}),
   };
+  const factoryRequest =
+    plan && hasFactoryBible(plan.bible)
+      ? projectBibleForDraft(plan.bible, generationRequest)
+      : generationRequest;
+  const breakdownEntries = breakdown
+    ? breakdownFactoryEntries(factoryRequest, breakdown.shots)
+    : [];
   const command = `POST /api/v1/jobs\n${JSON.stringify(generationRequest, null, 2)}`;
 
   useEffect(() => {
@@ -952,11 +1292,25 @@ function Studio() {
         return response.json() as Promise<{ models: InstalledModel[] }>;
       })
       .then((data) => {
-        setModels(data.models);
+        setModels([
+          ...data.models.filter((item) => item.id !== MOTION_CANVAS_MODEL.id),
+          MOTION_CANVAS_MODEL,
+        ]);
         setCatalogError(false);
       })
       .catch(() => {
         if (!abort.signal.aborted) setCatalogError(true);
+      });
+    serviceFetch('/api/v1/character-loras', { signal: abort.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error();
+        return response.json() as Promise<{ loras?: CharacterLora[] }>;
+      })
+      .then((data) => {
+        if (!abort.signal.aborted) setCharacterLoras(data.loras || []);
+      })
+      .catch(() => {
+        if (!abort.signal.aborted) setCharacterLoras([]);
       });
     return () => abort.abort();
   }, []);
@@ -976,7 +1330,9 @@ function Studio() {
           if (
             data.active_job &&
             (!data.active_job.model ||
-              data.active_job.model === 'ltx23-distilled')
+              data.active_job.model === 'ltx23-distilled' ||
+              data.active_job.model === 'ltx25-fast' ||
+              data.active_job.model === 'ltx25-dev')
           ) {
             setActiveJobId(data.active_job.id);
             setGenerating(true);
@@ -1116,7 +1472,7 @@ function Studio() {
     }
   };
 
-  const stageProgress = progressOf(plan);
+  const stageProgress = progressOf(plan, { keyframesAttention });
   const stageNames = stageCopy[locale].stages;
   const stageIndexOf = (key: TabKey) =>
     String(STAGE_KEYS.indexOf(key as StageKey)).padStart(2, '0');
@@ -1146,6 +1502,16 @@ function Studio() {
             </div>
           </button>
           <div className="flex items-center gap-4">
+            <a
+              href={OPENCLAW_URL}
+              target="_blank"
+              rel="noreferrer"
+              aria-label={ui.openClaw}
+              className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-border bg-background px-2.5 text-xs font-semibold transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+            >
+              <span className="hidden sm:inline">OpenClaw</span>
+              <ExternalLink className="size-3.5" aria-hidden="true" />
+            </a>
             <Select
               value={locale}
               onValueChange={(value) => setLocale(value as Locale)}
@@ -1192,6 +1558,55 @@ function Studio() {
           />
         )}
 
+        {tab === 'keyframes' && (
+          <section>
+            <SectionTitle
+              eyebrow={`${stageIndexOf('keyframes')} / ${stageNames.keyframes}`}
+              title={ui.keyframesTitle}
+              note={ui.keyframesNote}
+            />
+            <KeyframesBoard
+              plan={plan}
+              locale={locale}
+              onPlanChange={(next) => {
+                setPlan(next);
+                setHostVersion((version) => version + 1);
+              }}
+              onAttention={setKeyframesAttention}
+            />
+          </section>
+        )}
+
+        {tab === 'post' && (
+          <section>
+            <SectionTitle
+              eyebrow={`${stageIndexOf('post')} / ${stageNames.post}`}
+              title={ui.postTitle}
+              note={ui.postNote}
+            />
+            <PostBoard plan={plan} locale={locale} />
+          </section>
+        )}
+
+        {tab === 'review' && (
+          <section>
+            <SectionTitle
+              eyebrow={`${stageIndexOf('review')} / ${stageNames.review}`}
+              title={ui.reviewTitle}
+              note={ui.reviewNote}
+            />
+            <ReviewBoard
+              plan={plan}
+              locale={locale}
+              opinionsAvailable={capabilities?.draft_available === true}
+              onPlanChange={(next) => {
+                setPlan(next);
+                setHostVersion((version) => version + 1);
+              }}
+            />
+          </section>
+        )}
+
         {UNAVAILABLE_STAGES.includes(tab as StageKey) && (
           <section>
             <SectionTitle
@@ -1228,13 +1643,120 @@ function Studio() {
               title={ui.breakdownTitle}
               note={ui.breakdownNote}
             />
+            <div className="mb-6 flex flex-col gap-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={runBreakdown}
+                  disabled={!timeline.music || breakdownBusy}
+                  className="rounded-sm border border-border bg-white px-4 py-2 text-[12px] font-bold hover:bg-[#faf9f7] disabled:opacity-45"
+                >
+                  {breakdownBusy ? ui.breakdownBusy : ui.breakdownAuto}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void runDirectorAnalysis()}
+                  disabled={
+                    !canRunDirectorAnalysis({
+                      projectId: plan?.id,
+                      musicId: timeline.music?.id,
+                      draftAvailable: capabilities?.draft_available,
+                      breakdownBusy,
+                      directorBusy,
+                    })
+                  }
+                  title={
+                    capabilities?.draft_available === false
+                      ? directorCopy[locale].unavailable
+                      : !breakdown?.shots.length && timeline.music
+                        ? directorCopy[locale].createsBreakdown
+                        : undefined
+                  }
+                  className="rounded-sm bg-[#171918] px-4 py-2 text-[12px] font-bold text-white hover:bg-[#e85578] disabled:opacity-45"
+                >
+                  {breakdownBusy
+                    ? ui.breakdownBusy
+                    : directorBusy
+                      ? directorCopy[locale].analyzing
+                      : directorCopy[locale].analyze}
+                </button>
+                <p className="text-[11px] text-muted-foreground">
+                  {!timeline.music
+                    ? ui.breakdownNeedsMusic
+                    : breakdownNotice === 'unavailable'
+                      ? ui.breakdownUnavailable
+                      : breakdownNotice === 'failed'
+                        ? ui.breakdownFailed
+                        : breakdownNotice === 'applied'
+                          ? ui.breakdownApplied
+                          : ''}
+                </p>
+              </div>
+              <p className="text-[10px] leading-5 text-muted-foreground">
+                {directorCopy[locale].disclosure}
+              </p>
+              {directorNotice !== 'none' ? (
+                <p role="alert" className="text-[11px] text-red-700">
+                  {directorNotice === 'budget'
+                    ? directorCopy[locale].budget
+                    : directorNotice === 'unavailable'
+                      ? directorCopy[locale].serviceUnavailable
+                      : directorCopy[locale].failed}
+                </p>
+              ) : null}
+
+              {directorAnalysis ? (
+                <DirectorSummary
+                  locale={locale}
+                  analysis={directorAnalysis}
+                  onApplyAll={() => applyDirector()}
+                />
+              ) : null}
+
+              {breakdown ? (
+                <BreakdownEditor
+                  shots={breakdown.shots}
+                  lyrics={breakdown.lyrics}
+                  beats={breakdown.beats}
+                  sections={breakdown.sections}
+                  durationSeconds={breakdown.durationSeconds}
+                  beatSeconds={breakdown.beatSeconds}
+                  energy={breakdown.energy}
+                  energyHopSeconds={breakdown.energyHopSeconds}
+                  locale={locale}
+                  directorSuggestions={directorAnalysis?.shots}
+                  onApplySuggestion={(shotId) => applyDirector(new Set([shotId]))}
+                  onChange={(shots) => {
+                    const structureChanged =
+                      shots.length !== breakdown.shots.length ||
+                      shots.some(
+                        (shot, index) =>
+                          shot.id !== breakdown.shots[index]?.id ||
+                          shot.start !== breakdown.shots[index]?.start ||
+                          shot.end !== breakdown.shots[index]?.end,
+                      );
+                    if (structureChanged) setDirectorAnalysis(null);
+                    setBreakdown((current) => (current ? { ...current, shots } : current));
+                    // The cues are the breakdown's output, so every edit lands in the timeline
+                    // immediately rather than behind an "apply" the user could forget to press.
+                    setTimeline((current) => ({ ...current, cues: breakdownCues(shots) }));
+                  }}
+                />
+              ) : null}
+            </div>
+
             <TimelineControls
               locale={locale}
               catalog={capabilities?.directing}
               value={timeline}
               onChange={setTimeline}
               request={generationRequest}
+              previewRequests={breakdownEntries.map((entry) => ({
+                request: entry.request,
+                startSeconds: entry.startSeconds,
+              }))}
               onDuration={(value) => setSeconds(String(value))}
+              factoryMusic={plan?.bible.music}
             />
           </section>
         )}
@@ -1253,7 +1775,7 @@ function Studio() {
                 </SelectTrigger>
                 <SelectContent>
                   {models.map((item) => (
-                    <SelectItem key={item.id} value={item.id}>
+                    <SelectItem key={item.id} value={item.id} disabled={!item.available}>
                       {item.label} · {item.media_type}
                     </SelectItem>
                   ))}
@@ -1276,7 +1798,8 @@ function Studio() {
           </section>
         )}
         {tab === 'sandbox' &&
-          model !== 'ltx23-distilled' &&
+          !isLtxVideo &&
+          model !== 'motion-canvas' &&
           models.find((item) => item.id === model) && (
             <ModelComposer
               key={model}
@@ -1284,7 +1807,14 @@ function Studio() {
               locale={locale}
             />
           )}
-        {tab === 'sandbox' && model === 'ltx23-distilled' && (
+        {tab === 'sandbox' && model === 'motion-canvas' && (
+          <MotionCanvasComposer
+            locale={locale}
+            models={models}
+            onSelectModel={setModel}
+          />
+        )}
+        {tab === 'sandbox' && isLtxVideo && (
           <section>
             <SectionTitle
               eyebrow={ui.createEyebrow}
@@ -1655,6 +2185,7 @@ function Studio() {
                       <Textarea
                         value={prompt}
                         onChange={(e) => setPrompt(e.target.value)}
+                        maxLength={4000}
                         className="min-h-40 resize-none rounded-none bg-[#fafaf8] text-sm leading-6 shadow-none focus-visible:ring-[#ff6f91]/25"
                       />
                       <span className="mt-2 block text-right text-[10px] text-muted-foreground">
@@ -1686,7 +2217,7 @@ function Studio() {
                       <label>
                         <Label>{ui.model}</Label>
                         <Input
-                          value="LTX-2.3 Distilled"
+                          value={models.find((item) => item.id === model)?.label ?? model}
                           readOnly
                           className="rounded-none"
                         />
@@ -1850,6 +2381,65 @@ function Studio() {
                         </label>
                       </section>
                     )}
+                    {(model === 'ltx25-fast' || model === 'ltx25-dev') && (
+                      <section className="grid gap-4 border border-border bg-[#fafafa] p-4 lg:grid-cols-2">
+                        {([
+                          ['identity', identityLora, setIdentityLora, identityLoraStrength, setIdentityLoraStrength],
+                          ['wardrobe', wardrobeLora, setWardrobeLora, wardrobeLoraStrength, setWardrobeLoraStrength],
+                        ] as const).map(([kind, selected, setSelected, strength, setStrength]) => {
+                          const options = characterLoras.filter(
+                            (item) => item.kind === kind && item.compatible_models.includes(model) && item.compatible_modes.includes(mode),
+                          );
+                          const metadata = options.find((item) => item.id === selected);
+                          return (
+                            <div key={kind} className="space-y-2">
+                              <label className="text-[10px] font-bold">
+                                {kind === 'identity'
+                                  ? locale === 'zh-TW' ? '人物 Identity LoRA' : locale === 'en' ? 'Identity LoRA' : '人物 Identity LoRA'
+                                  : locale === 'zh-TW' ? '服裝 Wardrobe LoRA' : locale === 'en' ? 'Wardrobe LoRA' : '衣装 Wardrobe LoRA'}
+                              </label>
+                              <Select
+                                value={selected}
+                                onValueChange={(id) => {
+                                  if (!id) return;
+                                  setSelected(id);
+                                  const next = options.find((item) => item.id === id);
+                                  if (next) setStrength(next.default_strength);
+                                }}
+                              >
+                                <SelectTrigger className="rounded-none bg-white text-xs"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="none">
+                                    {locale === 'zh-TW' ? '不使用 LoRA' : locale === 'en' ? 'No LoRA' : 'LoRA なし'}
+                                  </SelectItem>
+                                  {options.map((item) => <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>)}
+                                </SelectContent>
+                              </Select>
+                              {metadata && (
+                                <label className="block text-[10px] font-bold">
+                                  {locale === 'en' ? 'Strength' : locale === 'ja' ? '強度' : '強度'}: {strength}
+                                  <Input
+                                    type="range"
+                                    step="0.05"
+                                    min={metadata.validated_strength_range.min}
+                                    max={metadata.validated_strength_range.max}
+                                    value={strength}
+                                    onChange={(event) => setStrength(Number(event.target.value))}
+                                  />
+                                </label>
+                              )}
+                            </div>
+                          );
+                        })}
+                        <p className="text-[10px] leading-5 text-muted-foreground lg:col-span-2">
+                          {locale === 'zh-TW'
+                            ? '只列出主機已核准的 Registry ID；API 會核對模型、用途、SHA-256 與強度範圍。'
+                            : locale === 'en'
+                              ? 'Approved host registry IDs only. The API verifies model, purpose, SHA-256 and strength range.'
+                              : '承認済み Registry ID のみ。API がモデル、用途、SHA-256、強度範囲を検証します。'}
+                        </p>
+                      </section>
+                    )}
                     {mode === 'i2v' && (
                       <CharacterLock
                         locale={locale}
@@ -1963,11 +2553,23 @@ function Studio() {
                         (mode === 'i2v' && !reference)
                       }
                       onClick={() => {
-                        setFactoryIncoming({
-                          token: crypto.randomUUID(),
-                          request: generationRequest,
-                          bible: bibleFromRequest(generationRequest),
-                        });
+                        setFactoryIncoming(
+                          breakdownEntries.length
+                            ? {
+                                token: crypto.randomUUID(),
+                                shots: breakdownEntries.map((entry) => ({
+                                  request: entry.request,
+                                  title: entry.title,
+                                  pinned: entry.pinned,
+                                })),
+                                bible: bibleFromRequest(factoryRequest),
+                              }
+                            : {
+                                token: crypto.randomUUID(),
+                                request: factoryRequest,
+                                bible: bibleFromRequest(factoryRequest),
+                              },
+                        );
                         setTab('shoot');
                       }}
                       className="h-12 w-full rounded-none text-[11px] font-bold tracking-[0.12em]"
@@ -2034,6 +2636,10 @@ function Studio() {
             incoming={factoryIncoming}
             onIncomingConsumed={() => setFactoryIncoming(null)}
             onPlanChange={setPlan}
+            draftAvailable={capabilities?.draft_available === true}
+            models={models}
+            profiles={Object.keys(capabilities?.profiles || {})}
+            hostVersion={hostVersion}
             section={tab === 'shoot' ? 'queue' : 'bible'}
           />
         </div>
@@ -2202,6 +2808,7 @@ function Studio() {
               title={ui.outputsTitle}
               note={ui.outputsNote}
             />
+            <AssemblyPanel plan={plan} locale={locale} onGoReview={() => setTab('review')} />
             <div className="grid gap-6 xl:grid-cols-2">
               {liveOutputs.map((item, index) => (
                 <article
@@ -2312,6 +2919,14 @@ function Studio() {
               eyebrow={ui.envEyebrow}
               title={ui.envTitle}
               note={ui.envNote}
+            />
+            <WorkstationPanel
+              plan={plan}
+              locale={locale}
+              onPlanChange={(next) => {
+                setPlan(next);
+                setHostVersion((version) => version + 1);
+              }}
             />
             <p className="mb-4 border border-border bg-white p-4 text-xs">
               {transfer.gpu}:{' '}

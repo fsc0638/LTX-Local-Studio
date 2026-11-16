@@ -43,6 +43,8 @@ import {
   parseTimelineImport,
   serializeShotPlan,
 } from '@/lib/timeline-import';
+import { syncFactoryMusicToTimeline } from '@/lib/factory-timeline';
+import type { FactoryMusic } from '@/lib/production-factory';
 
 type Locale = 'zh-TW' | 'en' | 'ja';
 export type Directing = Record<string, string>;
@@ -328,14 +330,20 @@ export function TimelineControls({
   value,
   onChange,
   request,
+  previewRequests,
   onDuration,
+  factoryMusic,
 }: {
   locale: Locale;
   catalog: VideoCapabilities['directing'];
   value: TimelineDraft;
   onChange: Dispatch<SetStateAction<TimelineDraft>>;
   request: Record<string, unknown>;
+  /** Full songs are validated as their factory-sized shots instead of one >180 second request. */
+  previewRequests?: { request: Record<string, unknown>; startSeconds: number }[];
   onDuration: (seconds: number) => void;
+  /** Music selected in stage 00. Stage 01 must edit and analyse that same source. */
+  factoryMusic?: FactoryMusic;
 }) {
   const text = mvCopy[locale];
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -357,7 +365,14 @@ export function TimelineControls({
   const [lyricDrafts, setLyricDrafts] = useState<Record<number, string>>({});
   const [selectedRows, setSelectedRows] = useState<number[]>([]);
   const [notice, setNotice] = useState('');
-  const fingerprint = JSON.stringify(request);
+  const factoryAudioId = factoryMusic?.audio_id;
+  const factoryAudioStart = factoryMusic?.audio_start_seconds;
+  const factoryAudioMode = factoryMusic?.audio_mode;
+  const factoryLrc = factoryMusic?.lrc;
+  const factoryLrcTimebase = factoryMusic?.lrc_timebase;
+  const fingerprint = JSON.stringify(
+    previewRequests?.length ? { request, previewRequests } : request,
+  );
   const lrcRows = parseLrcRows(value.lrc);
   useEffect(() => {
     const abort = new AbortController();
@@ -366,14 +381,51 @@ export function TimelineControls({
         if (!result.ok) throw new Error();
         return result.json() as Promise<{ assets: Asset[] }>;
       })
-      .then((data) =>
-        setAssets(data.assets.filter((asset) => asset.kind === 'audio')),
-      )
+      .then((data) => {
+        const audioAssets = data.assets.filter((asset) => asset.kind === 'audio');
+        setAssets(audioAssets);
+        if (
+          !factoryAudioId ||
+          factoryAudioStart === undefined ||
+          factoryAudioMode === undefined ||
+          factoryLrc === undefined ||
+          factoryLrcTimebase === undefined
+        )
+          return;
+        const asset = audioAssets.find((item) => item.id === factoryAudioId);
+        if (!asset) return;
+        onChange((current) =>
+          syncFactoryMusicToTimeline(
+            current,
+            {
+              audio_id: factoryAudioId,
+              audio_start_seconds: factoryAudioStart,
+              audio_mode: factoryAudioMode,
+              lrc: factoryLrc,
+              lrc_timebase: factoryLrcTimebase,
+            },
+            asset,
+          ),
+        );
+        setLrcBaseline(factoryLrc);
+        setLyricDrafts({});
+        setSelectedRows([]);
+        setNotice('');
+        setError('');
+      })
       .catch(() => {
         if (!abort.signal.aborted) setError(text.error);
       });
     return () => abort.abort();
-  }, [text.error]);
+  }, [
+    factoryAudioId,
+    factoryAudioStart,
+    factoryAudioMode,
+    factoryLrc,
+    factoryLrcTimebase,
+    onChange,
+    text.error,
+  ]);
   const uploadMusic = async (file?: File) => {
     if (!file) return;
     setPending(true);
@@ -558,23 +610,27 @@ export function TimelineControls({
     setPending(true);
     setError('');
     try {
-      const result = await serviceFetch('/api/v1/validate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: fingerprint,
-      });
-      const data = (await result.json()) as {
-        error?: string;
-        resolved_parameters: { segments?: Shot[]; prompt: string };
-        configured_duration_seconds: number;
-        effective_prompt?: string;
-        warnings?: string[];
-      };
-      if (!result.ok) throw new Error(data.error || text.error);
-      const resolved = data.resolved_parameters;
-      setPlan({
-        fingerprint,
-        shots: resolved.segments || [
+      const sources = previewRequests?.length
+        ? previewRequests
+        : [{ request, startSeconds: 0 }];
+      const shots: Shot[] = [];
+      const warnings: string[] = [];
+      for (const source of sources) {
+        const result = await serviceFetch('/api/v1/validate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(source.request),
+        });
+        const data = (await result.json()) as {
+          error?: string;
+          resolved_parameters: { segments?: Shot[]; prompt: string };
+          configured_duration_seconds: number;
+          effective_prompt?: string;
+          warnings?: string[];
+        };
+        if (!result.ok) throw new Error(data.error || text.error);
+        const resolved = data.resolved_parameters;
+        const resolvedShots = resolved.segments || [
           {
             index: 1,
             start_seconds: 0,
@@ -583,8 +639,20 @@ export function TimelineControls({
             action: '',
             prompt: data.effective_prompt || resolved.prompt,
           },
-        ],
-        warnings: data.warnings || [],
+        ];
+        for (const shot of resolvedShots) {
+          shots.push({
+            ...shot,
+            index: shots.length + 1,
+            start_seconds: source.startSeconds + shot.start_seconds,
+          });
+        }
+        warnings.push(...(data.warnings || []));
+      }
+      setPlan({
+        fingerprint,
+        shots,
+        warnings: [...new Set(warnings)],
       });
     } catch (issue) {
       setError(issue instanceof Error ? issue.message : text.error);
@@ -1067,7 +1135,7 @@ export function TimelineControls({
               {text.action}
               <Textarea
                 className="mt-1 rounded-none text-xs"
-                maxLength={600}
+                maxLength={4000}
                 value={cue.action}
                 onChange={(event) =>
                   cueChange(index, { action: event.target.value })

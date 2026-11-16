@@ -5,6 +5,16 @@ credentials-file: /absolute/path/to/YOUR_TUNNEL_UUID.json
 protocol: http2
 
 ingress:
+  # OpenClaw Control UI, served by the gateway under /openclaw on the Access-protected hostname.
+  - hostname: ltx.example.com
+    path: ^/openclaw(?:/.*)?$
+    service: http://127.0.0.1:18789
+
+  # OpenClaw MCP Apps sandbox (gateway port + 1). Widgets render from this dedicated origin; it
+  # must differ from the Control UI origin and hosts nothing authenticated, so no Access on it.
+  - hostname: openclaw-apps.example.com
+    service: http://127.0.0.1:18790
+
   # Keep API and generated media behind the same Access-protected hostname.
   - hostname: ltx.example.com
     path: ^/api(?:/.*)?$

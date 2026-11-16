@@ -15,8 +15,8 @@ import user_auth as auth
 class AccountTests(test_backend.BackendTests):
     def setUp(self):
         super().setUp()
-        self.auth = auth.AuthStore(Path(self.temp.name) / "accounts.sqlite3")
-        self.store = ProductionStore(Path(self.temp.name) / "jobs.sqlite3")
+        self.auth = auth.AuthStore()
+        self.store = ProductionStore()
         self.mail = []
         settings = auth.AuthSettings("http://localhost:3000", smtp_host="smtp.example.test", smtp_from="sender@example.test", registration_enabled=True)
         self.account_patches = [patch.object(backend, "USER_AUTH_ENABLED", True), patch.object(backend, "AUTH", self.auth),
@@ -82,9 +82,9 @@ class AccountTests(test_backend.BackendTests):
         self.assertEqual(self.call("POST", "/api/auth/verify", {"token": token})[0], 400)
         with self.auth.connect() as db:
             row = db.execute("SELECT password_hash,verified_at FROM users").fetchone()
-        self.assertNotEqual(row[0], raw["password"])
-        self.assertNotIn(raw["password"], row[0])
-        self.assertIsNotNone(row[1])
+        self.assertNotEqual(row["password_hash"], raw["password"])
+        self.assertNotIn(raw["password"], row["password_hash"])
+        self.assertIsNotNone(row["verified_at"])
 
     def test_cookie_csrf_logout_and_session_expiry(self):
         cookie, csrf = self.account()
@@ -266,9 +266,9 @@ class AccountTests(test_backend.BackendTests):
             self.assertFalse(json.loads(result[2])["verification_required"])
             self.assertEqual(self.mail, [])
             with self.auth.connect() as db:
-                self.assertIsNone(db.execute("SELECT verified_at FROM users").fetchone()[0])
-                self.assertEqual(db.execute("SELECT count(*) FROM sessions").fetchone()[0], 0)
-                self.assertEqual(db.execute("SELECT count(*) FROM email_tokens").fetchone()[0], 0)
+                self.assertIsNone(db.execute("SELECT verified_at FROM users").fetchone()["verified_at"])
+                self.assertEqual(db.execute("SELECT count(*) AS total FROM sessions").fetchone()["total"], 0)
+                self.assertEqual(db.execute("SELECT count(*) AS total FROM email_tokens").fetchone()["total"], 0)
             self.assertEqual(self.call("GET", "/api/v1/models")[0], 401)
             self.assertEqual(self.call("POST", "/api/auth/register", {**raw, "username": "other", "email": "invalid"})[0], 400)
 
@@ -303,7 +303,7 @@ class AccountTests(test_backend.BackendTests):
             self.assertEqual(self.call("POST", "/api/auth/login", {"username": "unknown", "password": raw["password"]})[0], 401)
             self.assertEqual(self.call("POST", "/api/auth/login", {"username": raw["username"], "password": raw["password"]})[0], 200)
             with self.auth.connect() as db:
-                db.execute("UPDATE users SET disabled=1 WHERE username=?", (raw["username"],))
+                db.execute("UPDATE users SET disabled=1 WHERE username=%s", (raw["username"],))
             self.assertEqual(self.call("GET", "/api/v1/models", cookie=cookie)[0], 401)
             self.assertEqual(self.call("POST", "/api/auth/login", {"username": raw["username"], "password": raw["password"]})[0], 401)
 

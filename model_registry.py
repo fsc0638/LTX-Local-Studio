@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import importlib
 import math
 import os
+from pathlib import Path
 import re
 from typing import Callable
 from video_settings import MAX_FRAMES
@@ -26,6 +27,16 @@ class MediaAdapter:
     requires_cuda: bool = True
     description: str = ""
     accepts_image: bool = False
+    # Which GPU tenant a job of this adapter is, for the lease: "ltx", "imagegen", or "none" for
+    # tools sized to run beside either (the post tools). Empty means "by media type".
+    gpu_tenant: str = ""
+    # The largest frame this adapter may produce. LTX generation is capped at 1536; a post tool
+    # that upscales an LTX frame by four must be allowed past it.
+    max_dimension: int = 1536
+    # The most frames this adapter may produce; 0 means the worker's own limit. Interpolation
+    # doubles a take's frame count, so the post adapter sets its own.
+    max_frames: int = 0
+    readiness: Callable[[], tuple[bool, str]] | None = None
 
     @property
     def extension(self):
@@ -36,11 +47,16 @@ class MediaAdapter:
         return FORMATS[self.media_type][1]
 
     def describe(self, runtime):
+        ready, reason = self.readiness() if self.readiness else (True, "")
         return {"id": self.id, "label": self.label, "media_type": self.media_type,
                 "modes": list(self.modes), "parameters": self.parameters, "description": self.description,
-                "available": not self.requires_cuda or bool(runtime.get("cuda_available")),
-                "accepts_image": self.accepts_image,
-                "installed": True, "adapter_version": "media-adapter-v1"}
+                "available": ready and (not self.requires_cuda or bool(runtime.get("cuda_available"))),
+                "unavailable_reason": reason or None, "accepts_image": self.accepts_image,
+                "installed": ready, "adapter_version": "media-adapter-v1"}
+
+    def is_available(self, runtime):
+        ready = self.readiness()[0] if self.readiness else True
+        return ready and (not self.requires_cuda or bool(runtime.get("cuda_available")))
 
     def normalize(self, raw):
         # This branch is for non-LTX adapters. LTX keeps its existing v1 fields.
@@ -67,6 +83,8 @@ class MediaAdapter:
                 raise ValueError(f"Invalid type for parameter {name}")
             if type(value) in (int, float) and (not math.isfinite(value) or value < rule.get("minimum", -1e12) or value > rule.get("maximum", 1e12)):
                 raise ValueError(f"Parameter out of range: {name}")
+            if type(value) is int and rule.get("step") and (value - rule.get("step_base", 0)) % rule["step"]:
+                raise ValueError(f"Parameter is off the required grid: {name}")
             if isinstance(value, str) and len(value) > rule.get("maxLength", 2000):
                 raise ValueError(f"Parameter too long: {name}")
             if "enum" in rule and value not in rule["enum"]:
@@ -78,8 +96,9 @@ class MediaAdapter:
         image_id = raw.get("image_id")
         if image_id is not None and not self.accepts_image:
             raise ValueError("Selected adapter does not accept reference images")
-        if mode == "i2v" and not image_id:
-            raise ValueError("image_id is required for i2v")
+        # i2v and edit both start from a picture; an edit with nothing to edit is not a request.
+        if mode in ("i2v", "edit") and not image_id:
+            raise ValueError(f"image_id is required for {mode}")
         if image_id is not None and (not isinstance(image_id, str) or not re.fullmatch(r"[a-f0-9]{32}", image_id)):
             raise ValueError("image_id must be an uploaded asset ID")
         payload = {"model": self.id, "media_type": self.media_type, "mode": mode, "prompt": prompt.strip(),
@@ -89,7 +108,7 @@ class MediaAdapter:
         if self.media_type == "video":
             if any(type(payload.get(key)) is not int or payload[key] <= 0 for key in ("width", "height", "frames", "fps")):
                 raise ValueError("Video adapters must resolve width, height, frames and fps")
-            if payload["frames"] > MAX_FRAMES or payload["width"] > 1536 or payload["height"] > 1536 or payload["fps"] > 60:
+            if payload["frames"] > (self.max_frames or MAX_FRAMES) or payload["width"] > self.max_dimension or payload["height"] > self.max_dimension or payload["fps"] > 60:
                 raise ValueError("Video adapter exceeds worker resource limits")
             payload["audio"] = values.get("audio", False)
         return payload
@@ -99,8 +118,76 @@ def ltx_command(payload, output, context):
     return ["bash", str(context["launcher"]), payload["prompt"], str(output)]
 
 
-ADAPTERS = {"ltx23-distilled": MediaAdapter("ltx23-distilled", "LTX-2.3 Distilled", "video", ltx_command,
-                                           modes=("t2v", "i2v"), accepts_image=True, description="Existing LTX video contract and versioned profiles")}
+def ltx25_paths():
+    root = Path(os.environ.get("LTX_REPO_ROOT", ""))
+    model_root = root / "models/LTX-2.5"
+    return {
+        "transformer": Path(os.environ.get("LTX25_TRANSFORMER_PATH", model_root / "diffusion_models/ltx-2.5-22b-distilled-transformer-bf16.safetensors")),
+        "text_encoder": Path(os.environ.get("LTX25_TEXT_ENCODER_PATH", model_root / "text_encoders/gemma4-12b-with-proj-ltx-2.5-bf16.safetensors")),
+        "video_vae": Path(os.environ.get("LTX25_VIDEO_VAE_PATH", model_root / "vae/ltx-2.5-video-vae-conv-bf16.safetensors")),
+        "audio_vae": Path(os.environ.get("LTX25_AUDIO_VAE_PATH", model_root / "vae/ltx-2.5-audio-vae-bf16.safetensors")),
+        "upsampler": Path(os.environ.get("LTX25_UPSAMPLER_PATH", model_root / "latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors")),
+    }
+
+
+def ltx25_readiness():
+    missing = [name for name, path in ltx25_paths().items() if not path.is_file()]
+    return (not missing, "" if not missing else "Missing LTX 2.5 components: " + ", ".join(missing))
+
+
+def ltx25_dev_paths():
+    paths = ltx25_paths()
+    model_root = Path(os.environ.get("LTX_REPO_ROOT", "")) / "models/LTX-2.5"
+    return {
+        "transformer": Path(os.environ.get(
+            "LTX25_DEV_TRANSFORMER_PATH",
+            model_root / "diffusion_models/ltx-2.5-22b-dev-transformer-bf16.safetensors",
+        )),
+        "text_encoder": paths["text_encoder"],
+        "video_vae": paths["video_vae"],
+        "audio_vae": paths["audio_vae"],
+    }
+
+
+def ltx25_dev_readiness():
+    missing = [name for name, path in ltx25_dev_paths().items() if not path.is_file()]
+    return (not missing, "" if not missing else "Missing LTX 2.5 Dev components: " + ", ".join(missing))
+
+
+def ltx25_command(payload, output, context):
+    return ["bash", str(context["root"] / "scripts/run-ltx-2.5-fast.sh"), payload["prompt"], str(output)]
+
+
+def ltx25_dev_command(payload, output, context):
+    return ["bash", str(context["root"] / "scripts/run-ltx-2.5-dev.sh"), payload["prompt"], str(output)]
+
+
+LTX_MODELS = frozenset({"ltx23-distilled", "ltx25-fast", "ltx25-dev"})
+
+
+def default_ltx_model():
+    """Prefer 2.5 on this host, but keep portable/test installs from becoming unusable."""
+    configured = os.environ.get("LTX_DEFAULT_MODEL")
+    if configured in LTX_MODELS:
+        return configured
+    return "ltx25-fast" if ltx25_readiness()[0] else "ltx23-distilled"
+
+
+def is_ltx(model_id):
+    return model_id in LTX_MODELS
+
+
+ADAPTERS = {
+    "ltx23-distilled": MediaAdapter("ltx23-distilled", "LTX-2.3 Distilled", "video", ltx_command,
+                                    modes=("t2v", "i2v"), accepts_image=True,
+                                    description="Existing LTX video contract and versioned profiles"),
+    "ltx25-fast": MediaAdapter("ltx25-fast", "LTX-2.5 Fast", "video", ltx25_command,
+                               modes=("t2v", "i2v"), accepts_image=True, readiness=ltx25_readiness,
+                               description="Official split-checkpoint LTX 2.5 distilled pipeline"),
+    "ltx25-dev": MediaAdapter("ltx25-dev", "LTX-2.5 Dev · Character LoRA", "video", ltx25_dev_command,
+                              modes=("t2v", "i2v"), accepts_image=True, readiness=ltx25_dev_readiness,
+                              description="Official one-stage LTX 2.5 Dev pipeline for checkpoint-compatible character LoRAs"),
+}
 
 
 def register(adapter):
@@ -117,10 +204,17 @@ def register(adapter):
 
 
 def load_installed():
-    for name in filter(None, (value.strip() for value in os.environ.get("LTX_MODEL_ADAPTERS", "").split(","))):
+    names = ["local_adapters.controlled_video", *filter(None, (value.strip() for value in os.environ.get("LTX_MODEL_ADAPTERS", "").split(",")))]
+    for name in dict.fromkeys(names):
         if not re.fullmatch(r"local_adapters\.[a-z][a-z0-9_]*", name):
             raise ValueError("Adapters must be trusted local_adapters modules, not paths or URLs")
-        register(importlib.import_module(name).ADAPTER)
+        module = importlib.import_module(name)
+        if module.ADAPTER.id not in ADAPTERS:
+            register(module.ADAPTER)
+        # A module may ship a family (local_adapters.imagegen registers two models).
+        for extra in getattr(module, "EXTRA_ADAPTERS", ()):
+            if extra.id not in ADAPTERS:
+                register(extra)
 
 
 def get(model_id):

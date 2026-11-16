@@ -8,9 +8,13 @@ import {
   createFactoryPlan,
   createFactoryShot,
   nextQueuedShot,
+  normalizeFactoryBible,
+  normalizeFactoryRequest,
   parseFactoryImport,
   pinFactoryField,
   projectBible,
+  projectBibleForDraft,
+  projectBiblePreservingPins,
   reprojectShots,
   reopenFactoryShot,
   restoreFactoryPlan,
@@ -45,12 +49,48 @@ test('factory imports standard job requests and exports only portable plan data'
   assert.equal('jobId' in exported.shots[0], false);
 });
 
+test('legacy distilled profile migrates to the versioned compatibility profile', () => {
+  const request = normalizeFactoryRequest({
+    prompt:'Test shot',profile:'distilled',primary_action:'Turns to camera',
+  });
+  assert.equal(
+    request.profile,
+    'compat-v1',
+  );
+  assert.equal('primary_action' in request, false);
+  assert.equal(
+    normalizeFactoryBible({output:{profile:'distilled'},lyric_offset_seconds:-0.9}).output.profile,
+    'compat-v1',
+  );
+});
+
+test('continuity relay metadata round-trips and rejects loose gates', () => {
+  const sources = ['a'.repeat(32), 'b'.repeat(32)];
+  const normalized = normalizeFactoryBible({
+    output: {},
+    lyric_offset_seconds: -0.9,
+    continuity: {
+      mode: 'relay',
+      gate: 'strict',
+      identity_board_id: 'c'.repeat(32),
+      identity_sources: sources,
+    },
+  });
+  assert.deepEqual(normalized.continuity?.identity_sources, sources);
+  assert.throws(
+    () => normalizeFactoryBible({ output: {}, continuity: { mode: 'relay', gate: 'loose' } }),
+    /relay \+ strict/,
+  );
+});
+
 const bible = {
   character: {
     name: 'Mika',
     description: 'Short silver hair and a red coat',
     references: [{ image_id: 'a'.repeat(32), view: 'front' }],
   },
+  visual_style: '2D cel animation with clean ink lines',
+  style_anchor: 'c'.repeat(32),
   music: {
     audio_id: 'b'.repeat(32),
     audio_start_seconds: 2.5,
@@ -75,6 +115,8 @@ test('Bible projects character, music, output and directing into a portable job 
     duration_seconds: 6,
   });
   assert.deepEqual(request.character, bible.character);
+  assert.equal(request.visual_style, bible.visual_style);
+  assert.equal(request.style_anchor, undefined);
   assert.equal(request.mode, 'i2v');
   assert.equal(request.image_id, bible.character.references[0].image_id);
   assert.deepEqual(request.timeline, bible.music);
@@ -82,6 +124,60 @@ test('Bible projects character, music, output and directing into a portable job 
   assert.equal(request.render_mode, 'sequence');
   assert.equal(request.aspect_ratio, '16:9');
   assert.equal(request.duration_seconds, 6);
+});
+
+test('Bible projection tolerates an empty prompt while the user is editing', () => {
+  const emptyDraft = { prompt: '', duration_seconds: 6 };
+  const whitespaceDraft = { prompt: '   ', duration_seconds: 6 };
+
+  assert.deepEqual(projectBibleForDraft(bible, emptyDraft), emptyDraft);
+  assert.deepEqual(projectBibleForDraft(bible, whitespaceDraft), whitespaceDraft);
+
+  const completed = projectBibleForDraft(bible, {
+    prompt: 'Performer returns to frame',
+    duration_seconds: 6,
+  });
+  assert.equal(completed.model, bible.output.model);
+  assert.equal(completed.prompt, 'Performer returns to frame');
+});
+
+test('Bible projects registered identity and wardrobe LoRA selections', () => {
+  const request = projectBible({
+    output: { model: 'ltx25-fast' },
+    lyric_offset_seconds: -0.9,
+    identity_lora: { id: 'mika.identity', strength: 0.8 },
+    wardrobe_lora: { id: 'mika.red-coat', strength: 0.65 },
+  }, { prompt: 'Mika turns toward camera' });
+  assert.deepEqual(request.identity_lora, { id: 'mika.identity', strength: 0.8 });
+  assert.deepEqual(request.wardrobe_lora, { id: 'mika.red-coat', strength: 0.65 });
+});
+
+test('incoming breakdown shots inherit the character while preserving their local timeline', () => {
+  const localTimeline = {
+    audio_id: 'music-1',
+    audio_start_seconds: 120,
+    lrc: '[00:01.000]Local line',
+    lrc_timebase: 'output',
+    cues: [{ time: 0, action: 'Turn toward camera' }],
+  };
+  const request = projectBiblePreservingPins(
+    bible,
+    {
+      prompt: 'Turn toward camera',
+      mode: 't2v',
+      duration_seconds: 8,
+      timeline: localTimeline,
+      directing: { camera: 'push' },
+    },
+    ['timeline', 'directing'],
+  );
+
+  assert.deepEqual(request.character, bible.character);
+  assert.equal(request.mode, 'i2v');
+  assert.equal(request.image_id, bible.character.references[0].image_id);
+  assert.deepEqual(request.timeline, localTimeline);
+  assert.deepEqual(request.directing, { camera: 'push' });
+  assert.equal(request.aspect_ratio, '16:9');
 });
 
 test('pinned request fields survive Bible reprojection and unpin restores inheritance', () => {

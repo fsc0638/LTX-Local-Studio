@@ -34,8 +34,11 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import type { Asset } from '@/components/media-library';
+import type { InstalledModel } from '@/components/model-composer';
 import { serviceFetch } from '@/lib/service-session';
+import * as factory from '@/lib/factory-client';
 import {
+  FACTORY_PROFILE_FALLBACKS,
   MAX_FACTORY_SHOTS,
   activeFactoryShot,
   bibleFromRequest,
@@ -44,14 +47,13 @@ import {
   createFactoryPlan,
   createFactoryShot,
   hasFactoryBible,
-  nextQueuedShot,
   normalizeFactoryRequest,
   parseFactoryImport,
   pinFactoryField,
   projectBible,
+  projectBiblePreservingPins,
   reprojectShots,
   reopenFactoryShot,
-  restoreFactoryPlan,
   serializeFactoryPlan,
   summarizeFactory,
   unpinFactoryField,
@@ -61,13 +63,24 @@ import {
   type FactoryShot,
   type FactoryShotState,
 } from '@/lib/production-factory';
+import { parseCalibrationReport, thresholdsFromReport, type BibleThresholds } from '@/lib/calibration';
+import { resolveThresholds } from '@/lib/review';
 
 type Locale = 'zh-TW' | 'en' | 'ja';
 export type FactoryIncoming = {
   token: string;
-  request: FactoryRequest;
   bible?: FactoryBible;
-};
+} & (
+  | { request: FactoryRequest; shots?: never }
+  | {
+      request?: never;
+      shots: {
+        request: FactoryRequest;
+        title?: string;
+        pinned?: string[];
+      }[];
+    }
+);
 
 type WorkerJob = {
   id: string;
@@ -79,6 +92,17 @@ type WorkerJob = {
   message?: string;
   error?: string | { message?: string };
   artifacts?: { kind: string; url: string }[];
+};
+
+type CharacterLora = {
+  id: string;
+  label: string;
+  kind: 'identity' | 'wardrobe';
+  default_strength: number;
+  validated_strength_range: { min: number; max: number };
+  compatible_models: string[];
+  compatible_modes: string[];
+  version: string;
 };
 
 const copy = {
@@ -96,11 +120,37 @@ const copy = {
     failed: '需處理',
     addBlank: '新增鏡頭',
     bible: '00 / 專案 Bible',
+    calibrationTitle: '裁判門檻',
+    calibrationImport: '匯入校準報告',
+    calibrationUncalibrated: '未校準：目前是暫定值。跑 infra/gb10/tools/calibrate_embeddings.py 得到報告後在此匯入。',
+    calibrationCalibrated: '已校準（{images} 張、{characters} 個角色，{when}）',
+    calibrationFaceLineMissing: '臉部線仍為暫定值：報告裡臉太少，只校準了整體（DINOv2）與風格。',
+    calibrationMissingFaces: '無臉圖 {n} 張（只能靠整體相似度）',
+    calibrationSkipped: '未寫入：{line}——{reason}',
+    calibrationBad: '不是校準報告：{reason}',
+    calibrationLines: 'cj {cj} · dino {cj_dino} · sj {sj}（嚴格 {scj} · {sdino} · {ssj}）',
     bibleHint: '先固定角色、音樂與輸出規格；新增鏡頭會繼承這些設定。',
+    identityLora: '人物 Identity LoRA',
+    wardrobeLora: '服裝 Wardrobe LoRA',
+    noLora: '不使用 LoRA',
+    loraStrength: '強度',
+    loraHint: '只列出主機已核准的 Registry ID；權重路徑與 trigger token 由 API 安全注入。',
+    visualStyle: '視覺畫風鎖',
+    visualStyleHint: '請具體寫出媒材、線條、上色、材質與色盤；每個鏡頭都會繼承。',
+    visualStylePlaceholder: '2D 手繪日系動畫、清晰線稿、平面賽璐璐上色、細緻繪製背景、青綠與奶油色盤。',
+    styleAnchor: '畫風參考圖',
+    noStyleAnchor: '使用角色圖的原始畫風',
+    continuityRelay: '最後一幀接力＋角色身分板＋分段品質閘門',
+    continuityRelayHint: '需要角色參照與畫風參考圖。每鏡用全部角色角度、畫風錨點與上一鏡末幀合成起始格；角色／畫風／動作品質全數綠燈才自動前進，否則暫停產線。',
     bibleRequired: '請先設定專案 Bible，再新增鏡頭。',
+    legacyFound: '這個瀏覽器還留著一份舊版計畫（{count} 鏡）。要上傳到主機嗎？上傳後即可關掉分頁繼續生產。',
+    legacyUpload: '上傳到主機',
+    legacyDiscard: '不用了',
+    legacyDone: '已上傳到主機；瀏覽器裡的舊副本已清除。',
     music: '音樂母帶',
     noMusic: '不使用音樂',
     output: '輸出規格',
+    profile: '生成設定檔',
     inherited: '繼承',
     overridden: '此鏡覆寫',
     restore: '還原繼承',
@@ -116,6 +166,16 @@ const copy = {
     queueEmpty: '先從「生成」頁把設定加入製片工廠，或新增空白鏡頭。',
     shot: '鏡頭',
     prompt: '鏡頭提示詞',
+    fromKeyframe: '來自關鍵格',
+    draft: '起草',
+    drafting: '起草中…',
+    draftUnavailable: '主機未設定 OpenAI，無法起草。',
+    draftFailed: '起草失敗，請稍後再試。',
+    draftBudget: '本專案的起草額度已用完。',
+    draftSuggestion: '草稿（不會覆蓋你改過的提示詞）',
+    draftApply: '採用',
+    draftDismiss: '不用',
+    primaryAction: '主要動作',
     defaultPrompt: '電影感鏡頭，清楚描述場景、主體、動作、運鏡與光線。',
     remove: '移除鏡頭',
     retry: '修正後重試',
@@ -150,12 +210,38 @@ const copy = {
     failed: 'Needs action',
     addBlank: 'Add shot',
     bible: '00 / PROJECT BIBLE',
+    calibrationTitle: 'Judge thresholds',
+    calibrationImport: 'Import calibration report',
+    calibrationUncalibrated: 'Uncalibrated: placeholders in force. Run infra/gb10/tools/calibrate_embeddings.py and import its report here.',
+    calibrationCalibrated: 'Calibrated ({images} images, {characters} characters, {when})',
+    calibrationFaceLineMissing: 'The face line is still a placeholder: too few faces in the report, so only the whole-image (DINOv2) and style lines were measured.',
+    calibrationMissingFaces: '{n} images without a face (whole-image similarity only)',
+    calibrationSkipped: 'Not written: {line} - {reason}',
+    calibrationBad: 'Not a calibration report: {reason}',
+    calibrationLines: 'cj {cj} · dino {cj_dino} · sj {sj} (strict {scj} · {sdino} · {ssj})',
     bibleHint:
       'Lock character, music and output defaults before adding inherited shots.',
+    identityLora: 'Identity LoRA',
+    wardrobeLora: 'Wardrobe LoRA',
+    noLora: 'No LoRA',
+    loraStrength: 'Strength',
+    loraHint: 'Only approved host registry IDs are shown. The API injects private paths and trigger tokens.',
+    visualStyle: 'Visual style lock',
+    visualStyleHint: 'Describe the medium, linework, shading, texture and palette. Every shot inherits it.',
+    visualStylePlaceholder: '2D hand-drawn anime, clean line art, flat cel shading, painterly backgrounds, teal and cream palette.',
+    styleAnchor: 'Style reference image',
+    noStyleAnchor: 'Use the character reference style',
+    continuityRelay: 'Last-frame relay + identity board + shot quality gate',
+    continuityRelayHint: 'Character references and a style image are required. Each shot starts from all views, the style anchor and the previous final frame; only all-green quality advances.',
     bibleRequired: 'Set the project Bible before adding a shot.',
+    legacyFound: 'This browser still holds an older plan ({count} shots). Upload it to the host? Once uploaded you can close the tab and it keeps running.',
+    legacyUpload: 'Upload to the host',
+    legacyDiscard: 'No thanks',
+    legacyDone: 'Uploaded. The browser copy has been cleared.',
     music: 'Music master',
     noMusic: 'No music',
     output: 'Output defaults',
+    profile: 'Generation profile',
     inherited: 'Inherited',
     overridden: 'Shot override',
     restore: 'Restore inheritance',
@@ -172,6 +258,16 @@ const copy = {
       'Add the current setup from Create, or start with a blank shot.',
     shot: 'Shot',
     prompt: 'Shot prompt',
+    fromKeyframe: 'From keyframe',
+    draft: 'Draft',
+    drafting: 'Drafting\u2026',
+    draftUnavailable: 'This host has no OpenAI key, so drafting is off.',
+    draftFailed: 'Drafting failed. Try again in a moment.',
+    draftBudget: 'This project has spent its drafting budget.',
+    draftSuggestion: 'Draft (your own prompt is left alone)',
+    draftApply: 'Use it',
+    draftDismiss: 'Discard',
+    primaryAction: 'Primary action',
     defaultPrompt:
       'A cinematic shot describing the scene, subject, action, camera and light.',
     remove: 'Remove shot',
@@ -211,11 +307,37 @@ const copy = {
     failed: '要対応',
     addBlank: 'ショットを追加',
     bible: '00 / プロジェクト Bible',
+    calibrationTitle: '判定しきい値',
+    calibrationImport: '校正レポートを取り込む',
+    calibrationUncalibrated: '未校正：暫定値です。infra/gb10/tools/calibrate_embeddings.py のレポートをここで取り込んでください。',
+    calibrationCalibrated: '校正済み（{images} 枚、{characters} キャラクター、{when}）',
+    calibrationFaceLineMissing: '顔のラインは暫定のまま：レポートに顔が少なく、全体（DINOv2）とスタイルのみ校正されました。',
+    calibrationMissingFaces: '顔なし画像 {n} 枚（全体類似度のみ）',
+    calibrationSkipped: '未反映：{line}——{reason}',
+    calibrationBad: '校正レポートではありません：{reason}',
+    calibrationLines: 'cj {cj} · dino {cj_dino} · sj {sj}（厳格 {scj} · {sdino} · {ssj}）',
     bibleHint: '人物、音楽、出力設定を固定してから継承ショットを追加します。',
+    identityLora: '人物 Identity LoRA',
+    wardrobeLora: '衣装 Wardrobe LoRA',
+    noLora: 'LoRA なし',
+    loraStrength: '強度',
+    loraHint: '承認済み Registry ID のみ表示し、パスと trigger token は API が注入します。',
+    visualStyle: '視覚スタイル固定',
+    visualStyleHint: '媒体、線画、陰影、質感、色調を具体的に記述し、全ショットで継承します。',
+    visualStylePlaceholder: '2D手描きアニメ、明確な線画、セルシェーディング、絵画的な背景、青緑とクリームの色調。',
+    styleAnchor: 'スタイル参照画像',
+    noStyleAnchor: 'キャラクター参照のスタイルを使用',
+    continuityRelay: '最終フレーム継承＋人物IDボード＋ショット品質ゲート',
+    continuityRelayHint: '人物参照と画風画像が必要です。全アングル、画風アンカー、前ショット最終フレームから開始画を作り、全品質判定が緑のときだけ次へ進みます。',
     bibleRequired: '先にプロジェクト Bible を設定してください。',
+    legacyFound: 'このブラウザに旧版の計画（{count} ショット）が残っています。ホストへアップロードしますか？アップロード後はタブを閉じても生成が続きます。',
+    legacyUpload: 'ホストへアップロード',
+    legacyDiscard: '不要',
+    legacyDone: 'アップロードしました。ブラウザ側の複製は削除済みです。',
     music: '音楽マスター',
     noMusic: '音楽なし',
     output: '出力設定',
+    profile: '生成プロファイル',
     inherited: '継承',
     overridden: 'ショット上書き',
     restore: '継承に戻す',
@@ -232,6 +354,16 @@ const copy = {
       '「生成」から現在の設定を追加するか、空のショットを作成してください。',
     shot: 'ショット',
     prompt: 'ショットプロンプト',
+    fromKeyframe: 'キーフレーム由来',
+    draft: '下書き',
+    drafting: '作成中…',
+    draftUnavailable: 'ホストに OpenAI キーがないため下書きは使えません。',
+    draftFailed: '下書きに失敗しました。しばらくしてからお試しください。',
+    draftBudget: 'このプロジェクトの下書き上限に達しました。',
+    draftSuggestion: '下書き（編集済みのプロンプトは上書きしません）',
+    draftApply: '採用',
+    draftDismiss: '破棄',
+    primaryAction: '主なアクション',
     defaultPrompt: '場面、被写体、動作、カメラ、光を明確にした映画的ショット。',
     remove: 'ショットを削除',
     retry: '修正して再試行',
@@ -257,7 +389,14 @@ const copy = {
   },
 } as const;
 
-const terminal = new Set(['succeeded', 'failed', 'cancelled', 'interrupted']);
+
+/** Surfaces the host's `code` when it has one; a bare "request failed" hides why. */
+function factoryMessage(error: unknown, fallback: string): string {
+  if (error instanceof factory.FactoryRequestError) {
+    return `${error.message} (${error.code})`;
+  }
+  return error instanceof Error && error.message ? error.message : fallback;
+}
 
 function errorMessage(value: WorkerJob, fallback: string): string {
   if (typeof value.error === 'string') return value.error;
@@ -275,7 +414,7 @@ function statusTone(status: FactoryShotState): string {
 function requestMeta(request: FactoryRequest): string {
   const duration = Number(request.duration_seconds || 0);
   const model =
-    typeof request.model === 'string' ? request.model : 'ltx23-distilled';
+    typeof request.model === 'string' ? request.model : 'ltx25-fast';
   const mode = typeof request.mode === 'string' ? request.mode : 't2v';
   const aspectRatio =
     typeof request.aspect_ratio === 'string' ? request.aspect_ratio : undefined;
@@ -289,6 +428,100 @@ function requestMeta(request: FactoryRequest): string {
   ]
     .filter(Boolean)
     .join(' · ');
+}
+
+const fillText = (template: string, values: Record<string, string | number>) =>
+  template.replace(/\{(\w+)\}/g, (match, key: string) =>
+    key in values ? String(values[key]) : match,
+  );
+
+/**
+ * The judge thresholds behind stage 04, and the one way they stop being placeholders: importing
+ * the report calibrate_embeddings.py writes. Nothing here measures anything; it reads a file the
+ * script produced from real pictures, and says plainly which lines the report could not set.
+ */
+function CalibrationPanel({
+  bible,
+  disabled,
+  text,
+  onImport,
+}: {
+  bible: FactoryBible;
+  disabled: boolean;
+  text: (typeof copy)[keyof typeof copy];
+  onImport: (thresholds: BibleThresholds) => void;
+}) {
+  const [notice, setNotice] = useState('');
+  const thresholds = (bible.thresholds ?? {}) as BibleThresholds;
+  const report = thresholds.report;
+  const lines = resolveThresholds(bible as unknown as Record<string, unknown>);
+  const strict = resolveThresholds(bible as unknown as Record<string, unknown>, undefined, true);
+  const read = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      const parsed = parseCalibrationReport(JSON.parse(await file.text()));
+      const result = thresholdsFromReport(parsed, thresholds);
+      onImport(result.thresholds);
+      setNotice(
+        result.skipped
+          .map((item) => fillText(text.calibrationSkipped, { line: item.line, reason: item.reason }))
+          .join(' · '),
+      );
+    } catch (error) {
+      setNotice(fillText(text.calibrationBad, { reason: error instanceof Error ? error.message : String(error) }));
+    }
+  };
+  return (
+    <div className="border border-border bg-[#fafaf8] p-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <p className="text-[10px] font-bold tracking-[0.12em]">{text.calibrationTitle}</p>
+        <label className={`rounded-none border border-border bg-white px-3 py-1 text-[10px] font-bold ${disabled ? 'opacity-40' : 'cursor-pointer hover:bg-[#f3f0ec]'}`}>
+          {text.calibrationImport}
+          <input
+            type="file"
+            accept="application/json,.json"
+            disabled={disabled}
+            className="sr-only"
+            onChange={(event) => {
+              void read(event.target.files?.[0]);
+              event.target.value = '';
+            }}
+          />
+        </label>
+      </div>
+      <p className={`mt-2 text-[10px] leading-5 ${thresholds.calibrated ? 'text-[#1f6b48]' : 'text-[#7a5a00]'}`}>
+        {thresholds.calibrated && report
+          ? fillText(text.calibrationCalibrated, {
+              images: report.images,
+              characters: report.characters.length,
+              when: new Date(report.imported_at).toLocaleDateString(),
+            })
+          : text.calibrationUncalibrated}
+      </p>
+      <p className="font-mono text-[10px] tabular-nums text-muted-foreground">
+        {fillText(text.calibrationLines, {
+          cj: lines.cj, cj_dino: lines.cj_dino, sj: lines.sj,
+          scj: strict.cj, sdino: strict.cj_dino, ssj: strict.sj,
+        })}
+      </p>
+      {thresholds.calibrated && report && !report.lines.cj ? (
+        <p className="mt-1 text-[10px] text-[#7a5a00]">{text.calibrationFaceLineMissing}</p>
+      ) : null}
+      {report?.missing_faces.length ? (
+        <details className="mt-1 text-[10px] text-muted-foreground">
+          <summary className="cursor-pointer">
+            {fillText(text.calibrationMissingFaces, { n: report.missing_faces.length })}
+          </summary>
+          <ul className="mt-1 list-disc pl-4">
+            {report.missing_faces.map((path) => (
+              <li key={path} className="font-mono">{path.split('/').pop()}</li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+      {notice ? <p className="mt-1 text-[10px] text-[#a8365a]">{notice}</p> : null}
+    </div>
+  );
 }
 
 function ShotSettings({
@@ -408,9 +641,26 @@ export function ProductionFactory({
   onIncomingConsumed,
   onPlanChange,
   section = 'all',
+  draftAvailable = false,
+  hostVersion = 0,
+  models = [],
+  profiles = [...FACTORY_PROFILE_FALLBACKS],
 }: {
   locale: Locale;
   online: boolean;
+  /** Whether the host has an OpenAI key. False disables the draft button and says why. */
+  draftAvailable?: boolean;
+  /**
+   * Bumped by the page when another stage changed the plan on the host (review accepts and
+   * rejects). This component only polls while the line is running; without this, a rejected
+   * shot's amended prompt would sit on the host while stage 03 still held the old one - and the
+   * next save from 03 would write the old one back over it.
+   */
+  hostVersion?: number;
+  /** Installed model catalog reported by the host. */
+  models?: InstalledModel[];
+  /** Versioned worker profiles reported by /api/v1/capabilities. */
+  profiles?: string[];
   incoming: FactoryIncoming | null;
   onIncomingConsumed: () => void;
   /** Lets the page derive stage status and the board from the same plan this component owns. */
@@ -429,18 +679,31 @@ export function ProductionFactory({
     createFactoryPlan('pending', new Date(0)),
   );
   const [hydrated, setHydrated] = useState(false);
-  const [storageKey, setStorageKey] = useState('');
+  // Set by every local edit and cleared once the host has the change.
+  const [dirty, setDirty] = useState(false);
+  const [legacy, setLegacy] = useState<FactoryPlan | null>(null);
+  const [legacyOwner, setLegacyOwner] = useState('');
   const [notice, setNotice] = useState('');
   const [assets, setAssets] = useState<Asset[]>([]);
+  const [characterLoras, setCharacterLoras] = useState<CharacterLora[]>([]);
+  // Drafts the user has not accepted yet, kept per shot. A draft only lands here when the prompt
+  // is pinned - that is, when the user has already written something the draft must not replace.
+  const [drafts, setDrafts] = useState<
+    Record<string, { prompt: string; primary_action: string }>
+  >({});
+  const [drafting, setDrafting] = useState('');
+  const [draftNotice, setDraftNotice] = useState<Record<string, string>>({});
   const importInput = useRef<HTMLInputElement>(null);
   const planRef = useRef(plan);
   const consumed = useRef(new Set<string>());
 
-  const mutate = (change: (current: FactoryPlan) => FactoryPlan) =>
-    setPlan((current) => ({
+  const mutate = (change: (current: FactoryPlan) => FactoryPlan) => {
+    setDirty(true);
+    return setPlan((current) => ({
       ...change(current),
       updatedAt: new Date().toISOString(),
     }));
+  };
 
   const patchShot = (
     id: string,
@@ -455,35 +718,115 @@ export function ProductionFactory({
       ),
     }));
 
+  /**
+   * Ask the host to draft this shot. The key stays there; this only ever sees two strings.
+   *
+   * A prompt the user has pinned - by writing it themselves, or by accepting an earlier draft -
+   * is never replaced. The draft is offered beside it instead, and applying it takes a click.
+   */
+  const draftShot = async (shot: FactoryShot) => {
+    if (!draftAvailable || drafting) return;
+    setDrafting(shot.id);
+    setDraftNotice((current) => ({ ...current, [shot.id]: '' }));
+    try {
+      const response = await serviceFetch(`/api/v1/factory/shots/${shot.id}/draft`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+      if (!response.ok) {
+        setDraftNotice((current) => ({
+          ...current,
+          [shot.id]: response.status === 429 ? text.draftBudget
+            : response.status === 503 ? text.draftUnavailable
+              : text.draftFailed,
+        }));
+        return;
+      }
+      const draft = (await response.json()) as { prompt?: string; primary_action?: string };
+      const written = { prompt: String(draft.prompt ?? ''),
+                        primary_action: String(draft.primary_action ?? '') };
+      if (!written.prompt) {
+        setDraftNotice((current) => ({ ...current, [shot.id]: text.draftFailed }));
+        return;
+      }
+      if (shot.pinned.includes('prompt')) {
+        setDrafts((current) => ({ ...current, [shot.id]: written }));
+        return;
+      }
+      applyDraft(shot.id, written);
+    } catch {
+      setDraftNotice((current) => ({ ...current, [shot.id]: text.draftFailed }));
+    } finally {
+      setDrafting('');
+    }
+  };
+
+  /**
+   * Write a draft into the shot and pin the prompt. Pinning is what makes it a decision: an
+   * unpinned prompt is reprojected away the next time the Bible changes.
+   */
+  const applyDraft = (
+    id: string,
+    draft: { prompt: string; primary_action: string },
+  ) => {
+    patchShot(id, (current) => ({
+      ...pinFactoryField(
+        reopenFactoryShot(
+          current,
+          current.status === 'draft' ? current.idempotencyKey : freshIdempotencyKey(current),
+        ),
+        'prompt',
+      ),
+      request: {
+        ...current.request,
+        prompt: draft.prompt,
+      },
+    }));
+    setDrafts((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+  };
+
   useEffect(() => {
     planRef.current = plan;
   }, [plan]);
 
+  // The plan lives on the host. This loads it; a plan left here by the pre-B1 build is offered
+  // for upload rather than pushed silently, since it may be one the user abandoned.
   useEffect(() => {
     const abort = new AbortController();
-    void serviceFetch('/api/auth/session', { signal: abort.signal })
-      .then(async (response) =>
-        response.ok
-          ? (response.json() as Promise<{ user?: { id?: string } }>)
-          : Promise.reject(),
-      )
-      .catch(() => ({}))
-      .then((session: { user?: { id?: string } }) => {
-        if (abort.signal.aborted) return;
-        const key = `ltx-production-factory-v1:${session.user?.id || 'local'}`;
-        let restored: FactoryPlan | undefined;
-        try {
-          const saved = window.localStorage.getItem(key);
-          if (saved) restored = restoreFactoryPlan(JSON.parse(saved));
-        } catch {
-          window.localStorage.removeItem(key);
+    void (async () => {
+      let userId = '';
+      try {
+        const response = await serviceFetch('/api/auth/session', { signal: abort.signal });
+        if (response.ok) {
+          const session = (await response.json()) as { user?: { id?: string } };
+          userId = session.user?.id || '';
         }
-        setStorageKey(key);
-        setPlan(restored || createFactoryPlan(crypto.randomUUID()));
-        setHydrated(true);
-      });
+      } catch {
+        // Not signed in, or the endpoint is unavailable; the factory endpoints will say so.
+      }
+      if (abort.signal.aborted) return;
+      try {
+        const projects = await factory.listProjects();
+        const loaded = projects.length
+          ? await factory.getProject(projects[0].id)
+          : await factory.createProject({ title: 'UNTITLED PRODUCTION' });
+        if (abort.signal.aborted) return;
+        setPlan(loaded);
+        setLegacy(factory.localPlan(userId));
+        setLegacyOwner(userId);
+      } catch (error) {
+        if (!abort.signal.aborted) setNotice(factoryMessage(error, text.requestFailed));
+      } finally {
+        if (!abort.signal.aborted) setHydrated(true);
+      }
+    })();
     return () => abort.abort();
-  }, []);
+  }, [text.requestFailed]);
 
   useEffect(() => {
     const abort = new AbortController();
@@ -499,19 +842,42 @@ export function ProductionFactory({
   }, []);
 
   useEffect(() => {
+    const abort = new AbortController();
+    void serviceFetch('/api/v1/character-loras', { signal: abort.signal })
+      .then(async (response) =>
+        response.ok
+          ? (response.json() as Promise<{ loras?: CharacterLora[] }>)
+          : Promise.reject(),
+      )
+      .then((result) => setCharacterLoras(result.loras || []))
+      .catch(() => setCharacterLoras([]));
+    return () => abort.abort();
+  }, []);
+
+  useEffect(() => {
     if (!hydrated) return;
     onPlanChange?.(plan);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the callback is a stable page setter.
   }, [hydrated, plan]);
 
+  // Edits are optimistic locally and pushed to the host shortly after, so typing stays smooth
+  // without a request per keystroke. While the line runs the host owns the plan; pushing then
+  // would overwrite the progress it is writing.
   useEffect(() => {
-    if (!hydrated || !storageKey) return;
-    try {
-      window.localStorage.setItem(storageKey, JSON.stringify(plan));
-    } catch {
-      // The current in-memory queue stays usable when browser storage is denied.
-    }
-  }, [hydrated, plan, storageKey]);
+    if (!hydrated || !plan.id || plan.status === 'running' || !dirty) return;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        try {
+          await factory.updateProject(plan.id, { title: plan.title, bible: plan.bible });
+          await factory.replaceShots(plan.id, plan.shots);
+          setDirty(false);
+        } catch (error) {
+          setNotice(factoryMessage(error, text.requestFailed));
+        }
+      })();
+    }, 600);
+    return () => window.clearTimeout(timer);
+  }, [hydrated, dirty, plan, text.requestFailed]);
 
   useEffect(() => {
     if (!hydrated || !incoming || consumed.current.has(incoming.token)) return;
@@ -519,197 +885,72 @@ export function ProductionFactory({
     // eslint-disable-next-line react/react-compiler -- This external parent event is intentionally consumed into persisted factory state.
     mutate((current) => {
       if (current.shots.length >= MAX_FACTORY_SHOTS) return current;
-      const shot = createFactoryShot(
-        incoming.request,
-        crypto.randomUUID(),
-        current.shots.length,
-      );
-      if (current.status === 'running') shot.status = 'queued';
+      const entries = incoming.shots ?? [{ request: incoming.request }];
+      const available = MAX_FACTORY_SHOTS - current.shots.length;
+      const sourceRequest = entries[0]?.request;
+      const bible = hasFactoryBible(current.bible)
+        ? current.bible
+        : incoming.bible ||
+          (sourceRequest ? bibleFromRequest(sourceRequest) : current.bible);
+      const shots = entries.slice(0, available).map((entry, offset) => {
+        const shot = createFactoryShot(
+          projectBiblePreservingPins(bible, entry.request, entry.pinned),
+          crypto.randomUUID(),
+          current.shots.length + offset,
+          entry.title,
+          entry.pinned,
+        );
+        if (current.status === 'running') shot.status = 'queued';
+        return shot;
+      });
       return {
         ...current,
-        bible: hasFactoryBible(current.bible)
-          ? current.bible
-          : incoming.bible || bibleFromRequest(incoming.request),
+        bible,
         status: current.status === 'completed' ? 'paused' : current.status,
-        shots: [...current.shots, shot],
+        shots: [...current.shots, ...shots],
       };
     });
     onIncomingConsumed();
   }, [hydrated, incoming, onIncomingConsumed]);
 
+  // The host schedules and submits; the browser only watches. Closing this tab no longer stops
+  // the line, which is the whole point of moving the queue off the client.
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || !plan.id || plan.status !== 'running') return;
     let disposed = false;
-    let pending = false;
-
-    const tick = async () => {
-      if (disposed || pending) return;
-      const current = planRef.current;
-      const active = activeFactoryShot(current);
-      if (!active && current.status !== 'running') return;
-      pending = true;
+    const poll = async () => {
       try {
-        if (active?.status === 'running' && active.statusUrl) {
-          const response = await serviceFetch(active.statusUrl);
-          const job = (await response.json()) as WorkerJob;
-          if (!response.ok)
-            throw new Error(errorMessage(job, text.requestFailed));
-          if (!terminal.has(job.status)) {
-            patchShot(active.id, (shot) => ({
-              ...shot,
-              progress: job.progress || 0,
-              message: job.message,
-            }));
-            return;
-          }
-          if (job.status === 'succeeded') {
-            const artifact = job.artifacts?.find(
-              (item) => item.kind === 'video',
-            );
-            patchShot(active.id, (shot) => ({
-              ...shot,
-              status: 'succeeded',
-              progress: 100,
-              message: job.message,
-              outputUrl: job.output_url || artifact?.url,
-              posterUrl: job.poster_url,
-              error: undefined,
-            }));
-          } else {
-            patchShot(
-              active.id,
-              (shot) => ({
-                ...shot,
-                status: 'failed',
-                progress: job.progress || shot.progress,
-                error: errorMessage(job, text.requestFailed),
-              }),
-              'paused',
-            );
-          }
-          return;
-        }
-
-        const queued = nextQueuedShot(current);
-        if (!queued) {
-          mutate((value) => ({
-            ...value,
-            status:
-              value.shots.length > 0 &&
-              value.shots.every((shot) => shot.status === 'succeeded')
-                ? 'completed'
-                : 'paused',
-          }));
-          return;
-        }
-
-        patchShot(queued.id, (shot) => ({
-          ...shot,
-          status: 'validating',
-          message: text.validating,
-          error: undefined,
-        }));
-        const validation = await serviceFetch('/api/v1/validate', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(queued.request),
-        });
-        const validationBody = (await validation.json()) as WorkerJob;
-        if (!validation.ok) {
-          patchShot(
-            queued.id,
-            (shot) => ({
-              ...shot,
-              status: 'failed',
-              error: errorMessage(validationBody, text.invalid),
-              message: undefined,
-            }),
-            'paused',
-          );
-          return;
-        }
-
-        patchShot(queued.id, (shot) => ({
-          ...shot,
-          status: 'submitting',
-          message: text.submitting,
-        }));
-        const response = await serviceFetch('/api/v1/jobs', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Idempotency-Key': queued.idempotencyKey,
-          },
-          body: JSON.stringify(queued.request),
-        });
-        const job = (await response.json()) as WorkerJob & { code?: string };
-        if (response.status === 409 && job.code === 'worker_busy') {
-          patchShot(queued.id, (shot) => ({
-            ...shot,
-            status: 'queued',
-            message: text.workerBusy,
-          }));
-          return;
-        }
-        if (!response.ok) {
-          patchShot(
-            queued.id,
-            (shot) => ({
-              ...shot,
-              status: 'failed',
-              error: errorMessage(job, text.requestFailed),
-              message: undefined,
-            }),
-            'paused',
-          );
-          return;
-        }
-        patchShot(queued.id, (shot) => ({
-          ...shot,
-          status: job.status === 'succeeded' ? 'succeeded' : 'running',
-          jobId: job.id,
-          statusUrl: job.status_url || `/api/v1/jobs/${job.id}`,
-          outputUrl: job.output_url,
-          posterUrl: job.poster_url,
-          progress: job.progress || 0,
-          message: job.message,
-        }));
-      } catch (error) {
-        const activeNow = activeFactoryShot(planRef.current);
-        if (activeNow) {
-          patchShot(
-            activeNow.id,
-            (shot) => ({
-              ...shot,
-              status: shot.jobId ? 'running' : 'queued',
-              error:
-                error instanceof Error ? error.message : text.requestFailed,
-            }),
-            'paused',
-          );
-        } else {
-          mutate((value) => ({ ...value, status: 'paused' }));
-        }
-        setNotice(text.requestFailed);
-      } finally {
-        pending = false;
+        const fresh = await factory.getProject(plan.id);
+        if (!disposed) setPlan(fresh);
+      } catch {
+        // A transient read failure just means the next tick shows the change instead.
       }
     };
-
-    void tick();
-    const timer = window.setInterval(tick, 3000);
+    const timer = window.setInterval(() => void poll(), 2000);
+    void poll();
     return () => {
       disposed = true;
       window.clearInterval(timer);
     };
-  }, [
-    hydrated,
-    text.invalid,
-    text.requestFailed,
-    text.submitting,
-    text.validating,
-    text.workerBusy,
-  ]);
+  }, [hydrated, plan.id, plan.status]);
+
+  useEffect(() => {
+    if (!hydrated || !plan.id || hostVersion === 0) return;
+    let disposed = false;
+    void (async () => {
+      try {
+        const fresh = await factory.getProject(plan.id);
+        if (!disposed) setPlan(fresh);
+      } catch {
+        // The next poll or reload will show it; nothing here is worth interrupting the user for.
+      }
+    })();
+    return () => {
+      disposed = true;
+    };
+    // plan.id is read but must not retrigger: this reacts to the host changing, not to the plan.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated, hostVersion]);
 
   const summary = summarizeFactory(plan);
   const active = activeFactoryShot(plan);
@@ -734,6 +975,17 @@ export function ProductionFactory({
     ),
   };
   const audioAssets = assets.filter((asset) => asset.kind === 'audio');
+  const imageAssets = assets.filter((asset) => asset.kind === 'image');
+  const bibleModel = plan.bible.output.model || 'ltx25-fast';
+  const identityLoras = characterLoras.filter(
+    (item) => item.kind === 'identity' && item.compatible_models.includes(bibleModel),
+  );
+  const wardrobeLoras = characterLoras.filter(
+    (item) => item.kind === 'wardrobe' && item.compatible_models.includes(bibleModel),
+  );
+  const videoModels = models.filter(
+    (item) => item.media_type === 'video' && item.available,
+  );
 
   const updateBible = (change: (bible: FactoryBible) => FactoryBible) => {
     const overrideCount = countPinnedShots(plan);
@@ -779,16 +1031,24 @@ export function ProductionFactory({
     }));
   };
 
-  const start = () => {
+  const runOnHost = (action: (id: string) => Promise<FactoryPlan>) => {
     setNotice('');
-    mutate((current) => ({
-      ...current,
-      status: 'running',
-      shots: current.shots.map((shot) =>
-        shot.status === 'draft' ? { ...shot, status: 'queued' } : shot,
-      ),
-    }));
+    void (async () => {
+      try {
+        // Flush pending edits first: starting a line the host has not seen would run stale shots.
+        if (dirty) {
+          await factory.updateProject(plan.id, { title: plan.title, bible: plan.bible });
+          await factory.replaceShots(plan.id, plan.shots);
+          setDirty(false);
+        }
+        setPlan(await action(plan.id));
+      } catch (error) {
+        setNotice(factoryMessage(error, text.requestFailed));
+      }
+    })();
   };
+
+  const start = () => runOnHost(factory.runProject);
 
   const retry = (id: string) =>
     patchShot(id, (shot) => ({
@@ -890,6 +1150,43 @@ export function ProductionFactory({
           {text.offline}
         </p>
       )}
+      {legacy && (
+        <div className="mb-5 flex flex-wrap items-center gap-3 border border-amber-200 bg-amber-50 p-4 text-xs text-amber-900">
+          <p className="flex-1">
+            {text.legacyFound.replace('{count}', String(legacy.shots.length))}
+          </p>
+          <Button
+            type="button"
+            className="rounded-none"
+            onClick={() => {
+              const pending = legacy;
+              setLegacy(null);
+              void (async () => {
+                try {
+                  setPlan(await factory.uploadLocalPlan(pending));
+                  factory.forgetLocalPlan(legacyOwner);
+                  setNotice(text.legacyDone);
+                } catch (error) {
+                  setNotice(factoryMessage(error, text.requestFailed));
+                }
+              })();
+            }}
+          >
+            {text.legacyUpload}
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="rounded-none bg-white"
+            onClick={() => {
+              factory.forgetLocalPlan(legacyOwner);
+              setLegacy(null);
+            }}
+          >
+            {text.legacyDiscard}
+          </Button>
+        </div>
+      )}
       {notice && (
         <p className="mb-5 border border-border bg-white p-4 text-xs">
           {notice}
@@ -910,6 +1207,12 @@ export function ProductionFactory({
                 {text.bibleHint}
               </p>
             </div>
+            <CalibrationPanel
+              bible={plan.bible}
+              disabled={!editable}
+              text={text}
+              onImport={(thresholds) => updateBible((bible) => ({ ...bible, thresholds }))}
+            />
             <fieldset disabled={!editable}>
               <CharacterLock
                 locale={locale}
@@ -949,6 +1252,141 @@ export function ProductionFactory({
                   }))
                 }
               />
+            </fieldset>
+            <fieldset disabled={!editable} className="grid gap-4 border border-border bg-[#fafafa] p-4 lg:grid-cols-2">
+              {([
+                ['identity_lora', text.identityLora, identityLoras],
+                ['wardrobe_lora', text.wardrobeLora, wardrobeLoras],
+              ] as const).map(([field, label, options]) => {
+                const selected = plan.bible[field];
+                const metadata = options.find((item) => item.id === selected?.id);
+                return (
+                  <div key={field} className="space-y-2">
+                    <label className="text-[10px] font-bold">{label}</label>
+                    <Select
+                      value={selected?.id || 'none'}
+                      onValueChange={(id) =>
+                        updateBible((bible) => ({
+                          ...bible,
+                          [field]: id === 'none'
+                            ? undefined
+                            : {
+                                id,
+                                strength:
+                                  options.find((item) => item.id === id)?.default_strength ?? 1,
+                              },
+                        }))
+                      }
+                    >
+                      <SelectTrigger className="rounded-none bg-white text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">{text.noLora}</SelectItem>
+                        {options.map((item) => (
+                          <SelectItem key={item.id} value={item.id}>
+                            {item.label} · v{item.version}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {selected && metadata && (
+                      <label className="block text-[10px] font-bold">
+                        {text.loraStrength}: {selected.strength ?? metadata.default_strength}
+                        <Input
+                          type="range"
+                          step="0.05"
+                          min={metadata.validated_strength_range.min}
+                          max={metadata.validated_strength_range.max}
+                          value={selected.strength ?? metadata.default_strength}
+                          onChange={(event) =>
+                            updateBible((bible) => ({
+                              ...bible,
+                              [field]: bible[field]
+                                ? { ...bible[field], strength: Number(event.target.value) }
+                                : undefined,
+                            }))
+                          }
+                        />
+                      </label>
+                    )}
+                  </div>
+                );
+              })}
+              <p className="text-[10px] leading-5 text-muted-foreground lg:col-span-2">
+                {text.loraHint}
+              </p>
+            </fieldset>
+            <fieldset disabled={!editable} className="grid gap-4 lg:grid-cols-2">
+              <label className="text-[10px] font-bold lg:col-span-2">
+                {text.visualStyle}
+                <Textarea
+                  className="mt-2 min-h-24 rounded-none bg-white text-xs font-normal leading-5"
+                  maxLength={1200}
+                  placeholder={text.visualStylePlaceholder}
+                  value={plan.bible.visual_style || ''}
+                  onChange={(event) =>
+                    updateBible((bible) => ({
+                      ...bible,
+                      visual_style: event.target.value || undefined,
+                    }))
+                  }
+                />
+                <span className="mt-1 block font-normal leading-5 text-muted-foreground">
+                  {text.visualStyleHint}
+                </span>
+              </label>
+              <label className="text-[10px] font-bold lg:col-span-2">
+                {text.styleAnchor}
+                <Select
+                  value={
+                    plan.bible.style_anchor &&
+                    imageAssets.some((asset) => asset.id === plan.bible.style_anchor)
+                      ? plan.bible.style_anchor
+                      : 'none'
+                  }
+                  disabled={!editable}
+                  onValueChange={(id) =>
+                    updateBible((bible) => ({
+                      ...bible,
+                      style_anchor: !id || id === 'none' ? undefined : id,
+                    }))
+                  }
+                >
+                  <SelectTrigger className="mt-2 w-full rounded-none bg-white">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">{text.noStyleAnchor}</SelectItem>
+                    {imageAssets.map((asset) => (
+                      <SelectItem key={asset.id} value={asset.id}>
+                        {asset.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </label>
+              <label className="flex items-start gap-3 text-[10px] font-bold lg:col-span-2">
+                <Switch
+                  className="mt-0.5"
+                  disabled={!editable}
+                  checked={plan.bible.continuity?.mode === 'relay'}
+                  onCheckedChange={(enabled) =>
+                    updateBible((bible) => ({
+                      ...bible,
+                      continuity: enabled
+                        ? { mode: 'relay', gate: 'strict' }
+                        : undefined,
+                    }))
+                  }
+                />
+                <span>
+                  {text.continuityRelay}
+                  <span className="mt-1 block font-normal leading-5 text-muted-foreground">
+                    {text.continuityRelayHint}
+                  </span>
+                </span>
+              </label>
             </fieldset>
             <div className="grid gap-4 lg:grid-cols-2">
               <label className="text-[10px] font-bold">
@@ -1073,27 +1511,84 @@ export function ProductionFactory({
                 {text.output}
               </h3>
               <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                {(['model', 'aspect_ratio', 'profile'] as const).map(
-                  (field) => (
-                    <label key={field} className="text-[10px] font-bold">
-                      {field}
-                      <Input
-                        disabled={!editable}
-                        value={String(plan.bible.output[field] || '')}
-                        onChange={(event) =>
-                          updateBible((bible) => ({
-                            ...bible,
-                            output: {
-                              ...bible.output,
-                              [field]: event.target.value || undefined,
-                            },
-                          }))
-                        }
-                        className="mt-2 rounded-none"
-                      />
-                    </label>
-                  ),
-                )}
+                <label className="text-[10px] font-bold">
+                  model
+                  <Select
+                    disabled={!editable}
+                    value={bibleModel}
+                    onValueChange={(value) => {
+                      if (!value) return;
+                      updateBible((bible) => {
+                        const identityCompatible = characterLoras.some(
+                          (item) => item.id === bible.identity_lora?.id && item.compatible_models.includes(value),
+                        );
+                        const wardrobeCompatible = characterLoras.some(
+                          (item) => item.id === bible.wardrobe_lora?.id && item.compatible_models.includes(value),
+                        );
+                        return {
+                          ...bible,
+                          identity_lora: identityCompatible ? bible.identity_lora : undefined,
+                          wardrobe_lora: wardrobeCompatible ? bible.wardrobe_lora : undefined,
+                          output: { ...bible.output, model: value },
+                        };
+                      });
+                    }}
+                  >
+                    <SelectTrigger className="mt-2 w-full rounded-none">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {videoModels.map((item) => (
+                        <SelectItem key={item.id} value={item.id}>{item.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </label>
+                <label className="text-[10px] font-bold">
+                  aspect_ratio
+                  <Input
+                    disabled={!editable}
+                    value={String(plan.bible.output.aspect_ratio || '')}
+                    onChange={(event) =>
+                      updateBible((bible) => ({
+                        ...bible,
+                        output: {
+                          ...bible.output,
+                          aspect_ratio: event.target.value || undefined,
+                        },
+                      }))
+                    }
+                    className="mt-2 rounded-none"
+                  />
+                </label>
+                <label className="text-[10px] font-bold">
+                  {text.profile}
+                  <Select
+                    disabled={!editable}
+                    value={plan.bible.output.profile || 'compat-v1'}
+                    onValueChange={(value) => {
+                      if (!value) return;
+                      updateBible((bible) => ({
+                        ...bible,
+                        output: { ...bible.output, profile: value },
+                      }));
+                    }}
+                  >
+                    <SelectTrigger className="mt-2 w-full rounded-none">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(profiles.length
+                        ? profiles
+                        : [...FACTORY_PROFILE_FALLBACKS]
+                      ).map((profile) => (
+                        <SelectItem key={profile} value={profile}>
+                          {profile}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </label>
                 <label className="text-[10px] font-bold">
                   fps
                   <Input
@@ -1258,6 +1753,11 @@ export function ProductionFactory({
                       >
                         {shot.status.toUpperCase()}
                       </span>
+                      {shot.request.keyframe_id ? (
+                        <span className="rounded-sm bg-[#e6f6ee] px-1.5 py-0.5 text-[9px] font-bold text-[#1f6b48]">
+                          {text.fromKeyframe}
+                        </span>
+                      ) : null}
                       <div className="flex gap-1">
                         <Button
                           type="button"
@@ -1302,9 +1802,31 @@ export function ProductionFactory({
                       </div>
                     </div>
                     <div className="grid gap-4 p-4 lg:grid-cols-[1fr_auto]">
-                      <label className="text-[10px] font-bold">
-                        {text.prompt}
+                      <div>
+                        {/* The button sits beside the label, not inside it: clicking a <label>
+                            activates the control it names, which would fight the button. */}
+                        <div className="flex flex-wrap items-center gap-2 text-[10px] font-bold">
+                          <label htmlFor={`prompt-${shot.id}`}>{text.prompt}</label>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={
+                              !shotEditable || !draftAvailable || drafting === shot.id
+                            }
+                            title={draftAvailable ? undefined : text.draftUnavailable}
+                            onClick={() => void draftShot(shot)}
+                            className="h-6 rounded-none px-2 text-[10px]"
+                          >
+                            {drafting === shot.id ? text.drafting : text.draft}
+                          </Button>
+                          <span className="font-normal text-muted-foreground">
+                            {draftNotice[shot.id] ||
+                              (draftAvailable ? '' : text.draftUnavailable)}
+                          </span>
+                        </div>
                         <Textarea
+                          id={`prompt-${shot.id}`}
                           value={shot.request.prompt}
                           maxLength={4000}
                           disabled={!shotEditable}
@@ -1333,10 +1855,49 @@ export function ProductionFactory({
                           }
                           className="mt-2 min-h-24 rounded-none bg-[#fafaf8] text-xs"
                         />
-                      </label>
+                      </div>
                       <div className="min-w-44 text-[10px] leading-5 text-muted-foreground lg:text-right">
                         {requestMeta(shot.request)}
                       </div>
+                      {drafts[shot.id] ? (
+                        <div className="border border-dashed border-border bg-[#fafaf8] p-3 lg:col-span-2">
+                          <p className="text-[10px] font-bold">{text.draftSuggestion}</p>
+                          <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed">
+                            {drafts[shot.id].prompt}
+                          </p>
+                          {drafts[shot.id].primary_action ? (
+                            <p className="mt-2 text-[11px] text-muted-foreground">
+                              {text.primaryAction}: {drafts[shot.id].primary_action}
+                            </p>
+                          ) : null}
+                          <div className="mt-3 flex gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              disabled={!shotEditable}
+                              onClick={() => applyDraft(shot.id, drafts[shot.id])}
+                              className="h-7 rounded-none px-3 text-[10px]"
+                            >
+                              {text.draftApply}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() =>
+                                setDrafts((current) => {
+                                  const next = { ...current };
+                                  delete next[shot.id];
+                                  return next;
+                                })
+                              }
+                              className="h-7 rounded-none px-3 text-[10px]"
+                            >
+                              {text.draftDismiss}
+                            </Button>
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                     <ShotSettings
                       shot={shot}
@@ -1432,8 +1993,8 @@ export function ProductionFactory({
                   variant="outline"
                   className="h-12 w-full rounded-none border-white/25 bg-transparent text-white hover:bg-white hover:text-black"
                   onClick={() => {
-                    mutate((current) => ({ ...current, status: 'paused' }));
                     setNotice(text.activePause);
+                    runOnHost(factory.pauseProject);
                   }}
                 >
                   <CirclePause /> {text.pause}
