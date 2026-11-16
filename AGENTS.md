@@ -13,7 +13,7 @@
 ### 品牌架構摘要（使用者裁示 2026-11-16；條文草案）
 - ミウ企画＝母品牌／企劃工作室。門面 `kikaku.mikamiu.studio`（預定）是入口，往下分為美羽的行銷與其他接案。
 - 米花美羽＝角色 IP 線。良辰帖＝第一條服務線（客製婚禮網站）。
-- 網域：`mikamiu.studio` 根目錄＝美羽官網；`wedding.mikamiu.studio`＝良辰帖，客戶站採 `wedding.mikamiu.studio/<客戶>/`；服務頁尾只標「by ミウ企画」。
+- 網域：`mikamiu.studio` 根目錄＝美羽官網；`wedding.mikamiu.studio`＝良辰帖，客戶站採 `wedding.mikamiu.studio/<客戶>/`；服務頁尾只標「© ミウ企画」。
 - 美羽露出：等級 1＋2，等級 2 每項先過美羽專案的 PR 防火牆；不做代言／吉祥物；美羽官網與社群帳號不反向連結 kikaku 或良辰帖。
 - 對外名義：ミウ企画 尚未辦營業登記，不作簽約主體；授權人＝實際權利人（依實際作品權利；現有作品為范書愷）；曲目署名米花美羽。
 - 本節為摘要，以正本為準。正本在公司層資料夾的 `00_Company_Rules｜公司規範/20261116_spec_miu-kikaku-brand-architecture_v01.md`，決策紀錄在 `01_Decision_Log｜決策紀錄/20261116_decision_miu-kikaku-brand-architecture_v01_draft.md`（從子專案根目錄看，兩者都在 `../` 之下）。
