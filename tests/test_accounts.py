@@ -168,6 +168,92 @@ class AccountTests(test_backend.BackendTests):
         self.assertEqual(self.call("POST", "/api/auth/login", {"username": "alice", "password": "a long test passphrase 2026"})[0], 401)
         self.assertEqual(self.call("POST", "/api/auth/login", {"username": "alice", "password": "a different long passphrase"})[0], 200)
 
+    def password_change(self, cookie="", csrf="", **changes):
+        payload = {"current_password": "a long test passphrase 2026", "new_password": "a new long passphrase 2026",
+                   "confirm_password": "a new long passphrase 2026"}
+        return self.call("POST", "/api/auth/change-password", {**payload, **changes}, cookie=cookie, csrf=csrf)
+
+    def test_change_password_requires_session_origin_and_csrf(self):
+        self.assertEqual(self.password_change()[0], 401)
+        cookie, csrf = self.account()
+        self.assertEqual(self.password_change(cookie)[0], 403)
+        self.assertEqual(self.password_change(cookie, "wrong")[0], 403)
+        self.assertEqual(self.call("POST", "/api/auth/change-password", {}, cookie=cookie, csrf=csrf,
+                                   Origin="https://evil.invalid")[0], 403)
+        with patch.object(backend, "USER_AUTH_ENABLED", False):
+            self.assertEqual(self.password_change()[0], 401)
+
+    def test_change_password_invalid_inputs_preserve_password_and_session(self):
+        cookie, csrf = self.account()
+        for changes, code in (({"current_password": "wrong"}, "current_password_incorrect"),
+                              ({"current_password": None}, "current_password_incorrect"),
+                              ({"confirm_password": "different"}, "password_mismatch"),
+                              ({"new_password": "short", "confirm_password": "short"}, "invalid_password"),
+                              ({"new_password": "a long test passphrase 2026", "confirm_password": "a long test passphrase 2026"}, "password_unchanged")):
+            with self.subTest(code=code):
+                response = self.password_change(cookie, csrf, **changes)
+                self.assertEqual(response[0], 400, response)
+                self.assertEqual(json.loads(response[2])["code"], code)
+                self.assertTrue(json.loads(self.call("GET", "/api/auth/session", cookie=cookie)[2])["authenticated"])
+        self.assertEqual(self.password_change(cookie, csrf)[0], 429)
+        self.assertEqual(self.call("POST", "/api/auth/login", {"username": "alice", "password": "a long test passphrase 2026"})[0], 200)
+
+    def test_change_password_revokes_all_own_sessions_and_tokens_only(self):
+        cookie, csrf = self.account()
+        second = self.call("POST", "/api/auth/login", {"username": "alice", "password": "a long test passphrase 2026"})[1]["Set-Cookie"].split(";", 1)[0]
+        bob, _ = self.account("bob")
+        self.call("POST", "/api/auth/forgot", {"email": "alice@example.test"})
+        reset_token = self.mail[-1][1]
+        response = self.password_change(cookie, csrf, username="bob", email="bob@example.test")
+        self.assertEqual(response[0], 200, response)
+        self.assertEqual(json.loads(response[2]), {"ok": True, "requires_login": True})
+        self.assertIn("Max-Age=0", response[1]["Set-Cookie"])
+        for old_cookie in (cookie, second):
+            self.assertFalse(json.loads(self.call("GET", "/api/auth/session", cookie=old_cookie)[2])["authenticated"])
+        self.assertTrue(json.loads(self.call("GET", "/api/auth/session", cookie=bob)[2])["authenticated"])
+        self.assertEqual(self.call("POST", "/api/auth/reset", {"token": reset_token, "password": "another replacement"})[0], 400)
+        self.assertEqual(self.call("POST", "/api/auth/login", {"username": "alice", "password": "a long test passphrase 2026"})[0], 401)
+        self.assertEqual(self.call("POST", "/api/auth/login", {"username": "alice", "password": "a new long passphrase 2026"})[0], 200)
+        self.assertEqual(self.password_change(cookie, csrf)[0], 401)
+
+    def test_change_password_internal_mode_needs_no_smtp_or_email_verification(self):
+        with patch.object(backend, "AUTH_SETTINGS", auth.AuthSettings("http://localhost:3000", registration_enabled=True, auth_mode="internal")):
+            raw = dict(name="Test", username="pending", email="pending@example.test", password="Abcd1234")
+            self.assertEqual(self.call("POST", "/api/auth/register", raw)[0], 201)
+            login = self.call("POST", "/api/auth/login", raw)
+            cookie = login[1]["Set-Cookie"].split(";", 1)[0]
+            csrf = json.loads(login[2])["csrf_token"]
+            response = self.password_change(cookie, csrf, current_password="Abcd1234", new_password="Efgh5678", confirm_password="Efgh5678")
+            self.assertEqual(response[0], 200, response)
+            new_login = self.call("POST", "/api/auth/login", {"username": "pending", "password": "Efgh5678"})
+            self.assertEqual(new_login[0], 200)
+            self.assertFalse(json.loads(new_login[2])["user"]["email_verified"])
+            self.assertEqual(self.mail, [])
+
+    def test_change_password_rejects_expired_disabled_and_wrong_cloudflare_identity(self):
+        cookie, csrf = self.account()
+        with patch.object(backend.Handler, "access_identity", return_value="bob@example.test"):
+            self.assertEqual(self.password_change(cookie, csrf)[0], 403)
+        with patch.object(auth.time, "time", return_value=time.time() + auth.SESSION_SECONDS + 1):
+            self.assertEqual(self.password_change(cookie, csrf)[0], 401)
+        with self.auth.connect() as db:
+            db.execute("UPDATE users SET disabled=1 WHERE username='alice'")
+        self.assertEqual(self.password_change(cookie, csrf)[0], 401)
+
+    def test_concurrent_password_changes_allow_only_one_change(self):
+        from concurrent.futures import ThreadPoolExecutor
+        cookie, _ = self.account()
+        token = cookie.split("=", 1)[1]
+        def change(value):
+            try:
+                self.auth.change_password(token, "a long test passphrase 2026", value)
+                return "ok"
+            except auth.AuthError as exc:
+                return exc.code
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(change, ["new password one", "new password two"]))
+        self.assertEqual(sorted(results), ["login_required", "ok"])
+
     def test_expired_verification_and_duplicate_registration(self):
         raw = self.register()
         token = self.mail[-1][1]

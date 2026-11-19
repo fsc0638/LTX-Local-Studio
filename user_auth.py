@@ -251,6 +251,32 @@ class AuthStore:
             db.execute("DELETE FROM sessions WHERE user_id=%s", (row["user_id"],))
         # Deliberately no session: verification/reset always requires a fresh login.
 
+    def change_password(self, token, current_password, new_password, *, require_verified=True):
+        if not isinstance(token, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", token):
+            raise AuthError("login_required", 401)
+        check_password(new_password)
+        if not isinstance(current_password, str) or not 1 <= len(current_password) <= PASSWORD_MAX_LENGTH:
+            raise AuthError("current_password_incorrect")
+        with self.connect() as db:
+            # Serialize password changes and login session creation on the user.
+            row = db.execute("SELECT u.* FROM users u JOIN sessions s ON s.user_id=u.id "
+                             "WHERE s.token_hash=%s AND s.expires_at>%s AND u.disabled=0 "
+                             "AND (%s::int=0 OR u.verified_at IS NOT NULL) FOR UPDATE OF u",
+                             (digest(token), time.time(), int(require_verified))).fetchone()
+            # Recheck after acquiring the lock: a concurrent change may have
+            # revoked this session while this request waited for the user row.
+            if not row or not db.execute("SELECT 1 FROM sessions WHERE token_hash=%s AND expires_at>%s",
+                                         (digest(token), time.time())).fetchone():
+                raise AuthError("login_required", 401)
+            if not password_matches(current_password, row["password_hash"]):
+                raise AuthError("current_password_incorrect")
+            if current_password == new_password:
+                raise AuthError("password_unchanged")
+            encoded = password_hash(new_password)
+            db.execute("UPDATE users SET password_hash=%s WHERE id=%s", (encoded, row["id"]))
+            db.execute("DELETE FROM sessions WHERE user_id=%s", (row["id"],))
+            db.execute("DELETE FROM email_tokens WHERE user_id=%s", (row["id"],))
+
     def login(self, username, password, *, require_verified=True, access_email=None):
         if not isinstance(username, str) or not isinstance(password, str) or len(username) > 254 or len(password) > PASSWORD_MAX_LENGTH:
             raise AuthError("invalid_credentials", 401)
@@ -267,6 +293,9 @@ class AuthStore:
             raise AuthError("email_not_verified", 403)
         token, now = secrets.token_urlsafe(32), time.time()
         with self.connect() as db:
+            # A password change must not race an in-flight old-password login
+            # into creating a session after all sessions have been revoked.
+            db.execute("SELECT id FROM users WHERE id=%s FOR UPDATE", (row["id"],))
             if access_email is not None:
                 # Called only with an email from a cryptographically verified
                 # Access application token, never a client-supplied email header.

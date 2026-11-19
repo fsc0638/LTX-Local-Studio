@@ -49,3 +49,15 @@ export async function signOut(full = false): Promise<string> {
   try { localStorage.setItem(sessionChangeKey, crypto.randomUUID()); } catch { /* Storage may be disabled. */ }
   return full && result.cloudflare_logout_url === '/cdn-cgi/access/logout' ? result.cloudflare_logout_url : '/auth/login?signed_out=1';
 }
+
+export async function changePassword(currentPassword: string, newPassword: string, confirmPassword: string): Promise<void> {
+  const response = await serviceFetch('/api/auth/change-password', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({current_password: currentPassword, new_password: newPassword, confirm_password: confirmPassword}),
+  });
+  const result = await response.json() as {ok?: boolean; requires_login?: boolean; code?: string};
+  if (!response.ok) throw new Error(result.code || 'password_change_failed');
+  if (result.ok !== true || result.requires_login !== true) throw new Error('password_change_failed');
+  csrf = null;
+  try { localStorage.setItem(sessionChangeKey, crypto.randomUUID()); } catch { /* Storage may be disabled. */ }
+}
