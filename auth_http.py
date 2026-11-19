@@ -124,7 +124,7 @@ class AuthHandlerMixin:
         accepted, access_email = self.access_boundary()
         if not accepted:
             return
-        routes = {"register", "login", "logout", "verify", "resend", "forgot", "reset"}
+        routes = {"register", "login", "logout", "verify", "resend", "forgot", "reset", "change-password"}
         action = path.removeprefix("/api/auth/")
         if action not in routes:
             self.send_json(404, {"error": "Not found"})
@@ -165,7 +165,22 @@ class AuthHandlerMixin:
                 raise AuthError("invalid_request")
             if action in {"verify", "resend", "forgot", "reset"} and not self.auth_settings.verification_required:
                 raise AuthError("email_disabled_in_internal_mode", 503)
-            if action == "register":
+            if action == "change-password":
+                token = self.session_cookie()
+                user = self.auth_store.session(token, require_verified=self.auth_settings.verification_required)
+                if not user:
+                    raise AuthError("login_required", 401)
+                if access_email is not None and user["email"] != access_email:
+                    raise AuthError("cloudflare_email_mismatch", 403)
+                if not hmac.compare_digest(self.headers.get("X-CSRF-Token", "").encode(), csrf_token(token).encode()):
+                    raise AuthError("csrf_failed", 403)
+                self.auth_store.rate("change-password:" + user["id"], 5, 900)
+                if raw.get("new_password") != raw.get("confirm_password"):
+                    raise AuthError("password_mismatch")
+                self.auth_store.change_password(token, raw.get("current_password"), raw.get("new_password"),
+                                                require_verified=self.auth_settings.verification_required)
+                self.send_json(200, {"ok": True, "requires_login": True}, extra_headers=self.cookie_header())
+            elif action == "register":
                 if not self.auth_settings.registration_enabled:
                     raise AuthError("registration_closed", 503)
                 if self.auth_settings.verification_required and not self.auth_settings.email_ready:

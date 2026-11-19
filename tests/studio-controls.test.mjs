@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {durationFrames, maximumDurationInput, sequenceFrames} from '../lib/video-settings.ts';
-import {readSession, serviceFetch, signOut, sessionChangeKey} from '../lib/service-session.ts';
+import {readSession, serviceFetch, signOut, changePassword, sessionChangeKey} from '../lib/service-session.ts';
 import {displayedLrcTime, formatLrcRows, parseLrcRows, resetLrcTimes, storedLrcTime} from '../lib/lrc-editor.ts';
 import {parseTimelineImport, serializeShotPlan} from '../lib/timeline-import.ts';
 
@@ -86,6 +86,37 @@ test('sign-out cannot redirect to an external URL supplied by a response', async
   await readSession();
   globalThis.fetch.mock.mockImplementation(async () => response({ok:true,cloudflare_logout_url:'https://evil.invalid/'}));
   assert.equal(await signOut(true), '/auth/login?signed_out=1');
+});
+
+test('password change sends CSRF and JSON, then notifies tabs only after confirmed success', async t => {
+  const saved = new Map();
+  t.mock.method(globalThis, 'fetch', async () => response(session('current-token')));
+  browserGlobals(t, {setItem:(key,value) => saved.set(key,value)});
+  await readSession();
+  globalThis.fetch.mock.mockImplementation(async (url, init) => {
+    assert.equal(url, '/api/auth/change-password');
+    assert.equal(new Headers(init.headers).get('X-CSRF-Token'), 'current-token');
+    assert.deepEqual(JSON.parse(init.body), {current_password:'old pass', new_password:'new pass', confirm_password:'new pass'});
+    return response({ok:true,requires_login:true});
+  });
+  await changePassword('old pass','new pass','new pass');
+  assert.ok(saved.get(sessionChangeKey));
+});
+
+test('wrong current password does not sign out or notify other tabs', async t => {
+  const saved = new Map();
+  t.mock.method(globalThis, 'fetch', async () => response(session('current-token')));
+  browserGlobals(t, {setItem:(key,value) => saved.set(key,value)});
+  let expired = false;
+  window.addEventListener('ltx-session-expired', () => { expired = true; });
+  await readSession();
+  globalThis.fetch.mock.mockImplementation(async () => response({code:'current_password_incorrect'},400));
+  await assert.rejects(changePassword('wrong','new pass','new pass'), /current_password_incorrect/);
+  assert.equal(expired,false);
+  assert.equal(saved.size,0);
+  globalThis.fetch.mock.mockImplementation(async () => response({ok:true}));
+  await assert.rejects(changePassword('old','new pass','new pass'), /password_change_failed/);
+  assert.equal(saved.size,0);
 });
 
 test('resetting times restores the imported timestamps and keeps edited lyrics', () => {

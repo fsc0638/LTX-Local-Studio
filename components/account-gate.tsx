@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { LogOut, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { ChangePasswordDialog } from '@/components/change-password-dialog';
 import { readSession, sessionChangeKey, signOut, type ServiceSession } from '@/lib/service-session';
 
 const AccountContext = createContext<ServiceSession | null>(null);
@@ -57,6 +58,7 @@ export function AccountMenu({locale}: {locale: 'zh-TW' | 'en' | 'ja'}) {
   return <div className="flex flex-wrap items-center gap-2 border-l border-border pl-3 text-[10px]">
     {session.auth_mode === 'internal' && <span className="border border-[#efc4d0] bg-[#fff3f6] px-2 py-1 text-[#a32e4a]">{locale === 'zh-TW' ? '內部測試' : locale === 'en' ? 'Internal test' : '内部テスト'}</span>}
     <span className="hidden max-w-32 truncate sm:block" title={session.user.email}><ShieldCheck className="mr-1 inline size-3 text-[#159c8f]" />{session.user.name}</span>
+    <ChangePasswordDialog locale={locale} username={session.user.username} disabled={busy} />
     <Button type="button" variant="ghost" disabled={busy} onClick={() => void logout()} aria-label={label} className="rounded-none text-[10px]"><LogOut className="size-3" />{busy ? '…' : label}</Button>
     {session.cloudflare_logout_url && <div><Button type="button" variant="outline" disabled={busy} onClick={() => void logout(true)} className="rounded-none text-[10px]">{fullLabel}</Button><p className="max-w-48 text-[9px] leading-4 text-muted-foreground">{locale === 'zh-TW' ? '也會登出此 Cloudflare 團隊保護的其他網站。' : locale === 'en' ? 'Also signs out of other apps in this Cloudflare team.' : '同じ Cloudflare チームの他サイトからもログアウトします。'}</p></div>}
     {error && <span role="alert" className="text-red-700">{locale === 'zh-TW' ? '登出失敗，請重試' : locale === 'en' ? 'Sign-out failed' : 'ログアウト失敗'}</span>}

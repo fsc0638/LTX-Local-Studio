@@ -16,10 +16,13 @@
 - 未驗證者不能登入或生成。驗證連結一次有效、30分鐘過期；點驗證不建立 session。
 - 工作階段8小時；cookie 為 host-only、HttpOnly、SameSite=Lax，HTTPS 使用 Secure 與 `__Host-` 名稱前綴，阻止其他子網域植入 Domain cookie。
 - 有重寄驗證信、忘記密碼與重設功能。重設後撤銷該帳號原有工作階段，再重新登入。
+- 登入後可從頂部帳號區選「修改密碼」，輸入舊密碼、新密碼與確認新密碼；新密碼8–128字元且不得與舊密碼相同。成功後撤銷該帳號所有裝置的工作階段與郵件權杖，必須重新登入；其他帳號、素材與 Cloudflare 登入不變。`internal` 模式也可使用，不需要 SMTP。
 - 密碼用 scrypt N=2^17/r=8/p=1 與隨機 salt；session 與驗證 token 僅保存雜湊。
 - 網頁使用既有白底、黑字、珊瑚粉／青綠與方角設計；繁中／英文／日文，自訂風格選單。
 
 ### 保護範圍
+
+`POST /api/auth/change-password` 接收 JSON `{current_password, new_password, confirm_password}`，需要有效的使用者 cookie、可信 Origin、正確 CSRF 與相符的外層 Cloudflare 身分（如啟用）；worker key 不可代替使用者登入。每帳號15分鐘最多5次嘗試，另受全域限制與雜湊併發上限保護。成功回傳 `{ok: true, requires_login: true}` 並清除 cookie；不回傳或記錄密碼。錯誤舊密碼回傳400，不撤銷現有登入；過期／撤銷登入回傳401。帳號列鎖與登入前重查避免並發換密碼及舊密碼登入競態，無資料庫 schema 變更。
 
 帳號只能讀取自己的素材、任務、影片／圖片／文字與下載，包含舊 UI 路由。
 舊的無 owner 資料不會自動交給第一位註冊者，只能由主機管理者／可信 worker key 存取。
